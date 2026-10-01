@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import './styles.css'
-import { api, fmtUsd, fmtMicroPerM, short, fmtDate, toast, Toasts, useWallets, signInWith } from './wallet'
+import { api, fmtUsd, fmtMicroPerM, short, fmtDate, toast, Toasts, useWallets, signInWith, connectWalletConnect, walletConnectConfigured, readChainId, chainById, NetworkPrompt } from './wallet'
 import type { User, KeyRow, ByokRow, ChainInfo } from './wallet'
 
 type Tab = 'overview' | 'keys' | 'byok' | 'credits' | 'agents' | 'models' | 'docs'
@@ -9,14 +9,30 @@ type Tab = 'overview' | 'keys' | 'byok' | 'credits' | 'agents' | 'models' | 'doc
 function Landing({ onSignedIn }: { onSignedIn: (u: User, mode: string) => void }) {
   const wallets = useWallets()
   const [busy, setBusy] = useState(false)
+  const [wrongNet, setWrongNet] = useState(false)
+  const afterSignIn = async (provider: any, res: any) => {
+    toast('Signed in as ' + short(res.user.wallet))
+    onSignedIn(res.user, res.mode)
+    const chainId = await readChainId(provider)
+    if (!chainById(chainId)) setWrongNet(true)
+  }
   const connect = async (w: { info: { name: string; icon: string | null }; provider: any }) => {
     setBusy(true)
     try {
       const res = await signInWith(w.provider)
-      toast('Signed in as ' + short(res.user.wallet))
-      onSignedIn(res.user, res.mode)
+      await afterSignIn(w.provider, res)
     } catch (e: any) {
       toast(e.message || 'Wallet sign-in failed', 'error')
+    } finally { setBusy(false) }
+  }
+  const connectWC = async () => {
+    setBusy(true)
+    try {
+      const provider = await connectWalletConnect()
+      const res = await signInWith(provider)
+      await afterSignIn(provider, res)
+    } catch (e: any) {
+      toast(e.message || 'WalletConnect failed', 'error')
     } finally { setBusy(false) }
   }
   return (
@@ -36,13 +52,22 @@ function Landing({ onSignedIn }: { onSignedIn: (u: User, mode: string) => void }
                 We only ask for a signature to create your account — no approvals, no spending.
               </p>
               <div className="wallet-list">
-                {wallets.length === 0 && <p className="muted small">Detecting wallets… if none appear, install MetaMask, Rainbow, OKX or Bitget and refresh.</p>}
+                {wallets.length === 0 && <p className="muted small">Detecting wallets… if none appear, use WalletConnect below or open this site in your wallet's in-app browser.</p>}
                 {wallets.map((w) => (
                   <button key={w.info.uuid} className="wallet-btn" disabled={busy} onClick={() => connect(w)}>
                     {w.info.icon ? <img src={w.info.icon} alt="" /> : <span className="brand"><span className="eye" /></span>}
                     {w.info.name}
                   </button>
                 ))}
+                {walletConnectConfigured() ? (
+                  <button className="wallet-btn" disabled={busy} onClick={connectWC}>
+                    <span className="brand"><span className="eye" /></span>
+                    WalletConnect
+                    <span className="muted small" style={{ marginLeft: 'auto' }}>Rainbow, Trust, MetaMask… any mobile wallet</span>
+                  </button>
+                ) : (
+                  <p className="muted small">On mobile? Open this site inside your Rainbow or MetaMask app browser, or ask us to enable WalletConnect.</p>
+                )}
               </div>
             </div>
           </div>
@@ -56,6 +81,7 @@ function Landing({ onSignedIn }: { onSignedIn: (u: User, mode: string) => void }
           <div className="card feature"><h3>Usage analytics</h3><p>Token usage, cost, and platform inflow/outflow feeds — the substrate for tokenized assets.</p></div>
         </div>
       </div>
+      {wrongNet && <NetworkPrompt onDismiss={() => setWrongNet(false)} />}
     </div>
   )
 }

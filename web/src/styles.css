@@ -162,3 +162,8 @@ svg.chart .axis { stroke: var(--border); }
 .pill.on { color: var(--ok); border-color: rgba(52, 211, 153, 0.4); }
 .pill.off { color: var(--muted); }
 .pill.err { color: var(--danger); border-color: rgba(248, 113, 113, 0.4); }
+
+/* network prompt + chain badge */
+.net-overlay { position: fixed; inset: 0; background: rgba(8, 8, 14, 0.72); display: flex; align-items: center; justify-content: center; z-index: 90; padding: 16px; }
+.net-modal { max-width: 380px; width: 100%; }
+.net-chip.bad { color: var(--warn); border-color: var(--warn); cursor: pointer; }

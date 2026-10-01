@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import './styles.css'
-import { api, short, toast, Toasts } from './wallet'
+import { api, short, toast, Toasts, ChainBadge, NetworkPrompt } from './wallet'
 import { Landing, Overview, Keys, Byok, Credits } from './pages1'
 import { Agents, Models, Docs } from './pages2'
 
@@ -22,6 +22,7 @@ function App() {
   const [tab, setTab] = useState<Tab>('overview')
   const [refreshKey, setRefreshKey] = useState(0)
   const [balance, setBalance] = useState<number | null>(null)
+  const [netPrompt, setNetPrompt] = useState(false)
 
   const refreshBalance = useCallback(() => {
     if (user) api('/api/credits').then((r) => setBalance(r.balance_usd_micros)).catch(() => {})
@@ -47,7 +48,7 @@ function App() {
   if (!user) {
     return (
       <>
-        <TopBar user={null} mode={mode} balance={null} onLogout={logout} />
+        <TopBar user={null} mode={mode} balance={null} onLogout={logout} onNeedSwitch={() => {}} />
         <Landing onSignedIn={(u, m) => { setUser(u); setMode(m); onChanged() }} />
         <Toasts />
       </>
@@ -56,7 +57,7 @@ function App() {
 
   return (
     <>
-      <TopBar user={user} mode={mode} balance={balance} onLogout={logout} />
+      <TopBar user={user} mode={mode} balance={balance} onLogout={logout} onNeedSwitch={() => setNetPrompt(true)} />
       <div className="wrap">
         {mode === 'pglite' && (
           <div className="demo-banner">
@@ -78,17 +79,19 @@ function App() {
         {tab === 'models' && <Models />}
         {tab === 'docs' && <Docs />}
       </div>
+      {netPrompt && <NetworkPrompt onDismiss={() => setNetPrompt(false)} />}
       <Toasts />
     </>
   )
 }
 
-function TopBar({ user, mode, balance, onLogout }: { user: User | null; mode: string; balance: number | null; onLogout: () => void }) {
+function TopBar({ user, mode, balance, onLogout, onNeedSwitch }: { user: User | null; mode: string; balance: number | null; onLogout: () => void; onNeedSwitch: () => void }) {
   return (
     <div className="topbar">
       <div className="brand"><span className="eye" /> Thirdeye AI</div>
       {user && <span className={'badge' + (mode === 'postgres' ? ' live' : '')}>{mode === 'postgres' ? 'LIVE' : 'DEMO'}</span>}
       <span className="spacer" />
+      {user && <ChainBadge onNeedSwitch={onNeedSwitch} />}
       {user && balance !== null && (
         <span className="chip">
           <span className="muted small">Balance</span>
