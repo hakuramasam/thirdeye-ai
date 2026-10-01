@@ -23,6 +23,14 @@ pay-per-call services.
 | **Autonomous agents** | Per-user agents with system prompt, model, budget, max steps, cron schedule. Tools from MCP servers (streamable HTTP), plus an `http_fetch` tool that speaks x402 (HTTP 402 pay-per-call, USDC on Base) when enabled. Runs recorded with spend. |
 | **Platform token (roadmap)** | The billing layer is behind `src/lib/billing.ts`; adding "pay with the platform token" is a new deposit-verification path + adapter, no API changes. |
 
+## Scheduling autonomous agents
+
+Vercel Hobby allows one cron per day, so the built-in cron fires daily at 18:30 UTC.
+Agents with finer cron schedules (e.g. `*/30 * * * *`) are fully supported — point any
+external pinger (cron-job.org, GitHub Actions, a server) at
+`POST /api/cron/agents` with header `Authorization: Bearer $CRON_SECRET`
+and every due agent runs on its own schedule.
+
 ## Local quickstart
 
 ```bash
