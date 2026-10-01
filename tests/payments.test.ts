@@ -58,6 +58,7 @@ describe('Payments & Credits Module B Tests', () => {
     id: 'usr_test_b',
     wallet: '0x2222222222222222222222222222222222222222',
     role: 'user',
+    created_at: '',
   }
 
   before(async () => {
