@@ -6,7 +6,7 @@ import type { AppEnv, UserRow } from './types.js'
 import { env } from './env.js'
 
 const secret = () => new TextEncoder().encode(env.sessionSecret)
-export const SESSION_COOKIE = 'haku_session'
+export const SESSION_COOKIE = 'thirdeye_session'
 
 export async function createSessionToken(user: UserRow): Promise<string> {
   return new SignJWT({ uid: user.id, wallet: user.wallet, role: user.role })

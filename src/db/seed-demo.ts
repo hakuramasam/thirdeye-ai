@@ -6,7 +6,7 @@ const DEMO_WALLET = '0x0000000000000000000000000000000000000d0e'
 export async function seedDemoData(): Promise<void> {
   const count = await one('SELECT COUNT(*)::int AS n FROM users')
   if ((count?.n ?? 0) > 0) return
-  console.log('[haku] demo mode: seeding demo data')
+  console.log('[thirdeye] demo mode: seeding demo data')
 
   await query('INSERT INTO users (id, wallet) VALUES ($1, $2) ON CONFLICT DO NOTHING', ['demo-user', DEMO_WALLET])
 
@@ -41,7 +41,7 @@ export async function seedDemoData(): Promise<void> {
   // Demo agent
   await query(
     `INSERT INTO agents (id, user_id, name, system_prompt, model, mcp_servers, x402_enabled, budget_usd_micros)
-     VALUES ('demo-agent', 'demo-user', 'Market Watcher', 'You are a concise markets research agent. Summarize the day''s key moves.', 'haku-mock', '[]'::jsonb, false, 100000)
+     VALUES ('demo-agent', 'demo-user', 'Market Watcher', 'You are a concise markets research agent. Summarize the day''s key moves.', 'thirdeye-mock', '[]'::jsonb, false, 100000)
      ON CONFLICT (id) DO NOTHING`
   )
 }

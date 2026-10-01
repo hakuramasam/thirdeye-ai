@@ -23,7 +23,7 @@ test('HAKU Gateway Module A Tests', async (t) => {
   const app = new Hono()
   registerV1Routes(app as any)
 
-  await t.test('(a) non-stream chat completion with haku-mock', async () => {
+  await t.test('(a) non-stream chat completion with thirdeye-mock', async () => {
     const res = await app.request('/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -31,21 +31,21 @@ test('HAKU Gateway Module A Tests', async (t) => {
         Authorization: `Bearer ${keySecret}`,
       },
       body: JSON.stringify({
-        model: 'haku-mock',
+        model: 'thirdeye-mock',
         messages: [{ role: 'user', content: 'hello world' }],
       }),
     })
 
     assert.equal(res.status, 200)
-    assert.equal(res.headers.get('X-Haku-Byok'), 'false')
-    assert.equal(res.headers.get('X-Haku-Model'), 'haku-mock')
+    assert.equal(res.headers.get('X-Thirdeye-Byok'), 'false')
+    assert.equal(res.headers.get('X-Thirdeye-Model'), 'thirdeye-mock')
 
     const body = await res.json()
     assert.equal(body.object, 'chat.completion')
     assert.ok(body.choices[0].message.content.startsWith('MOCK: hello world'))
 
     // Verify usage recorded
-    const usageRow = await one('SELECT * FROM usage_events WHERE user_id = $1 AND model = $2', [userId, 'haku-mock'])
+    const usageRow = await one('SELECT * FROM usage_events WHERE user_id = $1 AND model = $2', [userId, 'thirdeye-mock'])
     assert.ok(usageRow)
     assert.equal(Number(usageRow.cost_usd_micros), 0)
   })
@@ -58,7 +58,7 @@ test('HAKU Gateway Module A Tests', async (t) => {
         Authorization: `Bearer ${keySecret}`,
       },
       body: JSON.stringify({
-        model: 'haku-mock',
+        model: 'thirdeye-mock',
         messages: [{ role: 'user', content: 'stream test' }],
         stream: true,
       }),
@@ -75,7 +75,7 @@ test('HAKU Gateway Module A Tests', async (t) => {
     assert.ok(lines.length >= 4)
   })
 
-  await t.test('(c) GET /api/v1/models lists haku-mock and gpt-4o-mini', async () => {
+  await t.test('(c) GET /api/v1/models lists thirdeye-mock and gpt-4o-mini', async () => {
     const res = await app.request('/api/v1/models', {
       method: 'GET',
       headers: {
@@ -87,7 +87,7 @@ test('HAKU Gateway Module A Tests', async (t) => {
     const body = await res.json()
     assert.equal(body.object, 'list')
     const modelIds = body.data.map((m: any) => m.id)
-    assert.ok(modelIds.includes('haku-mock'))
+    assert.ok(modelIds.includes('thirdeye-mock'))
     assert.ok(modelIds.includes('gpt-4o-mini'))
   })
 
@@ -96,10 +96,10 @@ test('HAKU Gateway Module A Tests', async (t) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: 'Bearer sk-haku-invalidkey1234567890',
+        Authorization: 'Bearer sk-thirdeye-invalidkey1234567890',
       },
       body: JSON.stringify({
-        model: 'haku-mock',
+        model: 'thirdeye-mock',
         messages: [{ role: 'user', content: 'test' }],
       }),
     })
@@ -136,7 +136,7 @@ test('HAKU Gateway Module A Tests', async (t) => {
           Authorization: `Bearer ${rlKeySecret}`,
         },
         body: JSON.stringify({
-          model: 'haku-mock',
+          model: 'thirdeye-mock',
           messages: [{ role: 'user', content: 'rate limit test' }],
         }),
       })
@@ -154,7 +154,7 @@ test('HAKU Gateway Module A Tests', async (t) => {
     assert.equal(body3.error.type, 'rate_limit')
   })
 
-  await t.test('(g) BYOK resolution returns X-Haku-Byok true', async () => {
+  await t.test('(g) BYOK resolution returns X-Thirdeye-Byok true', async () => {
     const byokUserId = 'user_byok_' + newId()
     await query('INSERT INTO users (id, wallet) VALUES ($1, $2)', [byokUserId, '0x' + newId().padEnd(40, '0')])
     const { secret: byokKeySecret } = await createApiKey(byokUserId, 'byok-user-key', 60, 250000)
@@ -173,13 +173,13 @@ test('HAKU Gateway Module A Tests', async (t) => {
         Authorization: `Bearer ${byokKeySecret}`,
       },
       body: JSON.stringify({
-        model: 'haku-mock',
+        model: 'thirdeye-mock',
         messages: [{ role: 'user', content: 'byok test' }],
       }),
     })
 
     assert.equal(res.status, 200)
-    assert.equal(res.headers.get('X-Haku-Byok'), 'true')
+    assert.equal(res.headers.get('X-Thirdeye-Byok'), 'true')
   })
 
   await t.test('(h) billing check for paid model and credit adjustment', async () => {
@@ -189,7 +189,7 @@ test('HAKU Gateway Module A Tests', async (t) => {
 
     await query(
       `INSERT INTO models_catalog (model, provider, upstream_model, price_in_1m_usd_micros, price_out_1m_usd_micros)
-       VALUES ('paid-mock', 'mock', 'haku-mock', 1000000, 1000000)
+       VALUES ('paid-mock', 'mock', 'thirdeye-mock', 1000000, 1000000)
        ON CONFLICT (model) DO UPDATE SET price_in_1m_usd_micros = 1000000, price_out_1m_usd_micros = 1000000`,
       []
     )
@@ -227,7 +227,7 @@ test('HAKU Gateway Module A Tests', async (t) => {
     })
 
     assert.equal(res2.status, 200)
-    const costHeader = res2.headers.get('X-Haku-Cost-Usd')
+    const costHeader = res2.headers.get('X-Thirdeye-Cost-Usd')
     assert.ok(costHeader)
     assert.ok(Number(costHeader) > 0)
 

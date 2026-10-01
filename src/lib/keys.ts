@@ -5,12 +5,12 @@ import { one } from '../db/index.js'
 
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 
-/** Generate a new API key secret: sk-haku-<48 chars> */
+/** Generate a new API key secret: sk-thirdeye-<48 chars> */
 export function generateApiKeySecret(): string {
   let s = ''
   const buf = crypto.getRandomValues(new Uint8Array(48))
   for (const b of buf) s += ALPHABET[b % ALPHABET.length]
-  return `sk-haku-${s}`
+  return `sk-thirdeye-${s}`
 }
 
 export function hashSecret(secret: string): string {
@@ -33,13 +33,13 @@ export async function createApiKey(userId: string, name: string, rpm: number, tp
 
 /**
  * Middleware for /api/v1/* OpenAI-compatible endpoints.
- * Bearer sk-haku-... -> resolves user + key row onto the context.
+ * Bearer sk-thirdeye-... -> resolves user + key row onto the context.
  */
 export async function apiKeyAuth(c: Context<AppEnv>, next: Next) {
   const auth = c.req.header('authorization') ?? ''
   const secret = auth.replace(/^Bearer\s+/i, '').trim()
-  if (!secret.startsWith('sk-haku-')) {
-    return c.json({ error: { message: 'Missing or malformed API key. Expected: Authorization: Bearer sk-haku-...', type: 'auth', code: 401 } }, 401)
+  if (!secret.startsWith('sk-thirdeye-')) {
+    return c.json({ error: { message: 'Missing or malformed API key. Expected: Authorization: Bearer sk-thirdeye-...', type: 'auth', code: 401 } }, 401)
   }
   const key = await one(
     `SELECT k.*, u.wallet AS user_wallet, u.role AS user_role FROM api_keys k

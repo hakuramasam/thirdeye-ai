@@ -9,7 +9,7 @@ import { registerAuthRoutes } from './routes/auth.js'
 import { registerKeysRoutes } from './routes/keys.js'
 import { registerCreditsRoutes } from './routes/credits.js'
 import { registerStatsRoutes } from './routes/stats.js'
-import { registerAgentsRoutes } from './routes/agents.js'
+import { registerAgentsRoutes, registerCronRoute } from './routes/agents.js'
 
 const app = new Hono<AppEnv>()
 
@@ -42,6 +42,7 @@ registerKeysRoutes(app)
 registerCreditsRoutes(app)
 registerStatsRoutes(app)
 registerAgentsRoutes(app)
+registerCronRoute(app)
 registerV1Routes(app)
 
 app.notFound((c) =>
@@ -49,7 +50,7 @@ app.notFound((c) =>
 )
 
 app.onError((err, c) => {
-  console.error('[haku] unhandled error:', err)
+  console.error('[thirdeye] unhandled error:', err)
   return c.json({ error: { message: 'Internal server error', type: 'internal', code: 500 } }, 500)
 })
 

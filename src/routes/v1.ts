@@ -197,9 +197,9 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
         c.header('Content-Type', 'text/event-stream')
         c.header('Cache-Control', 'no-cache')
         c.header('Connection', 'keep-alive')
-        c.header('X-Haku-Model', requestedModel)
-        c.header('X-Haku-Byok', providerCall.byok ? 'true' : 'false')
-        c.header('X-Haku-Cost-Usd', '0')
+        c.header('X-Thirdeye-Model', requestedModel)
+        c.header('X-Thirdeye-Byok', providerCall.byok ? 'true' : 'false')
+        c.header('X-Thirdeye-Cost-Usd', '0')
         c.header('X-RateLimit-Remaining-RPM', String(Math.max(0, apiKey.rpm - rl.rpm_used)))
 
         return c.body(stream1)
@@ -237,7 +237,7 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
           env.platformMarginPct,
           providerCall.byok
         )
-        const chatId = 'chatcmpl-haku-' + newId()
+        const chatId = 'chatcmpl-thirdeye-' + newId()
         const created = Math.floor(Date.now() / 1000)
 
         if (costMicros > 0) {
@@ -270,9 +270,9 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
           latency_ms: latencyMs,
         })
 
-        c.header('X-Haku-Model', requestedModel)
-        c.header('X-Haku-Byok', providerCall.byok ? 'true' : 'false')
-        c.header('X-Haku-Cost-Usd', (costMicros / 1e6).toFixed(6))
+        c.header('X-Thirdeye-Model', requestedModel)
+        c.header('X-Thirdeye-Byok', providerCall.byok ? 'true' : 'false')
+        c.header('X-Thirdeye-Cost-Usd', (costMicros / 1e6).toFixed(6))
         c.header('X-RateLimit-Remaining-RPM', String(Math.max(0, apiKey.rpm - rl.rpm_used)))
 
         return c.json({

@@ -34,7 +34,7 @@ export async function callMockChat(params: Record<string, any>): Promise<{
     id: `chatcmpl-mock-${newId()}`,
     object: 'chat.completion',
     created: Math.floor(Date.now() / 1000),
-    model: params.model || 'haku-mock',
+    model: params.model || 'thirdeye-mock',
     choices: [
       {
         index: 0,
@@ -69,7 +69,7 @@ export async function callMockStream(params: Record<string, any>): Promise<Respo
   const promptTokens = Math.max(1, Math.ceil(JSON.stringify(messages).length / 4))
   const completionTokens = 7
 
-  const model = params.model || 'haku-mock'
+  const model = params.model || 'thirdeye-mock'
   const id = `chatcmpl-mock-${newId()}`
   const created = Math.floor(Date.now() / 1000)
 

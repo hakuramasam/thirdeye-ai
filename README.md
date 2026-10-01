@@ -1,6 +1,6 @@
-# HAKU Router
+# Thirdeye AI
 
-> OpenRouter-style AI gateway + autonomous agent platform. Working name — easy to rename.
+> OpenRouter-style AI gateway + autonomous agent platform. Working name (Thirdeye AI) — easy to rename.
 
 One OpenAI-compatible API (`/api/v1/chat/completions`) that routes to any provider,
 with wallet-based signup, prepaid USDC/USDG credits, per-key rate limiting,
@@ -15,7 +15,7 @@ pay-per-call services.
 | **Model catalog** | Seeded in `models_catalog` (OpenAI, Anthropic, Groq, DeepSeek, mock). Prices per 1M tokens in USD micros. Add any OpenAI-based provider by inserting a row. |
 | **BYOK** | Users bring their own provider keys (stored AES-256-GCM encrypted). BYOK calls are metered but not charged full price (2% metering rate). |
 | **Platform keys** | Brokered calls use the platform's provider keys (`PROV_<NAME>_API_KEY`) and are charged from prepaid credits at catalog price + margin (`PLATFORM_MARGIN_PCT`, default 10%). |
-| **API keys** | `sk-haku-...` secrets, SHA-256 hashed at rest, per-key RPM/TPM limits (fixed window), soft-revoke. |
+| **API keys** | `sk-thirdeye-...` secrets, SHA-256 hashed at rest, per-key RPM/TPM limits (fixed window), soft-revoke. |
 | **Wallet auth** | SIWE (Sign-In with Ethereum) via EIP-6963 multi-wallet discovery: MetaMask, Rainbow, OKX, Bitget — any injected wallet. No passwords, no email. |
 | **Payments** | On-chain stablecoin deposits, verified from chain RPCs: USDC on Base (8453) and USDG on Robinhood Chain (4663 — USDG is the chain's official stablecoin; config is token-agnostic so USDC can be added there the day it exists). User sends USDC/USDG to the platform receiver wallet, submits the tx hash, the platform verifies the Transfer log and credits the account. Idempotent. |
 | **Metering & ledger** | Every request recorded in `usage_events` (tokens, cost, latency, status); every credit movement in the signed `ledger`. Prepaid balance enforced per request. |
@@ -32,7 +32,7 @@ npm run dev                  # API on :8787
 npm run dev:web              # dashboard on :5173 (proxies /api)
 ```
 
-No `DATABASE_URL` → embedded Postgres (PGlite), file-backed at `.data/haku`, seeded
+No `DATABASE_URL` → embedded Postgres (PGlite), file-backed at `.data/thirdeye`, seeded
 with demo data on boot. Any wallet can sign in and create real keys.
 
 Try the API:
@@ -40,18 +40,18 @@ Try the API:
 ```bash
 # create a key in the dashboard (API Keys tab), then:
 curl http://localhost:8787/api/v1/chat/completions \
-  -H "Authorization: Bearer sk-haku-..." \
+  -H "Authorization: Bearer sk-thirdeye-..." \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}'
 ```
 
-`haku-mock` is a built-in provider for testing that needs no upstream keys.
+`thirdeye-mock` is a built-in provider for testing that needs no upstream keys.
 
 ## OpenAI SDK compatibility
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="https://<your-domain>/api/v1", api_key="sk-haku-...")
+client = OpenAI(base_url="https://<your-domain>/api/v1", api_key="sk-thirdeye-...")
 resp = client.chat.completions.create(model="gpt-4o-mini",
                                       messages=[{"role":"user","content":"hi"}])
 ```

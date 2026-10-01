@@ -9,10 +9,10 @@ export const env = {
   isServerless: !!process.env.VERCEL,
 
   databaseUrl: process.env.DATABASE_URL || '',
-  pgliteDir: process.env.PGLITE_DIR ?? (process.env.VERCEL ? 'memory://' : '.data/haku'),
+  pgliteDir: process.env.PGLITE_DIR ?? (process.env.VERCEL ? 'memory://' : '.data/thirdeye'),
 
-  sessionSecret: process.env.SESSION_SECRET || 'haku-dev-session-secret',
-  masterKey: process.env.MASTER_KEY || 'haku-dev-master-key',
+  sessionSecret: process.env.SESSION_SECRET || 'thirdeye-dev-session-secret',
+  masterKey: process.env.MASTER_KEY || 'thirdeye-dev-master-key',
 
   platformReceiverAddress: (process.env.PLATFORM_RECEIVER_ADDRESS || '').toLowerCase(),
   platformMarginPct: num(process.env.PLATFORM_MARGIN_PCT, 10),

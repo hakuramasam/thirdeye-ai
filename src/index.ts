@@ -17,5 +17,5 @@ try {
   // web/dist not built yet — API-only mode
 }
 
-console.log(`[haku-router] listening on http://localhost:${env.port}`)
+console.log(`[thirdeye-ai] listening on http://localhost:${env.port}`)
 export default server

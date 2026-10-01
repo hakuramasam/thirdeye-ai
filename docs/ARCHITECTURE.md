@@ -1,4 +1,4 @@
-# HAKU Router — Architecture & Module Contract
+# Thirdeye AI — Architecture & Module Contract
 
 OpenRouter-style AI gateway + autonomous agent platform. Working name, easy to rename.
 
@@ -17,7 +17,7 @@ OpenRouter-style AI gateway + autonomous agent platform. Working name, easy to r
 - `src/db/schema.sql` — full schema (users, api_keys, byok_keys, models_catalog, usage_events, ratelimit_counters, deposits, ledger, agents, agent_runs, auth_nonces). Read it.
 - `src/lib/types.ts` — `AppEnv`, `UserRow`, `ApiKeyRow`, `Ctx`
 - `src/lib/session.ts` — `createSessionToken(user)`, `readSession(c)`, `requireUser` middleware, `attachUser`, `setSessionCookie(c, token)`, `clearSessionCookie(c)`
-- `src/lib/keys.ts` — `generateApiKeySecret()`, `createApiKey(userId, name, rpm, tpm) -> {secret, row}`, `apiKeyAuth` middleware (Bearer sk-haku-... → sets `c.get('user')` + `c.get('apiKey')`)
+- `src/lib/keys.ts` — `generateApiKeySecret()`, `createApiKey(userId, name, rpm, tpm) -> {secret, row}`, `apiKeyAuth` middleware (Bearer sk-thirdeye-... → sets `c.get('user')` + `c.get('apiKey')`)
 - `src/lib/ratelimit.ts` — `checkAndConsume(keyId, rpm, tpm, estTokens) -> {ok, reset_seconds, ...}`, `refundSlot(keyId, tokens)`
 - `src/lib/pricing.ts` — `ModelRow`, `computeCostMicros(model, inTok, outTok, marginPct, byok) -> micros`
 - `src/lib/billing.ts` — `getBalanceMicros(userId)`, `debitForUsage(userId, costMicros, ref) -> {ok, balance}` (ok:false = insufficient), `creditDeposit(userId, amountMicros, {chain, txHash, token}) -> {credited, balance}` (idempotent), `adjustCredit(userId, amountMicros, reason)`
@@ -63,7 +63,7 @@ OpenAI-compatible inference API.
 - `src/providers/anthropic.ts` — convert OpenAI format ↔ Anthropic Messages API
   (api.anthropic.com/v1/messages, `anthropic-version` header), incl. tools and
   streaming SSE conversion back to OpenAI chunk format.
-- `src/providers/mock.ts` — provider `mock` (model `haku-mock`): deterministic canned
+- `src/providers/mock.ts` — provider `mock` (model `thirdeye-mock`): deterministic canned
   responses locally (no network). Supports non-stream, stream (emit SSE chunks),
   tools (echoes a demo tool call when the input contains the word `weather`).
 - `src/routes/v1.ts` — `registerV1Routes(app)`; auth: `apiKeyAuth` middleware.
@@ -71,9 +71,9 @@ OpenAI-compatible inference API.
   - `POST /api/v1/chat/completions` — full OpenAI request/response compat incl. `stream`, `tools`, `max_tokens`, `temperature`, `messages`. Flow: validate model (from models_catalog, enabled) → rate limit (est tokens = chars of JSON messages /4; if !ok → 429 with `Retry-After` + rate limit headers) → resolveProvider → if NOT byok, require prepaid balance ≥ estimated minimum ($0.01) via billing `getBalanceMicros(user.id)`; else proceed → call/stream → record usage via `recordUsage` + charge via `debitForUsage` (only actual cost after response; BYOK cost is the 2% metering fee) → on upstream error, `refundSlot` and record failed usage status `5xx`.
   - Billing import: `import { getBalanceMicros, debitForUsage } from '../lib/billing.js'` (implemented by builder B, signatures below).
   - Usage import: `import { recordUsage } from '../lib/usage.js'` — THIS FILE IS OWNED BY A: `recordUsage({user_id, api_key_id, model, provider, byok, prompt_tokens, completion_tokens, cost_usd_micros, status, latency_ms})` inserts into usage_events. Also export `getUserUsageSeries(userId, days) -> [{day, requests, tokens, cost_usd_micros}]`.
-  - Response headers on success: `X-Haku-Model`, `X-Haku-Byok`, `X-RateLimit-Remaining-RPM`, `X-Haku-Cost-Usd` (string).
+  - Response headers on success: `X-Thirdeye-Model`, `X-Thirdeye-Byok`, `X-RateLimit-Remaining-RPM`, `X-Thirdeye-Cost-Usd` (string).
 - Tests `tests/gateway.test.ts`: migrate + seed user+key (`createApiKey`), call via `app.request()`:
-  non-stream `haku-mock`, stream `haku-mock` (parse SSE), rate-limit 429 after exhausting rpm of a 2-rpm key, BYOK path (insert byok_keys row with `encryptSecret('test-key')` for provider "mock" and assert `X-Haku-Byok: true`), 401 bad key, unknown model 404/400.
+  non-stream `thirdeye-mock`, stream `thirdeye-mock` (parse SSE), rate-limit 429 after exhausting rpm of a 2-rpm key, BYOK path (insert byok_keys row with `encryptSecret('test-key')` for provider "mock" and assert `X-Thirdeye-Byok: true`), 401 bad key, unknown model 404/400.
 
 ### B. Payments / stats (`src/payments/`, `src/routes/credits.ts`, `src/routes/stats.ts`) — owned by builder B
 - `src/payments/chains.ts` — supported chains config:
@@ -107,13 +107,13 @@ OpenAI-compatible inference API.
 - `src/agents/runner.ts` — `runAgent(agentRow, input, user) -> Promise<{ runId, status, output, tool_calls, spend_usd_micros, error }>`:
   creates agent_runs row (status running), loop up to `agent.max_steps`: call chat completions **internally** through builder A's contract:
   `resolveProvider(user, modelRow)` (via a swappable injected `llm` dependency: `runAgent(agent, input, user, llm?)` — default resolves the provider, tests inject a fake) then `call({messages, tools, model})`; when the provider returns tool_calls → execute via MCP `call()` (or x402-marked URLs in args if agent.x402_enabled — arguments containing a URL field trigger `paidFetch` instead when the plain fetch returns 402) and continue the loop; else finish with content.
-  Costs: compute with `computeCostMicros` (non-byok margin rate), sum into run spend, `debitForUsage(user.id, cost, 'agent:'+runId)` each step; stop early when balance insufficient or spend > agent.budget_usd_micros. Update agent_runs row; set agents.last_run_at. Model row: fetch from models_catalog by agent.model; if it resolves to `haku-mock`/provider mock, runner must still work end-to-end (mock provider supports a `weather` tool call).
+  Costs: compute with `computeCostMicros` (non-byok margin rate), sum into run spend, `debitForUsage(user.id, cost, 'agent:'+runId)` each step; stop early when balance insufficient or spend > agent.budget_usd_micros. Update agent_runs row; set agents.last_run_at. Model row: fetch from models_catalog by agent.model; if it resolves to `thirdeye-mock`/provider mock, runner must still work end-to-end (mock provider supports a `weather` tool call).
 - `src/routes/agents.ts` — `registerAgentsRoutes(app)` (requireUser except where noted):
   - CRUD: `GET /api/agents`, `POST /api/agents` `{name, system_prompt, model, mcp_servers?, x402_enabled?, budget_usd_micros?, max_steps?, cron?}`, `PATCH /api/agents/:id` (owner only), `DELETE /api/agents/:id`
   - `POST /api/agents/:id/run` `{input}` → run (synchronous, returns run result)
   - `GET /api/agents/:id/runs` → last 20 runs
   - `POST /api/cron/agents` (NO session; auth via `Authorization: Bearer $CRON_SECRET`) → run all active agents whose `cron` is due (minute-resolution check; track agents.last_run_at and a simple cron parser — support `*`, `*/n`, `m h dom mon dow` numeric fields) → `{ triggered: [...] }`
-- Tests `tests/agents.test.ts`: build a tiny MCP server in-process using `@modelcontextprotocol/sdk` server + StreamableHTTP (a `weather` tool returning fixed JSON), seed user + agent (model `haku-mock`, mcp server url), run agent, assert output contains tool result and run row recorded with spend 0 (mock price 0). Also test cron-due logic (pure function `isCronDue(cron, now, lastRunAt)`).
+- Tests `tests/agents.test.ts`: build a tiny MCP server in-process using `@modelcontextprotocol/sdk` server + StreamableHTTP (a `weather` tool returning fixed JSON), seed user + agent (model `thirdeye-mock`, mcp server url), run agent, assert output contains tool result and run row recorded with spend 0 (mock price 0). Also test cron-due logic (pure function `isCronDue(cron, now, lastRunAt)`).
 
 ### D. Dashboard + wallet auth (`web/`, `src/routes/auth.ts`) — owned by builder D
 - `src/routes/auth.ts` — `registerAuthRoutes(app)`:

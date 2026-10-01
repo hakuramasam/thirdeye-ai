@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   user_id     text NOT NULL REFERENCES users(id),
   name        text NOT NULL,
   key_hash    text NOT NULL,                 -- sha256 hex of full secret
-  key_prefix  text NOT NULL,                 -- e.g. sk-haku-Ab12 (for display)
+  key_prefix  text NOT NULL,                 -- e.g. sk-thirdeye-Ab12 (for display)
   rpm         integer NOT NULL DEFAULT 60,
   tpm         integer NOT NULL DEFAULT 250000,
   revoked_at  timestamptz,
@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS auth_nonces (
 -- ── Seed model catalog ───────────────────────────────────────────────────
 INSERT INTO models_catalog (model, provider, upstream_model, base_url, price_in_1m_usd_micros, price_out_1m_usd_micros)
 VALUES
-  ('haku-mock',              'mock',              'haku-mock',                NULL,                                 0,       0),
+  ('thirdeye-mock',           'mock',              'thirdeye-mock',                NULL,                                 0,       0),
   ('gpt-4o-mini',            'openai',            'gpt-4o-mini',              NULL,                                 150000,  600000),
   ('gpt-4o',                 'openai',            'gpt-4o',                   NULL,                                 2500000, 10000000),
   ('claude-sonnet-4',        'anthropic',         'claude-sonnet-4',          NULL,                                 3000000, 15000000),

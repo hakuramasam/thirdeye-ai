@@ -106,7 +106,7 @@ describe('Agents Module C Tests', () => {
 
     await query(
       `INSERT INTO agents (id, user_id, name, system_prompt, model, mcp_servers, x402_enabled, budget_usd_micros, max_steps)
-       VALUES ('agt_test_1', $1, 'weather-agent', 'You report weather.', 'haku-mock', '[]', false, 100000, 4)
+       VALUES ('agt_test_1', $1, 'weather-agent', 'You report weather.', 'thirdeye-mock', '[]', false, 100000, 4)
        ON CONFLICT DO NOTHING`,
       [testUser.id]
     )
@@ -115,7 +115,7 @@ describe('Agents Module C Tests', () => {
       user_id: testUser.id,
       name: 'weather-agent',
       system_prompt: 'You report weather.',
-      model: 'haku-mock',
+      model: 'thirdeye-mock',
       mcp_servers: JSON.stringify([{ name: 'test', url: mcpUrl }]),
       x402_enabled: false,
       budget_usd_micros: 100000,
@@ -140,7 +140,7 @@ describe('Agents Module C Tests', () => {
     const agentId = randomUUID()
     await query(
       `INSERT INTO agents (id, user_id, name, system_prompt, model, mcp_servers, x402_enabled, budget_usd_micros, max_steps)
-       VALUES ($1,$2,'persist-agent','sys','haku-mock','[]',false,100000,4)`,
+       VALUES ($1,$2,'persist-agent','sys','thirdeye-mock','[]',false,100000,4)`,
       [agentId, testUser.id]
     )
     const agent = await one(`SELECT * FROM agents WHERE id = $1`, [agentId])
@@ -163,7 +163,7 @@ describe('Agents Module C Tests', () => {
     // create agent with valid model from seeded catalog
     const created = await app.request('/api/agents', {
       method: 'POST', headers: H,
-      body: JSON.stringify({ name: 'ci-agent', system_prompt: 'Be terse.', model: 'haku-mock', mcp_servers: [{ name: 'test', url: mcpUrl }] }),
+      body: JSON.stringify({ name: 'ci-agent', system_prompt: 'Be terse.', model: 'thirdeye-mock', mcp_servers: [{ name: 'test', url: mcpUrl }] }),
     })
     assert.equal(created.status, 201)
     const agent = (await created.json()).agent
@@ -179,7 +179,7 @@ describe('Agents Module C Tests', () => {
     // invalid cron rejected
     const badCron = await app.request('/api/agents', {
       method: 'POST', headers: H,
-      body: JSON.stringify({ name: 'x', system_prompt: 's', model: 'haku-mock', cron: 'every tuesday' }),
+      body: JSON.stringify({ name: 'x', system_prompt: 's', model: 'thirdeye-mock', cron: 'every tuesday' }),
     })
     assert.equal(badCron.status, 400)
 
@@ -199,7 +199,7 @@ describe('Agents Module C Tests', () => {
     assert.equal(patched.status, 200)
     assert.equal((await patched.json()).agent.system_prompt, 'Be very terse.')
 
-    // run now (mock provider, no upstream key needed) -> mock needs catalog row + provider; haku-mock is free
+    // run now (mock provider, no upstream key needed) -> mock needs catalog row + provider; thirdeye-mock is free
     const run = await app.request(`/api/agents/${agent.id}/run`, {
       method: 'POST', headers: H, body: JSON.stringify({ input: 'Say hello' }),
     })

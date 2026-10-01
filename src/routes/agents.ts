@@ -221,7 +221,7 @@ export function registerAgentsRoutes(app: SessionApp): void {
  * that is due, sequentially, capped at 20 per invocation.
  */
 export function registerCronRoute(app: SessionApp): void {
-  app.post('/api/cron/agents', async (c) => {
+  const handler = async (c: any) => {
     const auth = c.req.header('authorization') || ''
     if (!env.cronSecret || auth !== `Bearer ${env.cronSecret}`) {
       return c.json({ error: { message: 'Unauthorized', type: 'auth', code: 401 } }, 401)
@@ -248,5 +248,7 @@ export function registerCronRoute(app: SessionApp): void {
       }
     }
     return c.json({ triggered, results })
-  })
+  }
+  // Vercel cron sends GET with `Authorization: Bearer $CRON_SECRET`; accept both.
+  app.on(['GET', 'POST'], '/api/cron/agents', handler)
 }
