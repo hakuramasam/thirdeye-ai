@@ -1,5 +1,7 @@
 // End-to-end over real HTTP against the local server on :8791
-const BASE = 'http://localhost:8791'
+const BASE = process.env.E2E_BASE || 'http://localhost:8791'
+const DOMAIN = process.env.E2E_DOMAIN || 'localhost'
+const URI = process.env.E2E_URI || 'http://localhost:5173'
 const j = async (path: string, init: RequestInit = {}) => {
   const res = await fetch(BASE + path, init)
   const body = await res.json().catch(() => ({}))
@@ -16,7 +18,7 @@ console.log('1. dashboard html:', idx.status, (await idx.text()).includes('Third
 const { privateKeyToAccount, generatePrivateKey } = await import('viem/accounts')
 const account = privateKeyToAccount(generatePrivateKey())
 const nonceRes = await j('/api/auth/nonce')
-const msg = `localhost wants you to sign in with your Ethereum account:\n${account.address}\n\nSign in to Thirdeye AI\n\nURI: http://localhost:5173\nVersion: 1\nChain ID: 8453\nNonce: ${nonceRes.body.nonce}\nIssued At: ${new Date().toISOString()}\nExpiration Time: ${new Date(Date.now() + 600000).toISOString()}`
+const msg = `${DOMAIN} wants you to sign in with your Ethereum account:\n${account.address}\n\nSign in to Thirdeye AI\n\nURI: ${URI}\nVersion: 1\nChain ID: 8453\nNonce: ${nonceRes.body.nonce}\nIssued At: ${new Date().toISOString()}\nExpiration Time: ${new Date(Date.now() + 600000).toISOString()}`
 const signature = await account.signMessage({ message: msg })
 const verify = await post('/api/auth/verify', { message: msg, signature })
 const cookie = (verify.headers.getSetCookie?.() || []).join('; ') || ''
