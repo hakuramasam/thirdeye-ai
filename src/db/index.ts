@@ -38,8 +38,13 @@ export function dbMode(): 'postgres' | 'pglite' {
 export async function query(sql: string, params: any[] = []): Promise<QueryResult> {
   if (env.databaseUrl) {
     const pool = await getPool()
-    const res = await pool.query(sql, params)
-    return { rows: res.rows, rowCount: res.rowCount ?? res.rows.length }
+    const res: any = await pool.query(sql, params)
+    // Multi-statement simple-query (migrate) returns an ARRAY of results.
+    if (Array.isArray(res)) {
+      const last = res[res.length - 1] ?? {}
+      return { rows: last.rows ?? [], rowCount: last.rowCount ?? 0 }
+    }
+    return { rows: res.rows ?? [], rowCount: res.rowCount ?? (res.rows ?? []).length }
   }
   const db = await getPglite()
   const res = await db.query(sql, params)
