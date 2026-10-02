@@ -5,6 +5,12 @@ import { SiweMessage } from 'siwe'
 import { query, one, dbMode } from '../db/index.js'
 import { newId } from '../lib/env.js'
 import { createSessionToken, setSessionCookie, clearSessionCookie, attachUser } from '../lib/session.js'
+import { adjustCredit } from '../lib/billing.js'
+
+/** Welcome credit for brand-new accounts. Brokered models run on free-tier provider
+ *  keys, so honoring ~$0.02 of usage costs the platform nothing while making the
+ *  first agent run work out of the box. */
+const SIGNUP_BONUS_MICROS = 20_000
 import type { AppEnv } from '../lib/types.js'
 
 export function registerAuthRoutes(app: Hono<AppEnv>): void {
@@ -118,6 +124,13 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
         'INSERT INTO users (id, wallet, role) VALUES ($1, $2, $3) RETURNING id, wallet, role',
         [userId, wallet, 'user']
       )
+      if (SIGNUP_BONUS_MICROS > 0) {
+        try {
+          await adjustCredit(userId, SIGNUP_BONUS_MICROS, 'signup-bonus')
+        } catch (e) {
+          console.warn('[auth] signup bonus failed:', (e as Error).message)
+        }
+      }
     }
 
     // Create session token and set cookie

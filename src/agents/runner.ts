@@ -160,7 +160,7 @@ export async function runAgent(
       if (cost > 0) {
         const debit = await debitForUsage(user.id, cost, `agent:${runId}`)
         if (!debit.ok) {
-          return await finish('error', null, toolCalls, spend, 'Insufficient credits')
+          return await finish('error', null, toolCalls, spend, 'Insufficient credits. Top up with USDC (Base) or USDG (Robinhood Chain) on the Deposit page.')
         }
         spend += cost
         if (spend > budget) {
