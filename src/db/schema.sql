@@ -134,9 +134,9 @@ VALUES
   ('gpt-oss-20b',            'openai-compatible', 'openai/gpt-oss-20b',        'https://api.groq.com/openai/v1',    100000,  400000),
   ('qwen3.8-27b',            'openai-compatible', 'qwen/qwen3.8-27b',          'https://api.groq.com/openai/v1',    200000,  500000),
   -- Mistral (free tier)
-  ('mistral-small',          'openai-compatible', 'mistral-small-latest',      'https://api.mistral.ai/v1',          100000,  300000),
+  ('ministral-3b',            'openai-compatible', 'ministral-3b-latest',        'https://api.mistral.ai/v1',           30000,   90000),
   ('ministral-8b',           'openai-compatible', 'ministral-8b-latest',        'https://api.mistral.ai/v1',           50000,  150000),
-  ('magistral-small',        'openai-compatible', 'magistral-small-latest',    'https://api.mistral.ai/v1',          500000, 1500000)
+  ('ministral-14b',          'openai-compatible', 'ministral-14b-latest',       'https://api.mistral.ai/v1',          100000,  300000)
 ON CONFLICT (model) DO UPDATE SET
   provider = EXCLUDED.provider,
   upstream_model = EXCLUDED.upstream_model,
@@ -144,4 +144,4 @@ ON CONFLICT (model) DO UPDATE SET
   price_in_1m_usd_micros = EXCLUDED.price_in_1m_usd_micros,
   price_out_1m_usd_micros = EXCLUDED.price_out_1m_usd_micros;
 
-DELETE FROM models_catalog WHERE model = 'llama-3.3-70b'; -- retired upstream
+DELETE FROM models_catalog WHERE model IN ('llama-3.3-70b', 'mistral-small', 'magistral-small'); -- retired upstream / not on Mistral free tier
