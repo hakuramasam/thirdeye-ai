@@ -9,6 +9,7 @@ import { registerAuthRoutes } from './routes/auth.js'
 import { registerKeysRoutes } from './routes/keys.js'
 import { registerCreditsRoutes } from './routes/credits.js'
 import { registerAdminRoutes } from './routes/admin.js'
+import { registerTelegramRoutes } from './routes/telegram.js'
 import { registerStatsRoutes } from './routes/stats.js'
 import { registerAgentsRoutes, registerCronRoute } from './routes/agents.js'
 
@@ -42,6 +43,7 @@ registerAuthRoutes(app)
 registerKeysRoutes(app)
 registerCreditsRoutes(app)
 registerAdminRoutes(app)
+registerTelegramRoutes(app)
 registerStatsRoutes(app)
 registerAgentsRoutes(app)
 registerCronRoute(app)

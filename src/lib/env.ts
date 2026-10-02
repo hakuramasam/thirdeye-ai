@@ -28,6 +28,10 @@ export const env = {
   })(),
 
   agentWalletKey: process.env.AGENT_WALLET_PRIVATE_KEY || '',
+
+  /** Telegram community bot (optional) */
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  telegramAdminIds: (process.env.TELEGRAM_ADMIN_IDS || '').split(',').map((x) => x.trim()).filter(Boolean),
   cronSecret: process.env.CRON_SECRET || '',
 }
 

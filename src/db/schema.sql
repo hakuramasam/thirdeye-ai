@@ -145,3 +145,11 @@ ON CONFLICT (model) DO UPDATE SET
   price_out_1m_usd_micros = EXCLUDED.price_out_1m_usd_micros;
 
 DELETE FROM models_catalog WHERE model IN ('llama-3.3-70b', 'mistral-small', 'magistral-small'); -- retired upstream / not on Mistral free tier
+
+CREATE TABLE IF NOT EXISTS telegram_members (
+  chat_id   BIGINT NOT NULL,
+  user_id   BIGINT NOT NULL,
+  username  TEXT NOT NULL DEFAULT '',
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (chat_id, user_id)
+);
