@@ -8,6 +8,7 @@ import { registerV1Routes } from './routes/v1.js'
 import { registerAuthRoutes } from './routes/auth.js'
 import { registerKeysRoutes } from './routes/keys.js'
 import { registerCreditsRoutes } from './routes/credits.js'
+import { registerAdminRoutes } from './routes/admin.js'
 import { registerStatsRoutes } from './routes/stats.js'
 import { registerAgentsRoutes, registerCronRoute } from './routes/agents.js'
 
@@ -40,6 +41,7 @@ app.get('/api/healthz', (c) => c.json({ ok: true, mode: dbMode(), time: new Date
 registerAuthRoutes(app)
 registerKeysRoutes(app)
 registerCreditsRoutes(app)
+registerAdminRoutes(app)
 registerStatsRoutes(app)
 registerAgentsRoutes(app)
 registerCronRoute(app)

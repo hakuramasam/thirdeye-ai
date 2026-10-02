@@ -56,7 +56,7 @@ export function deriveProviderName(model: ModelRow): string {
     try {
       const url = new URL(model.base_url.startsWith('http') ? model.base_url : `https://${model.base_url}`)
       let host = url.hostname.toLowerCase()
-      host = host.replace(/^api\./, '').replace(/\.com$/, '')
+      host = host.replace(/^api\./, '').replace(/\.[a-z]+$/, '')
       return host
     } catch (_) {
       return model.provider

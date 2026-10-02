@@ -128,6 +128,20 @@ VALUES
   ('gpt-4o',                 'openai',            'gpt-4o',                   NULL,                                 2500000, 10000000),
   ('claude-sonnet-4',        'anthropic',         'claude-sonnet-4',          NULL,                                 3000000, 15000000),
   ('claude-haiku-4',         'anthropic',         'claude-haiku-4',           NULL,                                 800000,  4000000),
-  ('llama-3.3-70b',          'openai-compatible', 'llama-3.3-70b-versatile',  'https://api.groq.com/openai/v1',     590000,  790000),
-  ('deepseek-v3',            'openai-compatible', 'deepseek-chat',            'https://api.deepseek.com/v1',       270000,  1100000)
-ON CONFLICT (model) DO NOTHING;
+  ('deepseek-v3',            'openai-compatible', 'deepseek-chat',            'https://api.deepseek.com/v1',       270000,  1100000),
+  -- Groq (free tier)
+  ('gpt-oss-120b',           'openai-compatible', 'openai/gpt-oss-120b',       'https://api.groq.com/openai/v1',    200000,  800000),
+  ('gpt-oss-20b',            'openai-compatible', 'openai/gpt-oss-20b',        'https://api.groq.com/openai/v1',    100000,  400000),
+  ('qwen3.8-27b',            'openai-compatible', 'qwen/qwen3.8-27b',          'https://api.groq.com/openai/v1',    200000,  500000),
+  -- Mistral (free tier)
+  ('mistral-small',          'openai-compatible', 'mistral-small-latest',      'https://api.mistral.ai/v1',          100000,  300000),
+  ('ministral-8b',           'openai-compatible', 'ministral-8b-latest',        'https://api.mistral.ai/v1',           50000,  150000),
+  ('magistral-small',        'openai-compatible', 'magistral-small-latest',    'https://api.mistral.ai/v1',          500000, 1500000)
+ON CONFLICT (model) DO UPDATE SET
+  provider = EXCLUDED.provider,
+  upstream_model = EXCLUDED.upstream_model,
+  base_url = EXCLUDED.base_url,
+  price_in_1m_usd_micros = EXCLUDED.price_in_1m_usd_micros,
+  price_out_1m_usd_micros = EXCLUDED.price_out_1m_usd_micros;
+
+DELETE FROM models_catalog WHERE model = 'llama-3.3-70b'; -- retired upstream
