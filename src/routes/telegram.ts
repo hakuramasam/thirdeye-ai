@@ -51,23 +51,45 @@ export function registerTelegramRoutes(app: SessionApp) {
 
     // New members: remember join time + welcome
     if (Array.isArray(msg.new_chat_members) && msg.new_chat_members.length > 0) {
+      // whoever performed the add is a member too — remember them (usually the owner)
+      if (from.id) {
+        await query(
+          `INSERT INTO telegram_members (chat_id, user_id, username, joined_at)
+           VALUES ($1, $2, $3, NOW())
+           ON CONFLICT (chat_id, user_id) DO NOTHING`,
+          [chatId, from.id, from.username ?? '']
+        )
+      }
       for (const m of msg.new_chat_members) {
         if (!m?.id) continue
-        if (m.is_bot && String(m.id) !== String(from.id)) continue // other bots: stay quiet
+        if (m.is_bot) {
+          if (String(m.id) === String(env.telegramBotId ?? -1)) {
+            await tg('sendMessage', { chat_id: chatId, text: 'Thirdeye AI bot is online — type /help to get started.' })
+          }
+          continue // bots: no member row, no welcome
+        }
         await query(
           `INSERT INTO telegram_members (chat_id, user_id, username, joined_at)
            VALUES ($1, $2, $3, NOW())
            ON CONFLICT (chat_id, user_id) DO NOTHING`,
           [chatId, m.id, m.username ?? '']
         )
-        if (!m.is_bot) {
-          await tg('sendMessage', {
-            chat_id: chatId,
-            text: `Welcome, ${m.username ? '@' + m.username : m.first_name ?? 'friend'}! You're in the Thirdeye AI community — the crypto-native LLM gateway. Type /help to get started.`,
-          })
-        }
+        await tg('sendMessage', {
+          chat_id: chatId,
+          text: `Welcome, ${m.username ? '@' + m.username : m.first_name ?? 'friend'}! You're in the Thirdeye AI community — the crypto-native LLM gateway. Type /help to get started.`,
+        })
       }
       return c.json({ ok: true })
+    }
+
+    // Track everyone we see in the group (first sighting = join time for spam grace)
+    if (from.id) {
+      await query(
+        `INSERT INTO telegram_members (chat_id, user_id, username, joined_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (chat_id, user_id) DO NOTHING`,
+        [chatId, from.id, from.username ?? '']
+      )
     }
 
     // Commands

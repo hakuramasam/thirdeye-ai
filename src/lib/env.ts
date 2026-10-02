@@ -32,6 +32,7 @@ export const env = {
   /** Telegram community bot (optional) */
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
   telegramAdminIds: (process.env.TELEGRAM_ADMIN_IDS || '').split(',').map((x) => x.trim()).filter(Boolean),
+  telegramBotId: process.env.TELEGRAM_BOT_ID || '',
   cronSecret: process.env.CRON_SECRET || '',
 }
 
