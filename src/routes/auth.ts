@@ -28,17 +28,34 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
     }
 
     let siweMsg: SiweMessage
+    let lenient = false
     try {
       siweMsg = new SiweMessage(message)
     } catch (e: any) {
-      return c.json(
-        { error: { message: 'Invalid SIWE message format.', type: 'invalid_request', code: 400 } },
-        400
+      // Some mobile wallets (WalletConnect relays, in-app browsers) mangle the message
+      // (CRLF line endings, trimmed/reordered fields) so the strict EIP-4361 parser throws.
+      // Security is preserved: nonce is single-use, freshness enforced via the nonce row's
+      // created_at, and the signature is verified against the EXACT raw message below.
+      const addr = message.match(/0x[a-fA-F0-9]{40}/)?.[0]
+      const nonce = message.match(/Nonce:\s*([A-Za-z0-9_-]+)/i)?.[1]
+      if (!addr || !nonce) {
+        console.warn(
+          `[auth] SIWE parse failed: ${(e as Error).message}; raw message: ${JSON.stringify(message.slice(0, 500))}`
+        )
+        return c.json(
+          { error: { message: 'Invalid SIWE message format.', type: 'invalid_request', code: 400 } },
+          400
+        )
+      }
+      lenient = true
+      siweMsg = { address: addr, nonce, issuedAt: '' } as unknown as SiweMessage
+      console.warn(
+        `[auth] SIWE strict parse failed, using lenient parse; raw message: ${JSON.stringify(message.slice(0, 500))}`
       )
     }
 
     // Single-use nonce check
-    const nonceRow = await one('SELECT nonce FROM auth_nonces WHERE nonce = $1', [siweMsg.nonce])
+    const nonceRow = await one('SELECT nonce, created_at FROM auth_nonces WHERE nonce = $1', [siweMsg.nonce])
     if (!nonceRow) {
       return c.json(
         { error: { message: 'Invalid or expired nonce.', type: 'invalid_request', code: 400 } },
@@ -48,11 +65,20 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
     await query('DELETE FROM auth_nonces WHERE nonce = $1', [siweMsg.nonce])
 
     // Expiration/Issued-At check (issued < 10 minutes ago)
-    if (siweMsg.issuedAt) {
+    if (!lenient && siweMsg.issuedAt) {
       const issuedAtTime = new Date(siweMsg.issuedAt).getTime()
       if (isNaN(issuedAtTime) || Date.now() - issuedAtTime > 10 * 60 * 1000) {
         return c.json(
           { error: { message: 'SIWE message expired (issued > 10 minutes ago).', type: 'invalid_request', code: 400 } },
+          400
+        )
+      }
+    }
+    if (lenient && nonceRow) {
+      const nonceAge = Date.now() - new Date(nonceRow.created_at).getTime()
+      if (nonceAge > 10 * 60 * 1000) {
+        return c.json(
+          { error: { message: 'Sign-in request expired, please try again.', type: 'invalid_request', code: 400 } },
           400
         )
       }
