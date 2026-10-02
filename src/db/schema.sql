@@ -153,3 +153,15 @@ CREATE TABLE IF NOT EXISTS telegram_members (
   joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (chat_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS telegram_messages (
+  id         BIGSERIAL PRIMARY KEY,
+  chat_id    BIGINT NOT NULL,
+  user_id    BIGINT NOT NULL,
+  message_id BIGINT NOT NULL,
+  username   TEXT NOT NULL DEFAULT '',
+  text       TEXT NOT NULL DEFAULT '',
+  is_bot     BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS telegram_messages_chat_time ON telegram_messages (chat_id, created_at);

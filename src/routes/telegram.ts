@@ -82,6 +82,15 @@ export function registerTelegramRoutes(app: SessionApp) {
       return c.json({ ok: true })
     }
 
+    // Log every message for the community-management automations
+    if (from.id && (text || msg.caption)) {
+      await query(
+        `INSERT INTO telegram_messages (chat_id, user_id, message_id, username, text, is_bot)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [chatId, from.id, msg.message_id ?? 0, from.username ?? '', (text || msg.caption || '').slice(0, 3000), !!from.is_bot]
+      )
+    }
+
     // Track everyone we see in the group (first sighting = join time for spam grace)
     if (from.id) {
       await query(
