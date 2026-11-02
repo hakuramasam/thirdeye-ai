@@ -124,4 +124,4 @@ Still not built:
 3. Provider key pooling + per-provider quotas. Today each provider uses a single key from env (`PROV_GROQ_API_KEY`, `PROV_MISTRAL_API_KEY`), so one account's traffic competes with everyone else's for that key's rate limit.
 4. Admin panel UI: `/api/admin/credit` and `/api/stats/public` exist as endpoints, but there is no screen for cross-user usage, and no model pricing editor (prices are still edited in `models_catalog` directly).
 5. Custom domain. The site is on `*.vercel.app`, which wallet reputation systems (Rainbow/Blockaid) flag as likely malicious, which blocks SIWE signing.
-6. Balance alerts to customers (the sweep currently alerts the operator only) and per-key caps for BYOK keys.
+6. Customer-facing balance alerts (the sweep alerts the operator only), prepaid credit packs, and invoices/receipts.
