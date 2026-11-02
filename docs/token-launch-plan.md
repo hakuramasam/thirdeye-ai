@@ -17,7 +17,7 @@ pre-sale in this plan, and nothing here should be read as an investment offer.
 | 2 | Chain | Base (8453) — same chain as USDC deposits and the settlement vault |
 | 3 | Supply | 1,000,000,000 fixed, no mint function, no owner |
 | 4 | Decimals | 18 |
-| 5 | Launch venue | Plain ERC-20 + Uniswap v4 pool seeded with USDC (no launchpad fee skim) |
+| 5 | Launch venue | **Clanker SDK** (see `docs/token-playbook.md`): ERC-20 + Uniswap v4 pool in one tx, 100% of fees to the treasury, `Paired` token, no dev buy |
 | 6 | Initial float | 5% of supply into the pool, 95% held by the treasury vault |
 | 7 | Deposit bonus | `PLATFORM_TOKEN_BONUS_BPS=1000` (+10% credit) |
 
@@ -62,6 +62,14 @@ start taking it.
 
 The platform token is registered with `haircutBps: 0` because paying in our own token earns the bonus
 (`PLATFORM_TOKEN_BONUS_BPS`) rather than a discount.
+
+### 4b. Valuation policy for THIRDEYE itself
+
+Third-party tokens are valued by oracle spot price with a liquidity floor, deposit cap and haircut. The
+platform token must **not** be valued that way: buying credit at the spot price of a pool we control is
+circular. THIRDEYE deposits convert at an ops-published policy rate, and the oracle path stays reserved
+for tokens we do not control. This follows the security skill's rule that a DEX spot read is not a
+pricing source.
 
 ### 5. "Pay in token" toggle (implemented)
 
