@@ -10,7 +10,8 @@ export function registerKeysRoutes(app: SessionApp): void {
   app.get('/api/keys', requireUser, async (c) => {
     const user = c.get('user')!
     const res = await query(
-      `SELECT id, name, key_prefix AS prefix, key_prefix, rpm, tpm, created_at, revoked_at
+      `SELECT id, name, key_prefix AS prefix, key_prefix, rpm, tpm, created_at, revoked_at,
+              budget_usd_micros, period_start, period_spent_usd_micros
        FROM api_keys
        WHERE user_id = $1
        ORDER BY created_at DESC`,
@@ -23,6 +24,9 @@ export function registerKeysRoutes(app: SessionApp): void {
       key_prefix: r.key_prefix,
       rpm: Number(r.rpm),
       tpm: Number(r.tpm),
+      budget_usd_micros: r.budget_usd_micros == null ? null : Number(r.budget_usd_micros),
+      period_start: r.period_start,
+      period_spent_usd_micros: Number(r.period_spent_usd_micros ?? 0),
       created_at: r.created_at,
       revoked_at: r.revoked_at,
     }))
@@ -55,6 +59,25 @@ export function registerKeysRoutes(app: SessionApp): void {
 
     const rpm = body?.rpm !== undefined ? Number(body.rpm) : 60
     const tpm = body?.tpm !== undefined ? Number(body.tpm) : 250000
+
+    // Optional monthly budget cap in USD micros (null / omitted = uncapped)
+    let budgetUsdMicros: number | null = null
+    if (body?.budget_usd_micros !== undefined && body?.budget_usd_micros !== null && body?.budget_usd_micros !== '') {
+      const parsed = Math.floor(Number(body.budget_usd_micros))
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 10_000_000_000) {
+        return c.json(
+          {
+            error: {
+              message: 'budget_usd_micros must be between 0 and 10,000,000,000 (USD micros).',
+              type: 'invalid_request',
+              code: 400,
+            },
+          },
+          400
+        )
+      }
+      budgetUsdMicros = parsed
+    }
 
     if (isNaN(rpm) || rpm < 1 || rpm > 10000) {
       return c.json(
@@ -101,7 +124,7 @@ export function registerKeysRoutes(app: SessionApp): void {
       )
     }
 
-    const { secret, row } = await createApiKey(user.id, name, rpm, tpm)
+    const { secret, row } = await createApiKey(user.id, name, rpm, tpm, budgetUsdMicros)
     const formattedRow = {
       id: row.id,
       name: row.name,
@@ -109,11 +132,65 @@ export function registerKeysRoutes(app: SessionApp): void {
       key_prefix: row.key_prefix,
       rpm: Number(row.rpm),
       tpm: Number(row.tpm),
+      budget_usd_micros: row.budget_usd_micros == null ? null : Number(row.budget_usd_micros),
+      period_start: row.period_start,
+      period_spent_usd_micros: Number(row.period_spent_usd_micros ?? 0),
       created_at: row.created_at,
       revoked_at: row.revoked_at,
     }
 
     return c.json({ secret, row: formattedRow }, 201)
+  })
+
+  // PATCH /api/keys/:id — update monthly budget cap (null clears it)
+  app.patch('/api/keys/:id', requireUser, async (c) => {
+    const user = c.get('user')!
+    const keyId = c.req.param('id')
+    const body = await c.req.json().catch(() => ({} as any))
+
+    if (!('budget_usd_micros' in (body ?? {}))) {
+      return c.json(
+        { error: { message: 'Nothing to update. Supported field: budget_usd_micros.', type: 'invalid_request', code: 400 } },
+        400
+      )
+    }
+
+    let next: number | null = null
+    if (body.budget_usd_micros !== null && body.budget_usd_micros !== '') {
+      const parsed = Math.floor(Number(body.budget_usd_micros))
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 10_000_000_000) {
+        return c.json(
+          { error: { message: 'budget_usd_micros must be between 0 and 10,000,000,000 (USD micros).', type: 'invalid_request', code: 400 } },
+          400
+        )
+      }
+      next = parsed
+    }
+
+    const updated = await one(
+      `UPDATE api_keys
+          SET budget_usd_micros = $1,
+              period_start = CASE WHEN $1::bigint IS NULL THEN NULL ELSE COALESCE(period_start, date_trunc('month', now())) END,
+              period_spent_usd_micros = CASE WHEN $1::bigint IS NULL THEN 0 ELSE period_spent_usd_micros END
+        WHERE id = $2 AND user_id = $3 AND revoked_at IS NULL
+        RETURNING id, name, key_prefix, rpm, tpm, budget_usd_micros, period_start, period_spent_usd_micros`,
+      [next, keyId, user.id]
+    )
+    if (!updated) {
+      return c.json({ error: { message: 'Key not found.', type: 'not_found', code: 404 } }, 404)
+    }
+    return c.json({
+      key: {
+        id: updated.id,
+        name: updated.name,
+        key_prefix: updated.key_prefix,
+        rpm: Number(updated.rpm),
+        tpm: Number(updated.tpm),
+        budget_usd_micros: updated.budget_usd_micros == null ? null : Number(updated.budget_usd_micros),
+        period_start: updated.period_start,
+        period_spent_usd_micros: Number(updated.period_spent_usd_micros ?? 0),
+      },
+    })
   })
 
   // DELETE /api/keys/:id (soft-revoke)

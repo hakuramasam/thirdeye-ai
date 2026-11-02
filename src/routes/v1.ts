@@ -5,6 +5,7 @@ import { debitForUsage, getBalanceMicros } from '../lib/billing.js'
 import { env, newId } from '../lib/env.js'
 import { apiKeyAuth } from '../lib/keys.js'
 import { computeCostMicros } from '../lib/pricing.js'
+import { chargeKeyBudget, checkKeyBudget } from '../lib/keybudget.js'
 import { checkAndConsume, refundSlot } from '../lib/ratelimit.js'
 import type { AppEnv } from '../lib/types.js'
 import { recordUsage } from '../lib/usage.js'
@@ -120,6 +121,22 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
       }
     }
 
+    // 4b. Per-key monthly budget cap
+    const budget = await checkKeyBudget(apiKey)
+    if (budget.exhausted) {
+      await refundSlot(apiKey.id, estTokens)
+      return c.json(
+        {
+          error: {
+            message: `Monthly budget for this API key is used up ($${(budget.spent / 1e6).toFixed(4)} of $${((budget.cap ?? 0) / 1e6).toFixed(2)}). Raise the key budget or wait for the next period.`,
+            type: 'billing',
+            code: 'budget_exceeded',
+          },
+        },
+        402
+      )
+    }
+
     // 5. Execution
     if (body.stream) {
       try {
@@ -176,6 +193,7 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
             )
             if (costMicros > 0) {
               await debitForUsage(user.id, costMicros, 'stream:' + newId())
+              await chargeKeyBudget(apiKey, costMicros)
             }
             await recordUsage({
               user_id: user.id,
@@ -255,6 +273,7 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
               402
             )
           }
+          await chargeKeyBudget(apiKey, costMicros)
         }
 
         await recordUsage({
@@ -273,6 +292,9 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
         c.header('X-Thirdeye-Model', requestedModel)
         c.header('X-Thirdeye-Byok', providerCall.byok ? 'true' : 'false')
         c.header('X-Thirdeye-Cost-Usd', (costMicros / 1e6).toFixed(6))
+        if (budget.cap != null) {
+          c.header('X-Thirdeye-Key-Budget-Remaining-Usd', (Math.max(0, budget.remaining - costMicros) / 1e6).toFixed(6))
+        }
         c.header('X-RateLimit-Remaining-RPM', String(Math.max(0, apiKey.rpm - rl.rpm_used)))
 
         return c.json({

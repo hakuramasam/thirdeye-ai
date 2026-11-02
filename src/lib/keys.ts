@@ -21,14 +21,25 @@ export function keyPrefix(secret: string): string {
   return secret.slice(0, 12) + '...' + secret.slice(-4)
 }
 
-export async function createApiKey(userId: string, name: string, rpm: number, tpm: number) {
+export async function createApiKey(
+  userId: string,
+  name: string,
+  rpm: number,
+  tpm: number,
+  budgetUsdMicros: number | null = null
+) {
   const secret = generateApiKeySecret()
   const row = await one(
-    `INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, rpm, tpm)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [newId(), userId, name, hashSecret(secret), keyPrefix(secret), rpm, tpm]
+    `INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, rpm, tpm, budget_usd_micros, period_start, period_spent_usd_micros)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0) RETURNING *`,
+    [newId(), userId, name, hashSecret(secret), keyPrefix(secret), rpm, tpm, budgetUsdMicros, budgetUsdMicros != null ? monthStart() : null]
   )
   return { secret, row }
+}
+
+/** First instant of the current UTC month (budget period boundary). */
+export function monthStart(now: Date = new Date()): string {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString()
 }
 
 /**
@@ -52,6 +63,9 @@ export async function apiKeyAuth(c: Context<AppEnv>, next: Next) {
   const apiKey: ApiKeyRow = {
     id: key.id, user_id: key.user_id, name: key.name, key_prefix: key.key_prefix,
     rpm: key.rpm, tpm: key.tpm, revoked_at: key.revoked_at, created_at: key.created_at,
+    budget_usd_micros: key.budget_usd_micros ?? null,
+    period_start: key.period_start ?? null,
+    period_spent_usd_micros: key.period_spent_usd_micros ?? 0,
   }
   const user: UserRow = { id: key.user_id, wallet: key.user_wallet, role: key.user_role, created_at: '' }
   c.set('apiKey', apiKey)

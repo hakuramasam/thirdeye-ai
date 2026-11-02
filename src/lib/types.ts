@@ -3,7 +3,10 @@ import type { Context, Next } from 'hono'
 export type UserRow = { id: string; wallet: string; role: string; created_at: string }
 export type ApiKeyRow = {
   id: string; user_id: string; name: string; key_prefix: string;
-  rpm: number; tpm: number; revoked_at: string | null; created_at: string
+  rpm: number; tpm: number; revoked_at: string | null; created_at: string;
+  budget_usd_micros?: number | string | null;
+  period_start?: string | null;
+  period_spent_usd_micros?: number | string;
 }
 
 export type AppEnv = {
