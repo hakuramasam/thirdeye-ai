@@ -108,10 +108,20 @@ docs/ARCHITECTURE.md  module contract (the source of truth)
 tests/              per-module tests (node:test, PGlite in-memory)
 ```
 
-## Roadmap (explicitly not built yet)
+## Roadmap
+
+Shipped since this list was first written:
+
+- WalletConnect / mobile wallets (projectId configured, popup flow in `web/src/wallet.tsx`).
+- Per-key monthly budget caps: `budget_usd_micros` on `api_keys`, enforced before every call, resets each UTC month, `PATCH /api/keys/:id` to change it, `X-Thirdeye-Key-Budget-Remaining-Usd` response header.
+- Manual credits for support: `POST /api/admin/credit` (MASTER_KEY).
+- Ops monitoring: daily balance-runway sweep (`scripts/balance-sweep.mjs` plus a Base44 workflow) and a 15-minute uptime probe (`thirdeyeOps` Base44 function) that alerts Telegram on down and recovery.
+
+Still not built:
 
 1. **Platform token**: launch the token, add a deposit-verification path for it in `src/payments/`, add "pay in token" toggle per user. The billing/ledger layer already supports it.
 2. **Tokenized stocks of platform metrics**: `GET /api/stats/public` is the feed (inflow/outflow/usage series); the tokenization layer consumes it.
-3. WalletConnect/mobile-wallet support (needs a WalletConnect projectId).
-4. Provider key pooling + per-provider quotas.
-5. Admin panel (usage across users, manual credits, model pricing editor).
+3. Provider key pooling + per-provider quotas. Today each provider uses a single key from env (`PROV_GROQ_API_KEY`, `PROV_MISTRAL_API_KEY`), so one account's traffic competes with everyone else's for that key's rate limit.
+4. Admin panel UI: `/api/admin/credit` and `/api/stats/public` exist as endpoints, but there is no screen for cross-user usage, and no model pricing editor (prices are still edited in `models_catalog` directly).
+5. Custom domain. The site is on `*.vercel.app`, which wallet reputation systems (Rainbow/Blockaid) flag as likely malicious, which blocks SIWE signing.
+6. Balance alerts to customers (the sweep currently alerts the operator only) and per-key caps for BYOK keys.
