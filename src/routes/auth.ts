@@ -3,8 +3,8 @@ import { randomBytes } from 'node:crypto'
 import { verifyMessage } from 'viem'
 import { SiweMessage } from 'siwe'
 import { query, one, dbMode } from '../db/index.js'
-import { newId } from '../lib/env.js'
-import { createSessionToken, setSessionCookie, clearSessionCookie, attachUser } from '../lib/session.js'
+import { env, newId } from '../lib/env.js'
+import { createSessionToken, setSessionCookie, clearSessionCookie, attachUser, requireUser } from '../lib/session.js'
 import { adjustCredit } from '../lib/billing.js'
 
 /** Welcome credit for brand-new accounts. Brokered models run on free-tier provider
@@ -155,10 +155,40 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
   // GET /api/me
   app.get('/api/me', attachUser, async (c) => {
     const user = c.get('user') ?? null
+    const prefs = user
+      ? await one('SELECT pay_in_token FROM users WHERE id = $1', [user.id])
+      : null
     return c.json({
-      user: user ? { id: user.id, wallet: user.wallet, role: user.role } : null,
+      user: user
+        ? {
+            id: user.id,
+            wallet: user.wallet,
+            role: user.role,
+            pay_in_token: Boolean(prefs?.pay_in_token),
+          }
+        : null,
+      platform_token: env.platformTokenAddress
+        ? { symbol: env.platformTokenSymbol, address: env.platformTokenAddress, live: true }
+        : null,
       mode: dbMode(),
     })
+  })
+
+  // PATCH /api/me/preferences — currently: settle-in-token preference
+  app.patch('/api/me/preferences', requireUser, async (c) => {
+    const user = c.get('user')!
+    const body = await c.req.json().catch(() => ({} as any))
+    if (typeof body?.pay_in_token !== 'boolean') {
+      return c.json(
+        { error: { message: 'pay_in_token must be a boolean.', type: 'invalid_request', code: 400 } },
+        400
+      )
+    }
+    const updated = await one(
+      'UPDATE users SET pay_in_token = $1 WHERE id = $2 RETURNING pay_in_token',
+      [body.pay_in_token, user.id]
+    )
+    return c.json({ ok: true, pay_in_token: Boolean(updated?.pay_in_token) })
   })
 
   // GET /api/healthz

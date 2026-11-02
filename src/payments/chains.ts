@@ -1,3 +1,5 @@
+import { env } from '../lib/env.js'
+
 export type TokenConfig = {
   symbol: string
   address: string
@@ -74,3 +76,32 @@ export const CHAINS: ChainConfig[] = [
 export function getChain(id: string): ChainConfig | undefined {
   return CHAINS.find((c) => c.id === id)
 }
+
+
+/**
+ * Platform token (THIRDEYE) is registered at runtime from env, so the deposit
+ * path works the moment the token is deployed and PLATFORM_TOKEN_ADDRESS is set.
+ * It is oracle-priced: mint it, seed a pool, and deposits value themselves.
+ */
+export function registerPlatformToken(): void {
+  if (!env.platformTokenAddress) return
+  const base = CHAINS.find((c) => c.id === 'base')
+  if (!base) return
+  const exists = base.tokens.some((t) => t.address.toLowerCase() === env.platformTokenAddress)
+  if (exists) return
+  base.tokens.push({
+    symbol: env.platformTokenSymbol,
+    address: env.platformTokenAddress,
+    decimals: env.platformTokenDecimals,
+    stable: false,
+    oracle: {
+      provider: 'geckoterminal',
+      network: 'base',
+      minLiquidityUsd: env.platformTokenMinLiquidityUsd,
+      maxDepositUsd: env.platformTokenMaxDepositUsd,
+      haircutBps: 0, // platform token deposits earn the bonus instead of a haircut
+    },
+  })
+}
+
+registerPlatformToken()

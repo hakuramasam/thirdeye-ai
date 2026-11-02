@@ -4,8 +4,10 @@ CREATE TABLE IF NOT EXISTS users (
   id          text PRIMARY KEY,
   wallet      text UNIQUE NOT NULL,          -- lowercase 0x address
   role        text NOT NULL DEFAULT 'user',  -- user | admin
+  pay_in_token boolean NOT NULL DEFAULT false, -- prefer platform-token settlement
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS pay_in_token boolean NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS api_keys (
   id          text PRIMARY KEY,

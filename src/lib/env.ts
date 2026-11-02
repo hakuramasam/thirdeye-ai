@@ -17,6 +17,16 @@ export const env = {
   platformReceiverAddress: (process.env.PLATFORM_RECEIVER_ADDRESS || '').toLowerCase(),
   platformMarginPct: num(process.env.PLATFORM_MARGIN_PCT, 10),
 
+  /** Platform token (THIRDEYE). Set once the token exists; deposits accept it automatically. */
+  platformTokenAddress: (process.env.PLATFORM_TOKEN_ADDRESS || '').toLowerCase(),
+  platformTokenSymbol: process.env.PLATFORM_TOKEN_SYMBOL || 'THIRDEYE',
+  platformTokenDecimals: num(process.env.PLATFORM_TOKEN_DECIMALS, 18),
+  /** Credit premium for paying in the platform token, in basis points (e.g. 1000 = +10%). */
+  platformTokenBonusBps: num(process.env.PLATFORM_TOKEN_BONUS_BPS, 0),
+  /** Deposit guards for the platform token while its market is thin. */
+  platformTokenMaxDepositUsd: num(process.env.PLATFORM_TOKEN_MAX_DEPOSIT_USD, 25),
+  platformTokenMinLiquidityUsd: num(process.env.PLATFORM_TOKEN_MIN_LIQUIDITY_USD, 5000),
+
   /** Platform provider keys, any OpenAI-based provider: PROV_<NAME>_API_KEY */
   providerKeys: (() => {
     const m: Record<string, string> = {}

@@ -290,9 +290,17 @@ function Credits({ onChanged }: { onChanged: () => void }) {
   const [chain, setChain] = useState('base')
   const [txHash, setTxHash] = useState('')
   const [busy, setBusy] = useState(false)
+  const [payInToken, setPayInToken] = useState<boolean | null>(null)
+  const [tokenInfo, setTokenInfo] = useState<{ symbol: string; address: string } | null>(null)
   const load = useCallback(() => {
     api('/api/credits/deposit-info').then(setInfo).catch(() => {})
     api('/api/credits').then(setCredits).catch(() => {})
+    api('/api/me')
+      .then((me: any) => {
+        setPayInToken(Boolean(me?.user?.pay_in_token))
+        setTokenInfo(me?.platform_token ?? null)
+      })
+      .catch(() => {})
   }, [])
   useEffect(load, [load])
   const submit = async () => {
@@ -313,6 +321,38 @@ function Credits({ onChanged }: { onChanged: () => void }) {
         </div>
       </div>
       <div className="card">
+        <div className="card" style={{ marginBottom: 14, opacity: tokenInfo ? 1 : 0.6 }}>
+          <div className="row" style={{ alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <strong>Settle in {tokenInfo?.symbol ?? 'platform token'}</strong>
+              <p className="muted small" style={{ margin: '4px 0 0' }}>
+                {tokenInfo
+                  ? `Prefer ${tokenInfo.symbol} for deposits and usage settlement. Deposits in ${tokenInfo.symbol} are credited with a bonus.`
+                  : 'Preference is saved now and activates when the platform token launches. Deposits stay in USDC/USDG until then.'}
+              </p>
+            </div>
+            <label className="row" style={{ gap: 8, alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={Boolean(payInToken)}
+                disabled={payInToken === null}
+                onChange={async (e) => {
+                  const next = e.target.checked
+                  setPayInToken(next)
+                  try {
+                    await api('/api/me/preferences', { method: 'PATCH', body: JSON.stringify({ pay_in_token: next }) })
+                    toast(next ? 'Preference saved' : 'Preference cleared')
+                  } catch {
+                    setPayInToken(!next)
+                    toast('Could not save preference')
+                  }
+                }}
+              />
+              <span className="small">Use {tokenInfo?.symbol ?? 'token'}</span>
+            </label>
+          </div>
+        </div>
+
         <h2>Top up with on-chain transfer</h2>
         {!info?.configured ? (
           <p className="warn small">No platform receiver address configured yet (demo deployment).</p>
