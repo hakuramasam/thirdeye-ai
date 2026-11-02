@@ -2,6 +2,20 @@ export type TokenConfig = {
   symbol: string
   address: string
   decimals: number
+  /** Stablecoins are valued 1:1 with USD. Defaults to true. */
+  stable?: boolean
+  /** Pricing rules for non-stable deposit tokens. */
+  oracle?: {
+    provider: 'geckoterminal'
+    /** GeckoTerminal network slug, e.g. 'base' */
+    network: string
+    /** Refuse deposits when pool liquidity (USD) is below this. */
+    minLiquidityUsd: number
+    /** Max USD value accepted in a single deposit. */
+    maxDepositUsd: number
+    /** Credit discount applied to the oracle price, in basis points. */
+    haircutBps: number
+  }
 }
 
 export type ChainConfig = {
@@ -23,6 +37,22 @@ export const CHAINS: ChainConfig[] = [
         symbol: 'USDC',
         address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
         decimals: 6,
+        stable: true,
+      },
+      {
+        // Trends Mining Simulator (TREND). Priced from its only market (Uniswap v4 TREND/WETH).
+        // Illiquid by design: $5k liquidity floor, $25 cap per deposit, 10% credit haircut.
+        symbol: 'TREND',
+        address: '0xbf981cfF5040F9652D4721c85C3e05F6d79f9b07',
+        decimals: 18,
+        stable: false,
+        oracle: {
+          provider: 'geckoterminal',
+          network: 'base',
+          minLiquidityUsd: 5000,
+          maxDepositUsd: 25,
+          haircutBps: 1000,
+        },
       },
     ],
   },

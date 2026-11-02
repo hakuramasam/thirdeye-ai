@@ -1,5 +1,6 @@
 import { createPublicClient, http } from 'viem'
 import { env } from '../lib/env.js'
+import { getTokenPriceUsd } from './oracle.js'
 import { getChain, ChainConfig } from './chains.js'
 
 export type VerifyErrorCode =
@@ -9,9 +10,22 @@ export type VerifyErrorCode =
   | 'wrong_recipient'
   | 'wrong_sender'
   | 'zero_amount'
+  | 'price_unavailable'
+  | 'liquidity_too_low'
+  | 'deposit_too_large'
 
 export type VerifyResult =
-  | { ok: true; token: string; amount_usd_micros: number }
+  | {
+      ok: true
+      token: string
+      amount_usd_micros: number
+      /** Raw token units received (string, bigint-safe). */
+      raw_amount?: string
+      /** Effective USD price used, when the token is oracle-priced. */
+      price_usd?: number
+      /** Credit haircut applied, in basis points. */
+      haircut_bps?: number
+    }
   | { ok: false; code: VerifyErrorCode; message: string }
 
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
@@ -92,13 +106,24 @@ export function parseTransferLogs(
 
   if (validLog) {
     const tokenConfig = chainConfig.tokens.find((t) => t.address.toLowerCase() === validLog.address)!
+    const rawAmount = validLog.value
+    if (tokenConfig.stable === false || tokenConfig.oracle) {
+      // Non-stable tokens are valued later in verifyDeposit, which is async.
+      return {
+        ok: true,
+        token: validLog.address,
+        amount_usd_micros: 0,
+        raw_amount: rawAmount.toString(),
+      }
+    }
     const amount_usd_micros = Number(
-      (validLog.value * 1_000_000n) / (10n ** BigInt(tokenConfig.decimals))
+      (rawAmount * 1_000_000n) / (10n ** BigInt(tokenConfig.decimals))
     )
     return {
       ok: true,
       token: validLog.address,
       amount_usd_micros,
+      raw_amount: rawAmount.toString(),
     }
   }
 
@@ -163,7 +188,64 @@ export async function verifyDeposit({
       return { ok: false, code: 'not_found', message: 'Transaction receipt not found' }
     }
 
-    return parseTransferLogs(receipt, chainConfig, env.platformReceiverAddress, fromWallet)
+    const parsed = parseTransferLogs(receipt, chainConfig, env.platformReceiverAddress, fromWallet)
+    if (!parsed.ok) return parsed
+
+    const tokenConfig = chainConfig.tokens.find(
+      (t) => t.address.toLowerCase() === parsed.token.toLowerCase()
+    )
+    if (!tokenConfig?.oracle || !parsed.raw_amount) return parsed
+
+    // Oracle-priced deposit token: quote, guard, then credit with a haircut.
+    const quote = await getTokenPriceUsd(tokenConfig)
+    if (!quote) {
+      return {
+        ok: false,
+        code: 'price_unavailable',
+        message: `No live price for ${tokenConfig.symbol}. This deposit cannot be valued right now.`,
+      }
+    }
+    if (quote.liquidityUsd < tokenConfig.oracle.minLiquidityUsd) {
+      return {
+        ok: false,
+        code: 'liquidity_too_low',
+        message: `${tokenConfig.symbol} market liquidity ($${Math.round(
+          quote.liquidityUsd
+        )}) is below the $${tokenConfig.oracle.minLiquidityUsd} floor.`,
+      }
+    }
+
+    const rawAmount = BigInt(parsed.raw_amount)
+    const tokenAmount = Number(rawAmount) / 10 ** tokenConfig.decimals
+    const haircut = 1 - tokenConfig.oracle.haircutBps / 10_000
+    const grossUsd = tokenAmount * quote.priceUsd
+    const netUsd = grossUsd * haircut
+
+    if (netUsd > tokenConfig.oracle.maxDepositUsd) {
+      return {
+        ok: false,
+        code: 'deposit_too_large',
+        message: `Deposit is worth about $${netUsd.toFixed(
+          2
+        )}, above the $${tokenConfig.oracle.maxDepositUsd} cap for ${tokenConfig.symbol}. Send a smaller amount.`,
+      }
+    }
+    if (netUsd < 0.01) {
+      return {
+        ok: false,
+        code: 'zero_amount',
+        message: 'Deposit value is below $0.01 after conversion.',
+      }
+    }
+
+    return {
+      ok: true,
+      token: parsed.token,
+      amount_usd_micros: Math.floor(netUsd * 1_000_000),
+      raw_amount: parsed.raw_amount,
+      price_usd: quote.priceUsd,
+      haircut_bps: tokenConfig.oracle.haircutBps,
+    }
   } catch (err: any) {
     return {
       ok: false,
