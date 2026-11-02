@@ -1,0 +1,116 @@
+name: Uptime watch
+
+on:
+  schedule:
+    # every 15 minutes; GitHub may delay a few minutes under load
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  HEALTH_URL: https://thirdeye-ai-alpha.vercel.app/api/healthz
+  LABEL: uptime
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe health endpoint
+        id: probe
+        run: |
+          set +e
+          body=$(curl -sS --max-time 20 --retry 2 --retry-delay 5 "$HEALTH_URL" 2>&1)
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$body" | head -c 500 >> "$GITHUB_OUTPUT"
+          echo "" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          if [ "$code" -ne 0 ] || ! echo "$body" | grep -q '"ok":true'; then
+            echo "state=down" >> "$GITHUB_OUTPUT"
+          else
+            echo "state=up" >> "$GITHUB_OUTPUT"
+          fi
+          echo "probe state: $(tail -1 "$GITHUB_OUTPUT")"
+
+      - name: Notify on failure
+        if: steps.probe.outputs.state == 'down'
+        uses: actions/github-script@v7
+        env:
+          BODY: ${{ steps.probe.outputs.body }}
+          EXIT_CODE: ${{ steps.probe.outputs.exit_code }}
+        with:
+          script: |
+            const label = process.env.LABEL;
+            const open = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              labels: label, state: 'open', per_page: 5,
+            });
+            const detail = `Health probe failed.\n\n\`\`\`\nexit=${process.env.EXIT_CODE}\n${process.env.BODY}\n\`\`\`\nChecked: ${new Date().toISOString()}\nURL: ${process.env.HEALTH_URL}`;
+            if (open.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title: '🔴 Thirdeye is down',
+                body: detail, labels: [label],
+              });
+              console.log('opened incident issue');
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: open.data[0].number, body: detail,
+              });
+              console.log('commented on existing incident #' + open.data[0].number);
+            }
+
+      - name: Alert Telegram
+        if: steps.probe.outputs.state == 'down'
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then echo "telegram secrets missing, skipping"; exit 0; fi
+          TEXT="🔴 Thirdeye health check failed at $(date -u +%H:%M) UTC. Endpoint: ${HEALTH_URL}. GitHub incident issue opened."
+          curl -sS --max-time 20 -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            -H "content-type: application/json" \
+            -d "{\"chat_id\":\"${TG_CHAT}\",\"text\":\"${TEXT}\"}"
+
+      - name: Close incident on recovery
+        if: steps.probe.outputs.state == 'up'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const label = process.env.LABEL;
+            const open = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              labels: label, state: 'open', per_page: 5,
+            });
+            for (const issue of open.data) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Recovered: health endpoint answered ok at ${new Date().toISOString()}.`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number, state: 'closed',
+              });
+              console.log('closed incident #' + issue.number);
+            }
+
+      - name: Alert Telegram recovery
+        if: steps.probe.outputs.state == 'up'
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then echo "telegram secrets missing, skipping"; exit 0; fi
+          OPEN=$(curl -sS --max-time 20 -H "authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues?labels=uptime&state=open&per_page=1" | grep -c '"number"')
+          if [ "$OPEN" -eq 0 ]; then echo "no open incident; staying quiet"; exit 0; fi
+          curl -sS --max-time 20 -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            -H "content-type: application/json" \
+            -d "{\"chat_id\":\"${TG_CHAT}\",\"text\":\"🟢 Thirdeye recovered at $(date -u +%H:%M) UTC. Incident issue closed.\"}"
