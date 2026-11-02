@@ -13,8 +13,12 @@ import { readFileSync } from 'node:fs'
 const TREASURY = '0x73faf95b2baa23bde4ce8547b64c55159022cf0d' // Splits V1 vault, passkey-signed
 const WETH_BASE = '0x4200000000000000000000000000000000000006'
 const TOTAL_SUPPLY = 100_000_000_000n
-const SIX_MONTHS = 15_552_000
-const TWENTY_FOUR_MONTHS = 63_072_000
+const ONE_MONTH = 2_592_000
+// Clanker permits a single vault schedule. The 38% is released to the treasury after a 1-month cliff
+// with no linear tail; per-bucket cliffs and vesting are enforced by Sablier streams created right
+// after deploy (scripts/stream-thirdeye-buckets.mjs).
+const VAULT_CLIFF = ONE_MONTH
+const VAULT_LINEAR = 0
 const INITIAL_MARKET_CAP_ETH = 15
 
 const args = process.argv.slice(2)
@@ -69,8 +73,8 @@ const config = {
   },
   vault: {
     percentage: 38,
-    lockupDuration: SIX_MONTHS,
-    vestingDuration: TWENTY_FOUR_MONTHS,
+    lockupDuration: VAULT_CLIFF,
+    vestingDuration: VAULT_LINEAR,
     recipient: vaultRecipient,
   },
   airdrop: { ...airdrop, lockupDuration: 0, vestingDuration: 0 },
@@ -84,7 +88,7 @@ console.log(JSON.stringify({
   pool_pct: 60,
   vault_pct: 38,
   vault_recipient: vaultRecipient,
-  vault_unlock: '6mo cliff + 24mo linear',
+  vault_unlock: '1mo cliff, no linear tail (buckets vest via Sablier streams)',
   airdrop_pct: 2,
   airdrop_recipient: TREASURY,
   airdrop_amount: opsFloat.toString(),

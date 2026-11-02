@@ -7,26 +7,49 @@ scale. All figures below are percentages, which are supply-agnostic.
 
 ## Allocation of total supply
 
-| Bucket | % | Tokens (100B) | Where it lives | Unlock |
-| --- | --- | --- | --- | --- |
-| Liquidity pool | 60% | 60.00B | Uniswap v4 THIRDEYE/WETH, LP locked by Clanker | liquid at launch |
-| Dev & operations | 12% | 12.00B | Splits Split, bucket 1 | 6-month cliff, 24-month linear |
-| Community rewards | 10% | 10.00B | Splits Split, bucket 2 | 6-month cliff, 24-month linear |
-| Partner incentives | 6% | 6.00B | Splits Split, bucket 3 | 6-month cliff, 24-month linear |
-| Promo: limit-price package buyers | 4% | 4.00B | Splits Split, bucket 4 | 6-month cliff, 24-month linear |
-| Platform airdrops (Abund.ai + future) | 3% | 3.00B | Splits Split, bucket 5 | 6-month cliff, 24-month linear |
-| Early member airdrop | 3% | 3.00B | Splits Split, bucket 6 | 6-month cliff, 24-month linear |
-| Ops float (immediately available) | 2% | 2.00B | treasury, via Clanker airdrop extension, zero lockup | **immediate** |
-| **Total** | **100%** | | | |
+| Bucket | % | Tokens (100B) | Unlock schedule |
+| --- | --- | --- | --- |
+| Liquidity pool | 60% | 60.00B | liquid at launch (Clanker LP lock) |
+| Dev & operations | 12% | 12.00B | 6-month cliff, then 24-month linear |
+| Community rewards | 10% | 10.00B | 1-month cliff, then 6-month linear |
+| Partner incentives | 6% | 6.00B | 1-month cliff, then **fully unlocked** |
+| Promo: limit-price package buyers | 4% | 4.00B | 1-month cliff, then **fully unlocked** |
+| Platform airdrops (Abund.ai + future) | 3% | 3.00B | 1-month cliff, then **fully unlocked** |
+| Early member airdrop | 3% | 3.00B | 1-month cliff, then 12-month linear |
+| Ops float | 2% | 2.00B | **immediate at token creation** |
+| **Total** | **100%** | **100.00B** | |
 
-Onchain split of the same numbers, which is what the deploy actually encodes:
+### What is liquid, and when
 
-- **Extensions 40%** (Clanker max 90%): `vault` = 38% to the treasury Split, `airdrop` = 2% to the
-  treasury with zero lockup.
-- **Pool 60%** (Clanker minimum 10%).
-- Pool trading fees: **100% to the treasury vault**, paid in the paired token (WETH) rather than in
-  THIRDEYE, so fee income is not self-referential.
-- No dev buy, no insider purchase at deploy, vanity address off.
+| Time | Cumulative liquid | From where |
+| --- | --- | --- |
+| day 0 | 2.00B (2%) | ops float, delivered at deploy |
+| day 30 | 15.00B (15%) | partner 6% + promo 4% + platform airdrops 3% + ops 2% |
+| day 30 onward | +55.6M/day | community rewards (10B over 6 months) |
+| day 30 onward | +8.2M/day | early member airdrop (3B over 12 months) |
+| day 180 | +16.4M/day | dev unlocks begin (12B over 24 months after the cliff) |
+| day 210 | community fully released | |
+| day 365 | early member fully released | |
+| day 810 | dev fully released | |
+
+### How the venue actually enforces this
+
+Clanker allows **one** vault with a single cliff and a single linear vesting period, so six different
+schedules cannot be encoded at deploy. The schedule above is therefore built in two layers:
+
+1. **Clanker deploy**: `vault` = 38% to the treasury, **1-month cliff, zero linear vesting** (the whole
+   38% becomes claimable on day 30). `airdrop` extension = 2% to the treasury with **zero lockup**,
+   which is the day-0 ops float.
+2. **Sablier streams created immediately after deploy**: each bucket gets its own LockupLinear stream
+   from the treasury with the cliff and duration in the table above. The 38% arrives at the treasury on
+   day 30 and is already committed to those streams, so each bucket still releases exactly on its own
+   schedule.
+
+Layer 2 is a real onchain commitment, not a promise in a document: a Sablier stream cannot be
+un-created, redirected, or accelerated by the platform. The one honest tradeoff is that the tokens
+physically sit in the treasury between day 0 and day 30 before they enter their streams, whereas a
+custom contract could have locked each bucket separately from block one. Given the cost of hand-rolling
+and auditing that, this is the better trade.
 
 ## The honest answer on "is 5% dev enough?"
 
@@ -91,12 +114,11 @@ spendable money.
 - No allocation that requires trusting a spreadsheet: every number above is enforced by the Split
   contract or by Clanker at deploy time.
 
-## Bucket custody on Splits
+## Custody and authority
 
-Splits 0.5.0 exposes accounts, not arbitrary percentage Split contracts: the org root owns the
-treasury, and the treasury owns subaccounts. So bucket attribution uses **one subaccount per bucket**
-under the treasury vault, and every payout is a transfer with a visible tx.
-
-The 38% vault tranche is paid to the treasury itself, then routed to bucket subaccounts on the same
-schedule. Subaccount creation under the treasury is a treasury-authorised action, so it needs Sam's
-passkey, not the agent key.
+- Vault tranche recipient: the Splits treasury vault. Release on day 30 is a treasury-authorised claim,
+  signed by Sam's passkeys. The agent proposes, Sam signs.
+- Bucket streams: Sablier LockupLinear contracts on Base, created right after deploy, one per bucket.
+  Their release schedules are immutable once created.
+- Bucket attribution beyond the streams (which address a community reward is paid to, for example) is
+  recorded in Splits subaccounts and in the platform ops ledger, so every payout has a tx to point at.
