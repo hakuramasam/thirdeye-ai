@@ -1,7 +1,7 @@
 import { createPublicClient, http, parseAbi } from 'viem'
 import { env } from '../lib/env.js'
 import { getTokenPriceUsd } from './oracle.js'
-import { getChain, ChainConfig } from './chains.js'
+import { getChain, CHAINS, ChainConfig } from './chains.js'
 
 export type VerifyErrorCode =
   | 'not_found'
@@ -277,7 +277,7 @@ export async function findIncomingTransfer(params: {
   txHash: string
   receivers: string[]
 }): Promise<{ ok: true; transfer: IncomingTransfer } | { ok: false; code: string; message: string }> {
-  const chainConfig = getChain(String(params.chainId))
+  const chainConfig = getChain(String(params.chainId)) ?? CHAINS.find((c) => c.chainId === params.chainId)
   if (!chainConfig) {
     return { ok: false, code: 'unsupported_chain', message: `Chain ${params.chainId} is not configured` }
   }
