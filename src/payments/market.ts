@@ -64,7 +64,9 @@ export type MarketAnalysis =
 /** GeckoTerminal network slug for the chains we settle on. */
 const NETWORK_SLUG: Record<number, string> = {
   8453: 'base',
-  4663: 'robinhood', // may not be indexed; refusal is explicit rather than silent
+  56: 'bsc',
+  // Robinhood Chain has no published GeckoTerminal network, so pricing there is
+  // refused explicitly instead of borrowing a same-named token from elsewhere.
 }
 
 export type PoolCandidate = {

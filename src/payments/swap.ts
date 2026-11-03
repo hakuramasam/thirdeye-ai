@@ -28,8 +28,11 @@ export type SwapOutcome =
   | { ok: true; outAmount: bigint; outToken: string; txHash: Hex; source: string }
   | { ok: false; code: string; message: string }
 
+export const USDT_BSC = '0x55d398326f99059fF775485246999027B3197955'
+
 export function settlementTokenFor(chainId: number): string | null {
   if (chainId === 8453) return USDC_BASE
+  if (chainId === 56) return USDT_BSC
   if (chainId === 4663) return USDG_ROBINHOOD || null
   return null
 }

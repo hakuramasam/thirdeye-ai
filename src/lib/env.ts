@@ -15,6 +15,8 @@ export const env = {
   masterKey: process.env.MASTER_KEY || 'thirdeye-dev-master-key',
 
   platformReceiverAddress: (process.env.PLATFORM_RECEIVER_ADDRESS || '').toLowerCase(),
+  /** Second receiving wallet (Privy agent wallet). Payments to either are ours. */
+  platformAgentReceiver: (process.env.PLATFORM_AGENT_RECEIVER || '').toLowerCase(),
   platformMarginPct: num(process.env.PLATFORM_MARGIN_PCT, 10),
 
   /** Platform token (THIRDEYE). Set once the token exists; deposits accept it automatically. */

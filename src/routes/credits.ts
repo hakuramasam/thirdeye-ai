@@ -5,6 +5,7 @@ import { query } from '../db/index.js'
 import { getBalanceMicros, creditDeposit } from '../lib/billing.js'
 import { CHAINS } from '../payments/chains.js'
 import { verifyDeposit } from '../payments/verify.js'
+import { findIncomingTransfer } from '../payments/verify.js'
 import { prepareAutoConvert, autoConvertPolicyFromEnv } from '../payments/autoConvert.js'
 
 export function registerCreditsRoutes(app: SessionApp): void {

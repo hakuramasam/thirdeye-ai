@@ -1,4 +1,4 @@
-import { createPublicClient, http } from 'viem'
+import { createPublicClient, http, parseAbi } from 'viem'
 import { env } from '../lib/env.js'
 import { getTokenPriceUsd } from './oracle.js'
 import { getChain, ChainConfig } from './chains.js'
@@ -252,5 +252,106 @@ export async function verifyDeposit({
       code: 'not_found',
       message: err?.message || 'Transaction receipt not found',
     }
+  }
+}
+
+/**
+ * Find any ERC-20 transfer into one of our receiving wallets, whatever the
+ * token is. Registration is not required: an unregistered token is valued by
+ * the market analysis before it can be credited, so we do not need a hardcoded
+ * list to accept a payment.
+ */
+export type IncomingTransfer = {
+  chain_id: number
+  token: string
+  from: string
+  to: string
+  raw_amount: string
+  decimals: number
+  registered: boolean
+  block_number: number
+}
+
+export async function findIncomingTransfer(params: {
+  chainId: number
+  txHash: string
+  receivers: string[]
+}): Promise<{ ok: true; transfer: IncomingTransfer } | { ok: false; code: string; message: string }> {
+  const chainConfig = getChain(String(params.chainId))
+  if (!chainConfig) {
+    return { ok: false, code: 'unsupported_chain', message: `Chain ${params.chainId} is not configured` }
+  }
+  if (!/^0x[0-9a-fA-F]{64}$/.test(params.txHash)) {
+    return { ok: false, code: 'not_found', message: 'tx_hash must be a 32-byte hex hash' }
+  }
+  const receivers = params.receivers.map((r) => String(r || '').toLowerCase()).filter((r) => /^0x[0-9a-f]{40}$/.test(r))
+  if (receivers.length === 0) {
+    return { ok: false, code: 'wrong_recipient', message: 'No platform receiving wallet is configured' }
+  }
+
+  const client = createPublicClient({ transport: http(chainConfig.rpc) })
+  let receipt: any
+  try {
+    receipt = await client.request({ method: 'eth_getTransactionReceipt', params: [params.txHash as `0x${string}`] } as any)
+  } catch (err: any) {
+    return { ok: false, code: 'not_found', message: `Could not read receipt: ${err?.shortMessage || err?.message || 'rpc error'}` }
+  }
+  if (!receipt) return { ok: false, code: 'not_found', message: 'Transaction not found on this chain' }
+  if (!(receipt.status === '0x1' || receipt.status === 1 || receipt.status === true)) {
+    return { ok: false, code: 'failed_tx', message: 'Transaction did not succeed' }
+  }
+
+  const candidates: Array<{ token: string; from: string; to: string; value: bigint }> = []
+  for (const l of receipt.logs || []) {
+    if (String(l.topics?.[0] || '').toLowerCase() !== TRANSFER_TOPIC) continue
+    if ((l.topics || []).length < 3) continue // ERC-721 style; not a fungible deposit
+    const to = parseTopicAddress(l.topics[2])
+    if (!receivers.includes(to)) continue
+    const value = parseDataValue(l.data)
+    if (value <= 0n) continue
+    candidates.push({ token: String(l.address || '').toLowerCase(), from: parseTopicAddress(l.topics[1]), to, value })
+  }
+  if (candidates.length === 0) {
+    return {
+      ok: false,
+      code: 'wrong_recipient',
+      message: `No ERC-20 transfer to a platform wallet in this transaction (looked for ${receivers.length} receiver${receivers.length === 1 ? '' : 's'})`,
+    }
+  }
+
+  // Largest transfer wins: dust transfers are a common distraction in a tx.
+  candidates.sort((a, b) => (b.value > a.value ? 1 : b.value < a.value ? -1 : 0))
+  const pick = candidates[0]
+  const registeredToken = chainConfig.tokens.find((t) => t.address.toLowerCase() === pick.token)
+
+  let decimals = registeredToken?.decimals
+  if (decimals === undefined) {
+    try {
+      const dec = await client.readContract({
+        address: pick.token as `0x${string}`,
+        abi: parseAbi(['function decimals() view returns (uint8)']),
+        functionName: 'decimals',
+      })
+      decimals = Number(dec)
+    } catch {
+      return { ok: false, code: 'unsupported_token', message: 'Token does not implement decimals(); refusing to guess its scale' }
+    }
+  }
+  if (!Number.isFinite(decimals) || decimals > 36) {
+    return { ok: false, code: 'unsupported_token', message: `Implausible token decimals (${decimals})` }
+  }
+
+  return {
+    ok: true,
+    transfer: {
+      chain_id: params.chainId,
+      token: pick.token,
+      from: pick.from,
+      to: pick.to,
+      raw_amount: pick.value.toString(),
+      decimals,
+      registered: Boolean(registeredToken),
+      block_number: Number(receipt.blockNumber ?? 0),
+    },
   }
 }

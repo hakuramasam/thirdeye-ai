@@ -25,6 +25,13 @@ export type ChainConfig = {
   name: string
   chainId: number
   rpc: string
+  /** GeckoTerminal network slug used to price non-stable deposit tokens. */
+  gtNetwork: string
+  /**
+   * Stablecoin we convert payment tokens into before crediting. Anything we
+   * cannot convert into this token is refused, so it must exist on the chain.
+   */
+  settlement: { symbol: string; address: string; decimals: number }
   tokens: TokenConfig[]
 }
 
@@ -34,6 +41,8 @@ export const CHAINS: ChainConfig[] = [
     name: 'Base',
     chainId: 8453,
     rpc: 'https://mainnet.base.org',
+    gtNetwork: 'base',
+    settlement: { symbol: 'USDC', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', decimals: 6 },
     tokens: [
       {
         symbol: 'USDC',
@@ -59,10 +68,34 @@ export const CHAINS: ChainConfig[] = [
     ],
   },
   {
+    id: 'bsc',
+    name: 'BNB Smart Chain',
+    chainId: 56,
+    rpc: 'https://bsc-dataseed.binance.org',
+    gtNetwork: 'bsc',
+    settlement: { symbol: 'USDT', address: '0x55d398326f99059fF775485246999027B3197955', decimals: 18 },
+    tokens: [
+      {
+        symbol: 'USDT',
+        address: '0x55d398326f99059fF775485246999027B3197955',
+        decimals: 18,
+        stable: true,
+      },
+      {
+        symbol: 'USDC',
+        address: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+        decimals: 18,
+        stable: true,
+      },
+    ],
+  },
+  {
     id: 'robinhood',
     name: 'Robinhood Chain',
     chainId: 4663,
     rpc: 'https://rpc.mainnet.chain.robinhood.com',
+    gtNetwork: 'robinhood',
+    settlement: { symbol: 'USDG', address: '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168', decimals: 6 },
     tokens: [
       {
         symbol: 'USDG',
