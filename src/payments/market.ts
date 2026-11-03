@@ -192,13 +192,22 @@ export async function analyseToken(params: {
     return { tradable: false, code: 'analysis_unavailable', message: `Market data request failed: ${String(e?.message || e).slice(0, 120)}` }
   }
 
-  const candidates: PoolCandidate[] = (pools?.data ?? []).map((p: any) => ({
-    address: String(p?.attributes?.address ?? ''),
-    dex: String(p?.relationships?.dex?.data?.id ?? ''),
-    reserveUsd: Number(p?.attributes?.reserve_in_usd ?? 0),
-    volume24hUsd: Number(p?.attributes?.volume_usd?.h24 ?? 0),
-    priceUsd: Number(p?.attributes?.base_token_price_usd ?? 0),
-  }))
+  const wanted = params.tokenAddress.toLowerCase()
+  // Only pools where our token is the BASE token: base_token_price_usd then means
+  // "price of our token". In a WETH/USDC pool the same field is the price of WETH,
+  // which would mis-price a deposit by three orders of magnitude.
+  const candidates: PoolCandidate[] = (pools?.data ?? [])
+    .filter((p: any) => {
+      const baseId = String(p?.relationships?.base_token?.data?.id ?? '').toLowerCase()
+      return baseId.endsWith(wanted.replace(/^0x/, ''))
+    })
+    .map((p: any) => ({
+      address: String(p?.attributes?.address ?? ''),
+      dex: String(p?.relationships?.dex?.data?.id ?? ''),
+      reserveUsd: Number(p?.attributes?.reserve_in_usd ?? 0),
+      volume24hUsd: Number(p?.attributes?.volume_usd?.h24 ?? 0),
+      priceUsd: Number(p?.attributes?.base_token_price_usd ?? 0),
+    }))
 
   const pool = pickDeepestPool(candidates)
   if (!pool) {

@@ -67,7 +67,25 @@ export function registerCreditsRoutes(app: SessionApp): void {
     }
     const policy = autoConvertPolicyFromEnv()
     const result = await prepareAutoConvert({ chainId, tokenAddress: token, amountRaw, decimals, policy })
-    return c.json({ auto_convert_enabled: policy.enabled, policy: { min_liquidity_usd: policy.minLiquidityUsd, min_volume_24h_usd: policy.minVolume24hUsd, max_impact_bps: policy.maxPriceImpactBps, max_auto_convert_usd: policy.maxAutoConvertUsd }, result }, result.ok ? 200 : 422)
+    const flat = result.ok
+      ? {
+          ...result.analysis,
+          tradable: true,
+          settlement_token: result.settlementToken,
+          note: result.note,
+        }
+      : { tradable: false, code: result.code, message: result.message }
+    return c.json({
+      auto_convert_enabled: policy.enabled,
+      policy: {
+        min_liquidity_usd: policy.minLiquidityUsd,
+        min_volume_24h_usd: policy.minVolume24hUsd,
+        max_impact_bps: policy.maxPriceImpactBps,
+        max_auto_convert_usd: policy.maxAutoConvertUsd,
+        slippage_bps: policy.slippageBps,
+      },
+      result: flat,
+    }, result.ok ? 200 : 422)
   })
 
   // POST /api/credits/deposit
