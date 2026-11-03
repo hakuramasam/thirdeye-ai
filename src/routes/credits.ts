@@ -38,10 +38,59 @@ export function registerCreditsRoutes(app: SessionApp): void {
   app.get('/api/credits/deposit-info', requireUser, async (c) => {
     const receiver_address = env.platformReceiverAddress || ''
     const configured = Boolean(receiver_address)
+    const agent_receiver = env.platformAgentReceiver || ''
     return c.json({
       receiver_address,
-      configured,
+      agent_receiver,
+      configured: Boolean(receiver_address || agent_receiver),
+      receivers: [receiver_address, agent_receiver].filter(Boolean),
       chains: CHAINS,
+    })
+  })
+
+  // POST /api/credits/payment-review - verify an ERC-20 payment landed in one of
+  // our wallets and value it in USD. Read-only: credits nothing. Works for any
+  // token, registered or not, on Base, BSC and Robinhood Chain.
+  app.post('/api/credits/payment-review', requireUser, async (c) => {
+    let body: any
+    try { body = await c.req.json() } catch { body = {} }
+    const chainId = Number(body?.chain_id ?? body?.chainId ?? 0)
+    const txHash = String(body?.tx_hash ?? body?.txHash ?? '')
+    if (!chainId || !txHash) {
+      return c.json({ error: { message: 'chain_id and tx_hash are required', type: 'validation' } }, 400)
+    }
+    const receivers = [env.platformReceiverAddress, env.platformAgentReceiver].filter(Boolean) as string[]
+    const found = await findIncomingTransfer({ chainId, txHash, receivers })
+    if (!found.ok) {
+      return c.json({ accepted: false, verification: { ok: false, code: found.code, message: found.message } }, 422)
+    }
+    const t = found.transfer
+    const prepared = await prepareAutoConvert({
+      chainId,
+      tokenAddress: t.token,
+      amountRaw: BigInt(t.raw_amount),
+      decimals: t.decimals,
+    })
+    const atVault = t.to === String(env.platformReceiverAddress || '').toLowerCase()
+    const received_at = atVault ? 'treasury_vault' : 'agent_wallet'
+    if (!prepared.ok) {
+      return c.json(
+        { accepted: false, received_at, verification: { ok: true, ...t }, refusal: { code: prepared.code, message: prepared.message } },
+        422
+      )
+    }
+    return c.json({
+      accepted: true,
+      received_at,
+      verification: { ok: true, ...t },
+      value_usd: prepared.analysis.amountUsd,
+      price_usd: prepared.analysis.priceUsd,
+      liquidity_usd: prepared.analysis.liquidityUsd,
+      volume_24h_usd: prepared.analysis.volume24hUsd,
+      impact_bps: prepared.analysis.impactBps,
+      pool: prepared.analysis.poolAddress,
+      settlement_token: prepared.settlementToken,
+      note: prepared.note,
     })
   })
 
