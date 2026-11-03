@@ -134,9 +134,9 @@ export function registerAgentsRoutes(app: SessionApp): void {
 
     const id = randomUUID()
     await query(
-      `INSERT INTO agents (id, user_id, name, system_prompt, model, mcp_servers, x402_enabled, budget_usd_micros, max_steps, cron)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-      [id, user.id, name.trim(), system_prompt, model, JSON.stringify(mcp.servers), !!x402_enabled, budget, steps, cron]
+      `INSERT INTO agents (id, user_id, name, system_prompt, model, mcp_servers, x402_enabled, x402_allowed_sellers, x402_max_per_call_usd_micros, budget_usd_micros, max_steps, cron)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [id, user.id, name.trim(), system_prompt, model, JSON.stringify(mcp.servers), !!x402_enabled, JSON.stringify(sellers.entries), perCall, budget, steps, cron]
     )
     const row = await one(`SELECT * FROM agents WHERE id = $1`, [id])
     return c.json({ agent: rowOut(row) }, 201)
