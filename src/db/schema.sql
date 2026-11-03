@@ -102,6 +102,8 @@ CREATE TABLE IF NOT EXISTS agents (
   model             text NOT NULL,            -- references models_catalog.model
   mcp_servers       jsonb NOT NULL DEFAULT '[]', -- [{name, url, headers?}]
   x402_enabled      boolean NOT NULL DEFAULT false,
+  x402_allowed_sellers jsonb NOT NULL DEFAULT '[]', -- hostnames allowed to receive x402 payments
+  x402_max_per_call_usd_micros bigint NOT NULL DEFAULT 20000, -- per-call payment cap ($0.02)
   budget_usd_micros bigint NOT NULL DEFAULT 100000, -- per-run cap
   max_steps         integer NOT NULL DEFAULT 8,
   cron              text,                     -- cron expression; run via POST /api/cron/agents
@@ -109,6 +111,8 @@ CREATE TABLE IF NOT EXISTS agents (
   status            text NOT NULL DEFAULT 'active',
   created_at        timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS x402_allowed_sellers jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS x402_max_per_call_usd_micros bigint NOT NULL DEFAULT 20000;
 
 CREATE TABLE IF NOT EXISTS agent_runs (
   id                text PRIMARY KEY,

@@ -22,6 +22,8 @@ export type AgentRow = {
   model: string
   mcp_servers: McpServerConfig[] | string
   x402_enabled: boolean
+  x402_allowed_sellers?: string[] | string
+  x402_max_per_call_usd_micros?: number | string
   budget_usd_micros: number | string
   max_steps: number
   cron: string | null
@@ -179,13 +181,30 @@ export async function runAgent(
           try {
             const args = JSON.parse(tc.function.arguments || '{}')
             if (tc.function.name === 'http_fetch' && agent.x402_enabled) {
+              const sellers = typeof agent.x402_allowed_sellers === 'string'
+                ? JSON.parse(agent.x402_allowed_sellers || '[]')
+                : (agent.x402_allowed_sellers ?? [])
               const r = await paidFetch(String(args.url), {
                 method: args.method === 'POST' ? 'POST' : 'GET',
                 headers: args.body ? { 'content-type': 'application/json' } : undefined,
                 body: args.body,
+              }, {
+                maxSpendUsdMicros: Number(agent.x402_max_per_call_usd_micros ?? 20000),
+                allowedSellers: sellers,
               })
               const text = await r.response.text()
-              result = `HTTP ${r.response.status}${r.paid ? ' (x402 paid)' : ''}: ${text.slice(0, MAX_TOOL_RESULT_CHARS)}`
+              if (r.blocked) {
+                // Surface the refusal to the model so it stops retrying this seller.
+                result = `Payment blocked: ${r.blocked.reason}. No payment was made. HTTP ${r.response.status}: ${text.slice(0, 500)}`
+              } else {
+                result = `HTTP ${r.response.status}${r.paid ? ' (x402 paid)' : ''}: ${text.slice(0, MAX_TOOL_RESULT_CHARS)}`
+                if (r.spentUsdMicros > 0) {
+                  spend += r.spentUsdMicros
+                  if (spend > budget) {
+                    return await finish('error', null, toolCalls, spend, 'Budget exceeded (x402 payments counted)')
+                  }
+                }
+              }
             } else if (mcpTools) {
               result = (await mcpTools.call(tc.function.name, args)).slice(0, MAX_TOOL_RESULT_CHARS)
             } else {

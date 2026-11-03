@@ -8,6 +8,7 @@
  */
 
 import { env } from '../lib/env.js'
+import { checkSellerAllowed, effectivePerCallCapMicros, HARD_PER_CALL_CAP_MICROS } from './payments-policy.js'
 
 const X402_NETWORK = 'base' // USDC payments settle on Base mainnet (chain 8453)
 
@@ -16,6 +17,8 @@ export type PaidFetchResult = {
   paid: boolean
   /** Best-effort spend in USD micros; capped at opts.maxSpendUsdMicros. */
   spentUsdMicros: number
+  /** Set when policy prevented a payment that the seller asked for. */
+  blocked?: { reason: string; host?: string }
 }
 
 type LazySigner = { wrap: typeof fetch } | null
@@ -43,11 +46,17 @@ async function getWrappedFetch(maxSpendUsdMicros: number): Promise<typeof fetch 
 export async function paidFetch(
   url: string,
   init?: RequestInit,
-  opts: { maxSpendUsdMicros?: number } = {}
+  opts: { maxSpendUsdMicros?: number; allowedSellers?: string[] } = {}
 ): Promise<PaidFetchResult> {
-  const maxSpend = Math.min(opts.maxSpendUsdMicros ?? 10_000, 100_000) // cap $0.10/call
+  const maxSpend = effectivePerCallCapMicros(opts.maxSpendUsdMicros ?? null, HARD_PER_CALL_CAP_MICROS)
   let res = await fetch(url, init)
   if (res.status !== 402) return { response: res, paid: false, spentUsdMicros: 0 }
+
+  // Policy gate: no payment to a seller that is not allowlisted, ever.
+  const verdict = checkSellerAllowed(url, opts.allowedSellers ?? [])
+  if (!verdict.ok) {
+    return { response: res, paid: false, spentUsdMicros: 0, blocked: { reason: verdict.reason, host: verdict.host } }
+  }
 
   const wrap = await getWrappedFetch(maxSpend)
   if (!wrap) {

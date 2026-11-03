@@ -29,6 +29,22 @@ function validMcpServers(v: unknown): { ok: boolean; servers?: any[]; error?: st
   return { ok: true, servers }
 }
 
+/** Allowlist entries: hostnames or *.domain wildcards, no scheme needed. */
+function validSellers(input: any): { ok: boolean; entries: string[]; error?: string } {
+  if (!Array.isArray(input)) return { ok: false, entries: [], error: 'x402_allowed_sellers must be an array of hostnames' }
+  if (input.length > 50) return { ok: false, entries: [], error: 'At most 50 allowlisted sellers' }
+  const entries: string[] = []
+  for (const raw of input) {
+    if (typeof raw !== 'string') return { ok: false, entries: [], error: 'Each allowlisted seller must be a string' }
+    const e = raw.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+    if (!/^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(e)) {
+      return { ok: false, entries: [], error: `Invalid seller hostname: ${raw}` }
+    }
+    if (!entries.includes(e)) entries.push(e)
+  }
+  return { ok: true, entries }
+}
+
 function rowOut(a: any) {
   return {
     id: a.id,
@@ -37,6 +53,8 @@ function rowOut(a: any) {
     model: a.model,
     mcp_servers: typeof a.mcp_servers === 'string' ? JSON.parse(a.mcp_servers || '[]') : a.mcp_servers || [],
     x402_enabled: a.x402_enabled,
+    x402_allowed_sellers: typeof a.x402_allowed_sellers === 'string' ? JSON.parse(a.x402_allowed_sellers || '[]') : a.x402_allowed_sellers || [],
+    x402_max_per_call_usd_micros: Number(a.x402_max_per_call_usd_micros ?? 20000),
     budget_usd_micros: Number(a.budget_usd_micros),
     max_steps: a.max_steps,
     cron: a.cron,
@@ -66,7 +84,8 @@ export function registerAgentsRoutes(app: SessionApp): void {
     const user = c.get('user')!
     const body = await c.req.json().catch(() => null)
     if (!body) return c.json({ error: { message: 'Invalid JSON body', type: 'invalid_request', code: 400 } }, 400)
-    const { name, system_prompt, model, mcp_servers = [], x402_enabled = false, budget_usd_micros = 100000, max_steps = 8, cron = null } = body
+    const { name, system_prompt, model, mcp_servers = [], x402_enabled = false, budget_usd_micros = 100000, max_steps = 8, cron = null,
+      x402_allowed_sellers = [], x402_max_per_call_usd_micros = 20000 } = body
 
     if (typeof name !== 'string' || name.trim().length < 1 || name.trim().length > 64) {
       return c.json({ error: { message: 'name must be 1-64 characters', type: 'invalid_request', code: 400 } }, 400)
@@ -96,6 +115,16 @@ export function registerAgentsRoutes(app: SessionApp): void {
       try { parseCron(cron) } catch (e: any) {
         return c.json({ error: { message: `Invalid cron: ${e.message}`, type: 'invalid_request', code: 400 } }, 400)
       }
+    }
+
+    const sellers = validSellers(x402_allowed_sellers)
+    if (!sellers.ok) return c.json({ error: { message: sellers.error!, type: 'invalid_request', code: 400 } }, 400)
+    const perCall = Number(x402_max_per_call_usd_micros)
+    if (!Number.isInteger(perCall) || perCall < 1 || perCall > 1_000_000) {
+      return c.json({ error: { message: 'x402_max_per_call_usd_micros must be an integer between 1 and 1,000,000 ($1)', type: 'invalid_request', code: 400 } }, 400)
+    }
+    if (x402_enabled && sellers.entries.length === 0) {
+      return c.json({ error: { message: 'x402_enabled requires at least one allowlisted seller; payments fail closed without one', type: 'invalid_request', code: 400 } }, 400)
     }
 
     const count = await one(`SELECT count(*)::int AS n FROM agents WHERE user_id = $1 AND status != 'deleted'`, [user.id])
@@ -147,6 +176,18 @@ export function registerAgentsRoutes(app: SessionApp): void {
       add('mcp_servers', JSON.stringify(mcp.servers))
     }
     if (body.x402_enabled !== undefined) add('x402_enabled', !!body.x402_enabled)
+    if (body.x402_allowed_sellers !== undefined) {
+      const sellers = validSellers(body.x402_allowed_sellers)
+      if (!sellers.ok) return c.json({ error: { message: sellers.error!, type: 'invalid_request', code: 400 } }, 400)
+      add('x402_allowed_sellers', JSON.stringify(sellers.entries))
+    }
+    if (body.x402_max_per_call_usd_micros !== undefined) {
+      const perCall = Number(body.x402_max_per_call_usd_micros)
+      if (!Number.isInteger(perCall) || perCall < 1 || perCall > 1_000_000) {
+        return c.json({ error: { message: 'x402_max_per_call_usd_micros must be an integer between 1 and 1,000,000', type: 'invalid_request', code: 400 } }, 400)
+      }
+      add('x402_max_per_call_usd_micros', perCall)
+    }
     if (body.budget_usd_micros !== undefined) {
       const b = Number(body.budget_usd_micros)
       if (!Number.isInteger(b) || b < 1 || b > 10_000_000) {
