@@ -34,16 +34,18 @@ async function recordPayment(args: {
 }): Promise<{ paymentId: string; duplicate: boolean }> {
   const t = args.transfer
   const id = 'pay_' + randomBytes(9).toString('hex')
-  const inserted = ((await query(
-    `INSERT INTO payments (id, intent_id, user_id, chain_id, token, tx_hash, received_by, sender,
-                           raw_amount, decimals, usd_value_micros, price_usd, pool, purpose, memo, status, refusal_code)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-     ON CONFLICT (chain_id, tx_hash, token, received_by) DO NOTHING
-     RETURNING id`,
-    [id, args.intent?.id ?? null, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt,
-     t.from, t.raw_amount, t.decimals, args.usdMicros, args.priceUsd ?? null, args.pool ?? null,
-     args.intent?.purpose ?? null, args.intent?.memo ?? null, args.status, args.refusalCode]
-  )) as any) as any[]
+  const inserted = (
+    await query(
+      `INSERT INTO payments (id, intent_id, user_id, chain_id, token, tx_hash, received_by, sender,
+                             raw_amount, decimals, usd_value_micros, price_usd, pool, purpose, memo, status, refusal_code)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       ON CONFLICT (chain_id, tx_hash, token, received_by) DO NOTHING
+       RETURNING id`,
+      [id, args.intent?.id ?? null, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt,
+       t.from, t.raw_amount, t.decimals, args.usdMicros, args.priceUsd ?? null, args.pool ?? null,
+       args.intent?.purpose ?? null, args.intent?.memo ?? null, args.status, args.refusalCode]
+    )
+  ).rows
 
   const duplicate = inserted.length === 0
   const paymentId = duplicate ? id : (inserted[0]?.id ?? id)
@@ -126,7 +128,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
        VALUES ($1, $2, $3, $4, $5, $6, now() + ($7 || ' minutes')::interval)`,
       [id, user.id, purpose, memo, Math.round(expectedUsd * 1_000_000), chainId, String(ttlMinutes)]
     )
-    const row = (((await query(`SELECT id, purpose, memo, expected_usd_micros, chain_id, status, expires_at FROM payment_intents WHERE id = $1`, [id])) as any) as any[])[0]
+    const row = (await query(`SELECT id, purpose, memo, expected_usd_micros, chain_id, status, expires_at FROM payment_intents WHERE id = $1`, [id])).rows[0] as any
     return c.json({
       intent: {
         id: row.id,
@@ -150,13 +152,13 @@ export function registerCreditsRoutes(app: SessionApp): void {
   // what it was worth in USD when it landed.
   app.get('/api/payments', requireUser, async (c) => {
     const user = c.get('user')!
-    const rows = ((await query(
+    const rows = (await query(
       `SELECT p.id, p.intent_id, p.chain_id, p.token, p.tx_hash, p.received_by, p.sender,
               p.raw_amount, p.decimals, p.usd_value_micros, p.price_usd, p.purpose, p.memo,
               p.status, p.refusal_code, p.created_at
        FROM payments p WHERE p.user_id = $1 ORDER BY p.created_at DESC LIMIT 100`,
       [user.id]
-    )) as any) as any[]
+    )).rows
     return c.json({
       payments: rows.map((r) => ({
         id: r.id,
@@ -193,7 +195,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
     // An intent may only be claimed by its owner.
     let intent: any = null
     if (intentId) {
-      const rows = ((await query(`SELECT * FROM payment_intents WHERE id = $1 AND user_id = $2`, [intentId, c.get('user')!.id])) as any) as any[]
+      const rows = (await query(`SELECT * FROM payment_intents WHERE id = $1 AND user_id = $2`, [intentId, c.get('user')!.id])).rows
       intent = rows[0] ?? null
       if (!intent) return c.json({ error: { message: 'intent not found for this account', type: 'not_found' } }, 404)
     }
