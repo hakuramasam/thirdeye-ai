@@ -5,6 +5,7 @@ import { query } from '../db/index.js'
 import { getBalanceMicros, creditDeposit } from '../lib/billing.js'
 import { CHAINS } from '../payments/chains.js'
 import { verifyDeposit } from '../payments/verify.js'
+import { prepareAutoConvert, autoConvertPolicyFromEnv } from '../payments/autoConvert.js'
 
 export function registerCreditsRoutes(app: SessionApp): void {
   // GET /api/credits
@@ -41,6 +42,32 @@ export function registerCreditsRoutes(app: SessionApp): void {
       configured,
       chains: CHAINS,
     })
+  })
+
+  // POST /api/credits/auto-convert — analyse a token deposit and price the conversion
+  // Body: { chain, token, amount_raw, decimals } | { chain, token, amount }
+  // Read-only: it never moves funds or writes credits, so it is safe to call from
+  // the deposit page before the user sends anything.
+  app.post('/api/credits/auto-convert/check', requireUser, async (c) => {
+    const body: any = await c.req.json().catch(() => ({}))
+    const chainId = Number(body?.chain_id ?? body?.chainId ?? body?.chain)
+    const token = String(body?.token ?? body?.token_address ?? '')
+    const decimals = Number(body?.decimals ?? 18)
+    if (!Number.isInteger(chainId) || !/^0x[0-9a-fA-F]{40}$/.test(token) || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+      return c.json({ error: { message: 'chain_id, token (0x…) and decimals are required', type: 'invalid_request', code: 400 } }, 400)
+    }
+    let amountRaw: bigint
+    try {
+      amountRaw = body?.amount_raw ? BigInt(String(body.amount_raw)) : BigInt(Math.round(Number(body?.amount ?? 0) * 10 ** decimals))
+    } catch {
+      return c.json({ error: { message: 'amount could not be parsed', type: 'invalid_request', code: 400 } }, 400)
+    }
+    if (amountRaw <= 0n) {
+      return c.json({ error: { message: 'amount must be greater than zero', type: 'invalid_request', code: 400 } }, 400)
+    }
+    const policy = autoConvertPolicyFromEnv()
+    const result = await prepareAutoConvert({ chainId, tokenAddress: token, amountRaw, decimals, policy })
+    return c.json({ auto_convert_enabled: policy.enabled, policy: { min_liquidity_usd: policy.minLiquidityUsd, min_volume_24h_usd: policy.minVolume24hUsd, max_impact_bps: policy.maxPriceImpactBps, max_auto_convert_usd: policy.maxAutoConvertUsd }, result }, result.ok ? 200 : 422)
   })
 
   // POST /api/credits/deposit
