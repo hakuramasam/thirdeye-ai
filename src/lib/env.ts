@@ -17,6 +17,8 @@ export const env = {
   platformReceiverAddress: (process.env.PLATFORM_RECEIVER_ADDRESS || '').toLowerCase(),
   /** Second receiving wallet (Privy agent wallet). Payments to either are ours. */
   platformAgentReceiver: (process.env.PLATFORM_AGENT_RECEIVER || '').toLowerCase(),
+  /** Splits automation account: converts incoming tokens and forwards to the vault. */
+  platformAutomationReceiver: (process.env.PLATFORM_AUTOMATION_RECEIVER || '').toLowerCase(),
   platformMarginPct: num(process.env.PLATFORM_MARGIN_PCT, 10),
 
   /** Platform token (THIRDEYE). Set once the token exists; deposits accept it automatically. */

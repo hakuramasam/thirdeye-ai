@@ -263,6 +263,7 @@ export async function verifyDeposit({
  */
 export type IncomingTransfer = {
   chain_id: number
+  tx_hash: string
   token: string
   from: string
   to: string
@@ -345,6 +346,7 @@ export async function findIncomingTransfer(params: {
     ok: true,
     transfer: {
       chain_id: params.chainId,
+      tx_hash: params.txHash.toLowerCase(),
       token: pick.token,
       from: pick.from,
       to: pick.to,

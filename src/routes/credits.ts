@@ -7,6 +7,55 @@ import { CHAINS } from '../payments/chains.js'
 import { verifyDeposit } from '../payments/verify.js'
 import { findIncomingTransfer } from '../payments/verify.js'
 import { prepareAutoConvert, autoConvertPolicyFromEnv } from '../payments/autoConvert.js'
+import { randomBytes } from 'node:crypto'
+import type { IncomingTransfer } from '../payments/verify.js'
+
+/** The memo as stored on an intent, safe to echo back. */
+function memoOf(intent: any | null) {
+  if (!intent) return null
+  return { id: intent.id, purpose: intent.purpose, memo: intent.memo, expected_usd: Number(intent.expected_usd_micros) / 1_000_000 }
+}
+
+/**
+ * Persist a verified payment with its memo snapshotted. Idempotent: the unique
+ * (chain, tx_hash, token, received_by) index means claiming the same transfer
+ * twice cannot produce a second record, and so cannot credit twice later.
+ */
+async function recordPayment(args: {
+  intent: any | null
+  userId: string
+  transfer: IncomingTransfer
+  receivedAt: string
+  usdMicros: number
+  status: 'recorded' | 'refused'
+  refusalCode: string | null
+  priceUsd?: number | null
+  pool?: string | null
+}): Promise<{ paymentId: string; duplicate: boolean }> {
+  const t = args.transfer
+  const id = 'pay_' + randomBytes(9).toString('hex')
+  const inserted = ((await query(
+    `INSERT INTO payments (id, intent_id, user_id, chain_id, token, tx_hash, received_by, sender,
+                           raw_amount, decimals, usd_value_micros, price_usd, pool, purpose, memo, status, refusal_code)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+     ON CONFLICT (chain_id, tx_hash, token, received_by) DO NOTHING
+     RETURNING id`,
+    [id, args.intent?.id ?? null, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt,
+     t.from, t.raw_amount, t.decimals, args.usdMicros, args.priceUsd ?? null, args.pool ?? null,
+     args.intent?.purpose ?? null, args.intent?.memo ?? null, args.status, args.refusalCode]
+  )) as any) as any[]
+
+  const duplicate = inserted.length === 0
+  const paymentId = duplicate ? id : (inserted[0]?.id ?? id)
+
+  if (!duplicate && args.intent?.id && args.status === 'recorded') {
+    await query(`UPDATE payment_intents SET status = 'paid' WHERE id = $1 AND user_id = $2 AND status = 'open'`, [
+      args.intent.id,
+      args.userId,
+    ])
+  }
+  return { paymentId, duplicate }
+}
 
 export function registerCreditsRoutes(app: SessionApp): void {
   // GET /api/credits
@@ -39,12 +88,93 @@ export function registerCreditsRoutes(app: SessionApp): void {
     const receiver_address = env.platformReceiverAddress || ''
     const configured = Boolean(receiver_address)
     const agent_receiver = env.platformAgentReceiver || ''
+    const automation_receiver = env.platformAutomationReceiver || ''
     return c.json({
       receiver_address,
       agent_receiver,
-      configured: Boolean(receiver_address || agent_receiver),
-      receivers: [receiver_address, agent_receiver].filter(Boolean),
+      automation_receiver,
+      configured: Boolean(receiver_address || agent_receiver || automation_receiver),
+      receivers: [receiver_address, agent_receiver, automation_receiver].filter(Boolean),
       chains: CHAINS,
+    })
+  })
+
+  // POST /api/payments/intent - the memo. ERC-20 transfers carry no memo field,
+  // so the intent is created BEFORE money moves and remembered by id. Purpose is
+  // required because it is what drives reporting; free-text memo is optional.
+  app.post('/api/payments/intent', requireUser, async (c) => {
+    const user = c.get('user')!
+    let body: any
+    try { body = await c.req.json() } catch { body = {} }
+    const PURPOSES = ['api_credits', 'agent_budget', 'pay_per_call', 'plan_purchase', 'other']
+    const purpose = String(body?.purpose || '').trim()
+    if (!PURPOSES.includes(purpose)) {
+      return c.json({ error: { message: `purpose must be one of ${PURPOSES.join(', ')}`, type: 'validation' } }, 400)
+    }
+    const expectedUsd = Number(body?.expected_usd ?? body?.expectedUsd ?? 0)
+    if (!Number.isFinite(expectedUsd) || expectedUsd <= 0 || expectedUsd > 10000) {
+      return c.json({ error: { message: 'expected_usd must be between 0.01 and 10000', type: 'validation' } }, 400)
+    }
+    // Memo is user text and is never authorisation: strip control chars, cap length.
+    const memoRaw = typeof body?.memo === 'string' ? body.memo : ''
+    const memo = memoRaw.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140) || null
+    const chainId = body?.chain_id != null ? Number(body.chain_id) : null
+    const ttlMinutes = Math.min(Math.max(Number(process.env.PAYMENT_INTENT_TTL_MINUTES || 30), 5), 1440)
+    const id = 'pi_' + randomBytes(9).toString('hex')
+    await query(
+      `INSERT INTO payment_intents (id, user_id, purpose, memo, expected_usd_micros, chain_id, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now() + ($7 || ' minutes')::interval)`,
+      [id, user.id, purpose, memo, Math.round(expectedUsd * 1_000_000), chainId, String(ttlMinutes)]
+    )
+    const row = (((await query(`SELECT id, purpose, memo, expected_usd_micros, chain_id, status, expires_at FROM payment_intents WHERE id = $1`, [id])) as any) as any[])[0]
+    return c.json({
+      intent: {
+        id: row.id,
+        purpose: row.purpose,
+        memo: row.memo,
+        expected_usd: Number(row.expected_usd_micros) / 1_000_000,
+        chain_id: row.chain_id,
+        status: row.status,
+        expires_at: row.expires_at,
+      },
+      // How to attach this payment to the memo.
+      how_to_pay: {
+        claim: 'Call POST /api/credits/payment-review with intent_id and the tx_hash after sending.',
+        receivers: [env.platformReceiverAddress, env.platformAgentReceiver, env.platformAutomationReceiver].filter(Boolean),
+        expires_in_minutes: ttlMinutes,
+      },
+    })
+  })
+
+  // GET /api/payments - the record: what each payment was for, who sent it, and
+  // what it was worth in USD when it landed.
+  app.get('/api/payments', requireUser, async (c) => {
+    const user = c.get('user')!
+    const rows = ((await query(
+      `SELECT p.id, p.intent_id, p.chain_id, p.token, p.tx_hash, p.received_by, p.sender,
+              p.raw_amount, p.decimals, p.usd_value_micros, p.price_usd, p.purpose, p.memo,
+              p.status, p.refusal_code, p.created_at
+       FROM payments p WHERE p.user_id = $1 ORDER BY p.created_at DESC LIMIT 100`,
+      [user.id]
+    )) as any) as any[]
+    return c.json({
+      payments: rows.map((r) => ({
+        id: r.id,
+        intent_id: r.intent_id,
+        chain_id: r.chain_id,
+        token: r.token,
+        tx_hash: r.tx_hash,
+        received_by: r.received_by,
+        sender: r.sender,
+        amount: Number(r.raw_amount) / 10 ** Number(r.decimals),
+        usd_value: Number(r.usd_value_micros) / 1_000_000,
+        price_usd: r.price_usd != null ? Number(r.price_usd) : null,
+        purpose: r.purpose,
+        memo: r.memo,
+        status: r.status,
+        refusal_code: r.refusal_code,
+        created_at: r.created_at,
+      })),
     })
   })
 
@@ -56,10 +186,18 @@ export function registerCreditsRoutes(app: SessionApp): void {
     try { body = await c.req.json() } catch { body = {} }
     const chainId = Number(body?.chain_id ?? body?.chainId ?? 0)
     const txHash = String(body?.tx_hash ?? body?.txHash ?? '')
+    const intentId = body?.intent_id ? String(body.intent_id) : null
     if (!chainId || !txHash) {
       return c.json({ error: { message: 'chain_id and tx_hash are required', type: 'validation' } }, 400)
     }
-    const receivers = [env.platformReceiverAddress, env.platformAgentReceiver].filter(Boolean) as string[]
+    // An intent may only be claimed by its owner.
+    let intent: any = null
+    if (intentId) {
+      const rows = ((await query(`SELECT * FROM payment_intents WHERE id = $1 AND user_id = $2`, [intentId, c.get('user')!.id])) as any) as any[]
+      intent = rows[0] ?? null
+      if (!intent) return c.json({ error: { message: 'intent not found for this account', type: 'not_found' } }, 404)
+    }
+    const receivers = [env.platformReceiverAddress, env.platformAgentReceiver, env.platformAutomationReceiver].filter(Boolean) as string[]
     const found = await findIncomingTransfer({ chainId, txHash, receivers })
     if (!found.ok) {
       return c.json({ accepted: false, verification: { ok: false, code: found.code, message: found.message } }, 422)
@@ -71,18 +209,35 @@ export function registerCreditsRoutes(app: SessionApp): void {
       amountRaw: BigInt(t.raw_amount),
       decimals: t.decimals,
     })
-    const atVault = t.to === String(env.platformReceiverAddress || '').toLowerCase()
-    const received_at = atVault ? 'treasury_vault' : 'agent_wallet'
+    const received_at =
+      t.to === String(env.platformReceiverAddress || '').toLowerCase()
+        ? 'treasury_vault'
+        : t.to === String(env.platformAutomationReceiver || '').toLowerCase()
+          ? 'automation_account'
+          : 'agent_wallet'
     if (!prepared.ok) {
+      await recordPayment({
+        intent, userId: c.get('user')!.id, transfer: t, receivedAt: received_at,
+        usdMicros: 0, status: 'refused', refusalCode: prepared.code,
+      })
       return c.json(
-        { accepted: false, received_at, verification: { ok: true, ...t }, refusal: { code: prepared.code, message: prepared.message } },
+        { accepted: false, received_at, verification: { ok: true, ...t }, intent: memoOf(intent), refusal: { code: prepared.code, message: prepared.message } },
         422
       )
     }
+    const recorded = await recordPayment({
+      intent, userId: c.get('user')!.id, transfer: t, receivedAt: received_at,
+      usdMicros: Math.round(prepared.analysis.amountUsd * 1_000_000),
+      status: 'recorded', refusalCode: null,
+      priceUsd: prepared.analysis.priceUsd, pool: prepared.analysis.poolAddress,
+    })
     return c.json({
       accepted: true,
       received_at,
       verification: { ok: true, ...t },
+      intent: memoOf(intent),
+      payment_id: recorded.paymentId,
+      duplicate: recorded.duplicate,
       value_usd: prepared.analysis.amountUsd,
       price_usd: prepared.analysis.priceUsd,
       liquidity_usd: prepared.analysis.liquidityUsd,

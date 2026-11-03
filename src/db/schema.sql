@@ -178,3 +178,43 @@ CREATE TABLE IF NOT EXISTS telegram_messages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS telegram_messages_chat_time ON telegram_messages (chat_id, created_at);
+
+-- Payment intents: the memo. Created before money moves, because ERC-20
+-- transfers carry no memo field of their own.
+CREATE TABLE IF NOT EXISTS payment_intents (
+  id                text PRIMARY KEY,
+  user_id           text NOT NULL REFERENCES users(id),
+  purpose           text NOT NULL,             -- api_credits | agent_budget | pay_per_call | plan_purchase | other
+  memo              text,                      -- user's own words, <=140 chars
+  expected_usd_micros bigint NOT NULL,
+  chain_id          integer,
+  status            text NOT NULL DEFAULT 'open', -- open | paid | expired | cancelled
+  expires_at        timestamptz NOT NULL,
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_intents_user_status ON payment_intents(user_id, status);
+
+-- Verified payments: what landed, who sent it, what it was worth, and the memo
+-- snapshotted at receipt so later edits cannot rewrite history.
+CREATE TABLE IF NOT EXISTS payments (
+  id                text PRIMARY KEY,
+  intent_id         text REFERENCES payment_intents(id),
+  user_id           text,
+  chain_id          integer NOT NULL,
+  token             text NOT NULL,
+  tx_hash           text NOT NULL,
+  received_by       text NOT NULL,             -- treasury_vault | agent_wallet | automation_account
+  sender            text,
+  raw_amount        text NOT NULL,
+  decimals          integer NOT NULL,
+  usd_value_micros  bigint NOT NULL DEFAULT 0,
+  price_usd         numeric,
+  pool              text,
+  purpose           text,
+  memo              text,
+  status            text NOT NULL,             -- recorded | refused
+  refusal_code      text,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (chain_id, tx_hash, token, received_by)
+);
+CREATE INDEX IF NOT EXISTS idx_payments_user_time ON payments(user_id, created_at DESC);
