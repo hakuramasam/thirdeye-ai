@@ -245,3 +245,41 @@ Verified constraint map, by building the deploy transaction and letting the sche
 - **C. Small vault now, rest streamed later.** Vault 2% / 7 days for an early ops float plus a
   large vault is not possible with one vault object, so this shape needs the float to come out of
   the treasury vault after unlock instead.
+
+
+## Reshaped launch: 250M airdrop (Sam's decision, 2026-11-06)
+
+Clanker cannot express the original 2% zero-lockup float, so the launch is reshaped to the
+smallest airdrop the extension allows, sent to the wallet that creates the token.
+
+| Bucket | Share | Tokens | Where it goes | Unlocks |
+| --- | --- | --- | --- | --- |
+| Pool float | 5% | 50,000,000 | Uniswap v4 THIRDEYE/USDC | At launch |
+| Airdrop | 25% | 250,000,000 | Deployer/agent wallet `0x3F3C…8dEF` | **Day 1**, no vesting |
+| Vault | 70% | 700,000,000 | Treasury vault `0x73fA…Cf0d` | Day 30 cliff, no linear tail |
+
+Inside the 70% vault: dev & ops 12%, community 10%, partner incentives 6%, promo limit-price
+buyers 4%, platform airdrops 3%, early member airdrop 3% (38% total), treasury reserve 32%.
+The old 2% ops float is replaced by the 250M airdrop.
+
+Verified by simulation against live Base state (calldata 6,026 chars, deploy SUCCEEDS, token
+`0x611ae47d59852c50bb29d3f09fccde986de39f61`). The airdrop merkle root for this recipient is
+`0x3d86942aed2fd74e734476589115b3704e6d859ad06a2db19e5b1fcd3ac1742c`, with the leaf
+`["0x3F3C5af93542B42E5f457CB3711Bc551f2898dEF", "250000000000000000000000000"]`.
+
+Seed economics return to the original target: $5,000 against a 50M float is $0.0001 per token
+and a $100,000 FDV.
+
+### Risk this shape introduces
+
+Liquid supply is **five times the pool depth** at day 1. Selling the whole airdrop into that
+pool returns about **$4,167** and moves the price **-97%**, because
+250M tokens meet a 50M-token pool. Mitigations, in order of effectiveness:
+
+1. Move the claimed 250M from the hot agent wallet into the Splits treasury (passkey custody)
+   rather than leaving it where a single key can move it.
+2. Raise the seed so the pool is deeper than the liquid supply.
+3. Treat the 250M as non-circulating and stream out only what is needed.
+
+Custody note: the airdrop recipient is the Privy agent wallet, a hot key. Whoever holds that key
+can move 250M tokens (25% of supply) from day 1.

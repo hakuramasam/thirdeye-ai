@@ -30,13 +30,13 @@ const wallet = {
 const clanker = new Clanker({ wallet, publicClient })
 
 const TREASURY = '0x73fAf95B2Baa23bde4CE8547b64C55159022Cf0d'
-const USDC_TICK = getTickFromMarketCapUSDC(100_000) // USD-denominated helper: target ~$100k FDV
+const USDC_TICK = getTickFromMarketCapUSDC(100_000) // 50M float at $0.0001 implies a $100k FDV
 // 2% ops float, delivered at deploy with no lockup, to the treasury for now.
 const { airdrop } = createAirdrop([
-  // Clanker floors an airdrop amount at 250,000,000 raw units, which for an
-  // 18-decimal token is 250M / 1e18 of a token. Its docs example passes raw token
-  // units, so this is the smallest airdrop the extension will accept here.
-  { account: TREASURY, amount: 250_000_000 },
+  // 25% of 1B. Clanker's airdrop floor is 250,000,000 whole tokens, so this is both
+  // the minimum and the chosen allocation. Recipient is the deployer wallet, which
+  // is the wallet that creates the token.
+  { account: DEPLOYER, amount: 250_000_000 },
 ])
 
 const config = {
@@ -56,9 +56,10 @@ const config = {
     positions: [{ tickLower: USDC_TICK, tickUpper: -120000, positionBps: 10_000 }],
   },
   fees: FEE_CONFIGS.StaticBasic,
-  // Vault: the 38% treasury allocation, 30 day cliff, no linear tail, as agreed.
+  // Vault: 70% to the treasury on a 30 day cliff, no linear tail. 25% airdrop +
+  // 70% vault leaves 5% (50M) as the pool float.
   vault: {
-    percentage: 38,
+    percentage: 70,
     lockupDuration: 2_592_000,
     vestingDuration: 0,
     recipient: TREASURY,
