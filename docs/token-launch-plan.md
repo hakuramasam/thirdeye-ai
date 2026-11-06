@@ -178,3 +178,28 @@ must touch the starting tick, so positions are built from that tick.
 Still to rehearse before mainnet: the vault and airdrop config blocks, a non-zero salt
 (the SDK emits `0x00…00` by default), and the real seed sizing rather than the `$100_000`
 placeholder used here.
+
+
+## Vault and airdrop rehearsal findings (2026-11-06)
+
+The full launch shape now simulates successfully against live Base state: calldata grew from
+4,810 to 6,026 chars and still returns `0x611ae47d59852c50bb29d3f09fccde986de39f61`.
+
+Config that works:
+
+```js
+vault: { percentage: 38, lockupDuration: 2_592_000, vestingDuration: 0, recipient: TREASURY },
+airdrop: { ...airdrop, lockupDuration: 86_400, vestingDuration: 0 },   // singular key
+```
+
+Three constraints the SDK enforces that the plan did not account for:
+
+1. The key is **`airdrop`** (singular), built with `createAirdrop([...])` from
+   `clanker-sdk/v4/extensions`. Passing `airdrops` fails validation.
+2. **`lockupDuration` minimum is 86,400 seconds (1 day).** A zero-lockup ops float at deploy is
+   not expressible through the airdrop extension. One day is the floor.
+3. **`amount` minimum is 250,000,000.** A 20,000,000 (2%) airdrop was rejected. If `amount` is
+   whole tokens, the smallest airdrop this extension allows is 25% of a 1B supply, which makes a
+   2% ops float impossible by this route. This needs resolving before the allocation table is
+   final: either deliver the float through the vault, accept a much larger airdrop, or decode the
+   extension bytes to confirm the unit convention.

@@ -15,6 +15,7 @@ const { createPublicClient, http, toHex, encodeFunctionData } = await import('vi
 const { base } = await import('viem/chains')
 const { Clanker } = await import('clanker-sdk/v4')
 const { FEE_CONFIGS, POOL_POSITIONS, getTickFromMarketCapUSDC } = await import('clanker-sdk')
+const { createAirdrop } = await import('clanker-sdk/v4/extensions')
 
 const publicClient = createPublicClient({ chain: base, transport: http(RPC) })
 
@@ -28,7 +29,16 @@ const wallet = {
 
 const clanker = new Clanker({ wallet, publicClient })
 
+const TREASURY = '0x73fAf95B2Baa23bde4CE8547b64C55159022Cf0d'
 const USDC_TICK = getTickFromMarketCapUSDC(100_000) // USD-denominated helper: target ~$100k FDV
+// 2% ops float, delivered at deploy with no lockup, to the treasury for now.
+const { airdrop } = createAirdrop([
+  // Clanker floors an airdrop amount at 250,000,000 raw units, which for an
+  // 18-decimal token is 250M / 1e18 of a token. Its docs example passes raw token
+  // units, so this is the smallest airdrop the extension will accept here.
+  { account: TREASURY, amount: 250_000_000 },
+])
+
 const config = {
   name: 'Thirdeye',
   symbol: 'THIRDEYE',
@@ -46,6 +56,16 @@ const config = {
     positions: [{ tickLower: USDC_TICK, tickUpper: -120000, positionBps: 10_000 }],
   },
   fees: FEE_CONFIGS.StaticBasic,
+  // Vault: the 38% treasury allocation, 30 day cliff, no linear tail, as agreed.
+  vault: {
+    percentage: 38,
+    lockupDuration: 2_592_000,
+    vestingDuration: 0,
+    recipient: TREASURY,
+  },
+  // Singular `airdrop` key. Clanker enforces lockupDuration >= 86400 (1 day), so a
+  // true zero-lockup ops float is not expressible here; 1 day is the floor.
+  airdrop: { ...airdrop, lockupDuration: 86_400, vestingDuration: 0 },
 }
 
 let tx
