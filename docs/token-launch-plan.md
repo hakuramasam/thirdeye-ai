@@ -111,3 +111,23 @@ pricing source.
   in the treasury, valued at transfer time.
 - **Complexity**: every additional accepted token is another oracle, another cap, and another thing
   that can break silently.
+
+
+## Testnet rehearsal (Base Sepolia, 84532)
+
+Before anything irreversible happens on Base mainnet, the launch flow is rehearsed on
+Base Sepolia with testnet money.
+
+- `node scripts/rehearse-sepolia.mjs` checks every prerequisite and touches nothing else:
+  RPC chain id, deployer balance, compiler availability, and that Circle's test USDC
+  exists on the network. It exits non-zero and lists exactly what is missing.
+- `node scripts/rehearse-sepolia.mjs --deploy` deploys the test token once the checks pass.
+
+**Hard rule: no testnet chain may ever be registered in `CHAINS`.** A registered
+stablecoin is valued 1:1 with no oracle, so a Sepolia entry in the production registry
+would let anyone send free testnet USDC and receive real credit. `tests/testnet-guard.test.ts`
+enforces this. The rehearsal script therefore talks to Sepolia directly and never writes
+to the production database or the production API.
+
+Credentials: `SEPOLIA_DEPLOYER_KEY` is a dedicated testnet key, never the mainnet agent
+key, and never a key that has held real funds.
