@@ -203,3 +203,45 @@ Three constraints the SDK enforces that the plan did not account for:
    2% ops float impossible by this route. This needs resolving before the allocation table is
    final: either deliver the float through the vault, accept a much larger airdrop, or decode the
    extension bytes to confirm the unit convention.
+
+
+## Settled: airdrop and vault limits (verified 2026-11-06)
+
+The airdrop `amount` unit question is settled by decoding what the SDK actually builds.
+`createAirdrop([{ account, amount: 250_000_000 }])` produces a merkle leaf of
+`["0x73fA…Cf0d", "250000000000000000000000000"]`, which is 250,000,000 × 10^18. So
+**`amount` is whole tokens**, scaled by 1e18 internally, and the schema floor of 250,000,000
+is therefore **250,000,000 whole tokens, i.e. 25% of a 1B supply**.
+
+Verified constraint map, by building the deploy transaction and letting the schema judge:
+
+| Parameter | Limit | Note |
+| --- | --- | --- |
+| `vault.percentage` max | **90** | 95 rejected; so at least 10% always reaches the pool |
+| `vault.lockupDuration` min | **604,800s = 7 days** | 1 day rejected; 2%/7 days accepted |
+| `vault` shape | single object | an array of vaults is rejected |
+| `airdrop.amount` min | **250,000,000 tokens** | 20,000,000 (2%) rejected |
+| `airdrop.lockupDuration` min | **86,400s = 1 day** | 25%/1 day accepted |
+| key name | `airdrop` singular | `airdrops` rejected |
+
+### What this does to the allocation table
+
+1. **"5% into the pool, 95% to the vault" cannot be built.** The vault caps at 90%, so the pool
+   floor is 10% of supply. At 1B that is 100M tokens, not 50M, which halves the launch price for
+   the same seed: $5,000 against 100M is $0.00005 per token, a $50,000 FDV.
+2. **"2% liquid at day 0 with zero lockup" cannot be built.** The earliest anyone can hold
+   unlocked tokens is day 1 via an airdrop, and that airdrop must be at least 25% of supply.
+3. **Only one vault cliff is expressible.** So the nine-bucket unlock schedule cannot live in
+   Clanker. The workable shape is: one vault (e.g. 90% at a 30-day cliff) to the treasury, then
+   Sablier streams from the treasury for each bucket, which is where the real schedule belongs.
+
+### Workable shapes to choose from
+
+- **A. Vault 90% / 30 days, pool 10%.** Simplest, keeps the treasury whole, requires $10,000
+  seed to reach the same $0.0001 price. No day-0 float; distribution happens through Sablier
+  after unlock.
+- **B. Vault 75% / 30 days + airdrop 25% / 1 day.** Gives a genuine day-1 liquid float, but at 25%
+  of supply rather than 2%, which is a much larger unlock than planned.
+- **C. Small vault now, rest streamed later.** Vault 2% / 7 days for an early ops float plus a
+  large vault is not possible with one vault object, so this shape needs the float to come out of
+  the treasury vault after unlock instead.
