@@ -12,6 +12,7 @@
 
 import { analyseToken, DEFAULT_MARKET_POLICY, type MarketPolicy } from './market.js'
 import { settlementTokenFor, swapOnBase } from './swap.js'
+import { CHAINS } from './chains.js'
 
 export type AutoConvertPolicy = MarketPolicy & {
   enabled: boolean
@@ -42,6 +43,19 @@ export function netCreditMicros(grossOutMicros: number, policy: Pick<AutoConvert
   return Math.max(0, grossOutMicros - fee)
 }
 
+/** The registered symbol when this token is a stablecoin on that chain, else null. */
+export function registeredStable(chainId: number, tokenAddress: string, settlement?: string | null): string | null {
+  const addr = String(tokenAddress || '').toLowerCase()
+  if (!addr) return null
+  const cfg = CHAINS.find((c) => c.chainId === chainId)
+  const token = cfg?.tokens.find((t) => t.address.toLowerCase() === addr)
+  if (token && token.stable !== false) return token.symbol
+  // The settlement stablecoin counts even if it was not listed in tokens[].
+  const settle = settlement ?? settlementTokenFor(chainId)
+  if (settle && settle.toLowerCase() === addr) return cfg?.settlement?.symbol ?? 'stablecoin'
+  return null
+}
+
 export type PrepareResult =
   | {
       ok: true
@@ -70,6 +84,36 @@ export async function prepareAutoConvert(params: {
   if (!settlement) {
     return { ok: false, code: 'unsupported_chain', message: `No settlement stablecoin configured for chain ${params.chainId}` }
   }
+  // A stablecoin needs no market: it is already what we settle in, so it is
+  // valued 1:1 and never swapped. This also covers chains with no price source
+  // (Robinhood), where requiring an indexer price would refuse our own USDG.
+  const stable = registeredStable(params.chainId, params.tokenAddress, settlement)
+  if (stable) {
+    const amountUsd = Number(params.amountRaw) / 10 ** params.decimals
+    if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+      return { ok: false, code: 'amount_too_large', message: 'Payment value could not be determined from token decimals' }
+    }
+    if (amountUsd > policy.maxAutoConvertUsd) {
+      return { ok: false, code: 'amount_too_large', message: `Payment of $${amountUsd.toFixed(2)} exceeds the $${policy.maxAutoConvertUsd} auto-credit ceiling` }
+    }
+    return {
+      ok: true,
+      analysis: {
+        tradable: true,
+        priceUsd: 1,
+        liquidityUsd: 0,
+        volume24hUsd: 0,
+        amountUsd,
+        impactBps: 0,
+        poolAddress: 'none',
+        dex: 'none',
+        source: 'stablecoin-peg',
+      },
+      settlementToken: settlement,
+      note: `Stablecoin payment in ${stable}, credited 1:1 with no swap`,
+    }
+  }
+
   const analysis = await analyseToken(params)
   if (!analysis.tradable) {
     return { ok: false, code: analysis.code, message: analysis.message }
