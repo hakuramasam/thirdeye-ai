@@ -283,3 +283,29 @@ pool returns about **$4,167** and moves the price **-97%**, because
 
 Custody note: the airdrop recipient is the Privy agent wallet, a hot key. Whoever holds that key
 can move 250M tokens (25% of supply) from day 1.
+
+
+## Post-deploy sweep into the treasury
+
+`scripts/sweep-airdrop-to-treasury.mjs` moves the claimed airdrop out of the hot deployer
+wallet into the passkey-controlled treasury. Run it with tsx:
+
+```bash
+THIRDEYE_TOKEN_ADDRESS=0x... npx tsx scripts/sweep-airdrop-to-treasury.mjs            # dry run
+THIRDEYE_TOKEN_ADDRESS=0x... npx tsx scripts/sweep-airdrop-to-treasury.mjs --confirm  # send
+```
+
+Guards, all covered by tests: refuses on a malformed or missing token address, refuses when
+treasury and deployer are the same wallet, refuses a zero balance, refuses when gas is below
+0.0005 ETH (a sweep that cannot pay for itself leaves tokens where they were), and supports a
+reserve floor so a slice stays behind. It simulates the transfer before sending and verifies the
+treasury balance after.
+
+Verified in inspect mode against live state: pointed at the deployed TREND token it read the
+deployer balance correctly and stopped on the gas guard with
+`0.00000816457459746 ETH is below the 0.0005 ETH minimum`, sending nothing.
+
+**Still missing for a fully automatic post-deploy flow:** the airdrop CLAIM step. The 250M only
+lands in the deployer wallet after a claim transaction against Clanker's airdrop claim contract,
+using the merkle proof from `createAirdrop`. That call is not scripted yet, so today the sequence
+is claim by hand, then sweep by script.

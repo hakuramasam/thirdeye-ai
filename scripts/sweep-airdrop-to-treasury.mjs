@@ -6,8 +6,8 @@
  * Runs dry by default: it prints the plan and simulates, and only sends with --confirm.
  *
  * Usage:
- *   THIRDEYE_TOKEN_ADDRESS=0x... node scripts/sweep-airdrop-to-treasury.mjs
- *   THIRDEYE_TOKEN_ADDRESS=0x... node scripts/sweep-airdrop-to-treasury.mjs --confirm
+ *   THIRDEYE_TOKEN_ADDRESS=0x... npx tsx scripts/sweep-airdrop-to-treasury.mjs
+ *   THIRDEYE_TOKEN_ADDRESS=0x... npx tsx scripts/sweep-airdrop-to-treasury.mjs --confirm
  *
  * Env:
  *   THIRDEYE_TOKEN_ADDRESS  deployed token (required)
@@ -16,7 +16,8 @@
  *   SWEEP_RESERVE_TOKENS    optional tokens to leave behind, in whole tokens
  *   BASE_RPC                optional RPC override
  */
-import { planSweep, sweepAmount } from '../src/lib/sweepGuard.js'
+// Run with tsx (npm scripts already have it): the guard module is TypeScript.
+import { planSweep, sweepAmount } from '../src/lib/sweepGuard.ts'
 
 const RPC = process.env.BASE_RPC || 'https://base-rpc.publicnode.com'
 const TOKEN = process.env.THIRDEYE_TOKEN_ADDRESS || ''
