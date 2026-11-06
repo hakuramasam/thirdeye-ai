@@ -10,6 +10,20 @@ import { prepareAutoConvert, autoConvertPolicyFromEnv } from '../payments/autoCo
 import { randomBytes } from 'node:crypto'
 import type { IncomingTransfer } from '../payments/verify.js'
 
+/** Chain slug used by the deposits/ledger tables. */
+export function chainSlugFor(chainId: number): string | null {
+  return CHAINS.find((c) => c.chainId === chainId)?.id ?? null
+}
+
+/**
+ * A payment releases credit only when it was verified as tradable (status
+ * recorded), has not been recorded before, and carries a positive value.
+ * Refusals and replays never credit.
+ */
+export function shouldCreditPayment(args: { status: string; duplicate: boolean; usdMicros: number }): boolean {
+  return args.status === 'recorded' && !args.duplicate && args.usdMicros > 0
+}
+
 /** The memo as stored on an intent, safe to echo back. */
 function memoOf(intent: any | null) {
   if (!intent) return null
@@ -227,12 +241,26 @@ export function registerCreditsRoutes(app: SessionApp): void {
         422
       )
     }
+    const usdMicros = Math.round(prepared.analysis.amountUsd * 1_000_000)
     const recorded = await recordPayment({
       intent, userId: c.get('user')!.id, transfer: t, receivedAt: received_at,
-      usdMicros: Math.round(prepared.analysis.amountUsd * 1_000_000),
-      status: 'recorded', refusalCode: null,
+      usdMicros, status: 'recorded', refusalCode: null,
       priceUsd: prepared.analysis.priceUsd, pool: prepared.analysis.poolAddress,
     })
+
+    // Release credit only for a first-time, tradable payment. creditDeposit is
+    // itself idempotent per (chain, tx, token), so a replay cannot double-credit
+    // even if two claims race past the payments uniqueness check.
+    let credited = false
+    let balanceMicros: number | null = null
+    const chainSlug = chainSlugFor(chainId)
+    if (chainSlug && shouldCreditPayment({ status: 'recorded', duplicate: recorded.duplicate, usdMicros })) {
+      const dep = await creditDeposit(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token })
+      credited = dep.credited
+      balanceMicros = dep.balance
+    } else if (recorded.duplicate) {
+      balanceMicros = await getBalanceMicros(c.get('user')!.id)
+    }
     return c.json({
       accepted: true,
       received_at,
@@ -240,6 +268,8 @@ export function registerCreditsRoutes(app: SessionApp): void {
       intent: memoOf(intent),
       payment_id: recorded.paymentId,
       duplicate: recorded.duplicate,
+      credited,
+      balance_usd_micros: balanceMicros,
       value_usd: prepared.analysis.amountUsd,
       price_usd: prepared.analysis.priceUsd,
       liquidity_usd: prepared.analysis.liquidityUsd,
