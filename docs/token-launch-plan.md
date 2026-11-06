@@ -155,3 +155,26 @@ salt cannot simply be guessed. The correct calldata has to come from the SDK's o
 path, which is the next step: either pin the SDK major that still exports the `Clanker` class
 (the installed build does not) and capture its prepared transaction, or install Foundry and
 run the SDK against a real `anvil` fork of Base.
+
+
+## Rehearsal v2: the real SDK builds the call, live Base state executes it
+
+`scripts/rehearse-clanker-v4.mjs` is the working rehearsal. The deploy class lives at the
+subpath `clanker-sdk/v4` (not the package root), and `Clanker#getDeployTransaction` returns
+a viem contract request, which the script encodes to calldata.
+
+Result on 2026-11-06:
+
+- Target contract `0xE85A59c628F7d27878ACeB4bf3b35733630083a9`, `value 0`, calldata 4,810 chars.
+- Function `deployToken` with a `tokenConfig` struct (tokenAdmin, name, symbol, salt, image, ...).
+- `eth_call` with a funded state override **SUCCEEDS** against live Base state and returns the
+  token address it would create: `0x611ae47d59852c50bb29d3f09fccde986de39f61`.
+- Wallet is a stub whose `writeContract`/`sendTransaction` throw, so the script cannot broadcast
+  by accident.
+
+USDC pairing needs `getTickFromMarketCapUSDC` (not the WETH helper), and one pool position
+must touch the starting tick, so positions are built from that tick.
+
+Still to rehearse before mainnet: the vault and airdrop config blocks, a non-zero salt
+(the SDK emits `0x00…00` by default), and the real seed sizing rather than the `$100_000`
+placeholder used here.
