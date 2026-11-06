@@ -131,3 +131,27 @@ to the production database or the production API.
 
 Credentials: `SEPOLIA_DEPLOYER_KEY` is a dedicated testnet key, never the mainnet agent
 key, and never a key that has held real funds.
+
+
+## Fork-less rehearsal against live Base state
+
+`scripts/rehearse-clanker-sim.mjs` runs the real Clanker factory call as `eth_call` with a
+state override that funds the deployer, against live Base mainnet state. Nothing is signed
+or broadcast, so the rehearsal costs nothing.
+
+Established by running it on 2026-11-06:
+
+- Clanker v4 factory on Base: `0x250c9FB2b411B48273f69879007803790A6AeA47` (code present).
+- `deployToken(string,string,uint256,int24,uint24,bytes32,address)`.
+- `predictToken` returns the counterfactual token address for a given salt.
+- `getTickFromMarketCap(20)` returns WETH pairing at tick `-223400` (about 20 ETH FDV), and
+  `FEE_CONFIGS.StaticBasic` maps to lpFee `10000` (1%).
+- For USDC pairing the SDK exposes `getTickFromMarketCapUSDC` / `getTickFromMarketCapStable`,
+  not the WETH helper.
+
+**Known blocker:** `deployToken` reverts with "Invalid salt". The factory validates its own
+salt scheme, and `generateSalt` returns more than a single bytes32 on this deployment, so the
+salt cannot simply be guessed. The correct calldata has to come from the SDK's own deploy
+path, which is the next step: either pin the SDK major that still exports the `Clanker` class
+(the installed build does not) and capture its prepared transaction, or install Foundry and
+run the SDK against a real `anvil` fork of Base.
