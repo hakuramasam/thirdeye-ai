@@ -75,7 +75,15 @@ export async function verifyPayment(input: {
     const text = await res.text()
     let body: any = {}
     try { body = JSON.parse(text) } catch { body = { raw: text.slice(0, 300) } }
-    if (!res.ok && res.status !== 200) {
+    // Some verifiers answer 402 as a STATUS ("not verified") rather than a payment
+    // demand, and still return a full on-chain result. Judge by the payload, not the
+    // status code, so real evidence is never thrown away. Measured on Vesper's
+    // verifier 2026-11-07: HTTP 402 with confirmations, block and sender populated
+    // and no payment requirements attached.
+    const RESULT_FIELDS = ['verified_onchain', 'verified', 'confirmations', 'exact_method', 'tx_hash', 'block']
+    const looksLikeResult = body && typeof body === 'object' && RESULT_FIELDS.some((f) => f in body)
+    if (looksLikeResult) return classifyVerification(body)
+    if (!res.ok) {
       return { status: 'unavailable', verifiedOnchain: false, confirmations: 0, replay: false, raw: { http: res.status, body } }
     }
     return classifyVerification(body)

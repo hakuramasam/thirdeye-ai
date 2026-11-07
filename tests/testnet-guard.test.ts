@@ -178,3 +178,21 @@ test('tx hash extraction accepts a header or a decoded payload', () => {
   assert.equal(txHashFrom({ txHash: h.toUpperCase().replace('0X', '0x') }), h)
   assert.equal(txHashFrom(null, 'no hash here'), null)
 })
+
+test('a 402 carrying a verification payload is still read as a result', async () => {
+  // Measured shape from Vesper's verifier: 402 status, full on-chain data attached.
+  const body = {
+    protocol: 'x402-verifier',
+    verified_onchain: false,
+    confirmations: 906646,
+    block: 53443985,
+    tx_hash: '0x' + 'ab'.repeat(32),
+    exact_method: { match: false, reason: 'unknown method' },
+    errors: [],
+  }
+  const fields = ['verified_onchain', 'verified', 'confirmations', 'exact_method', 'tx_hash', 'block']
+  assert.equal(fields.some((f) => f in body), true, 'payload must be recognised as a result')
+  const r = classifyVerification(body)
+  assert.equal(r.confirmations, 906646)
+  assert.equal(r.verifiedOnchain, false)
+})
