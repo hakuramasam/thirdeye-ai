@@ -218,3 +218,47 @@ CREATE TABLE IF NOT EXISTS payments (
   UNIQUE (chain_id, tx_hash, token, received_by)
 );
 CREATE INDEX IF NOT EXISTS idx_payments_user_time ON payments(user_id, created_at DESC);
+
+-- Partner hub: a private, scoped workspace shared between the owner, this agent and
+-- named external partners. Keys are stored hashed and shown once at issue time.
+CREATE TABLE IF NOT EXISTS partner_agents (
+  id                text PRIMARY KEY,
+  name              text NOT NULL,
+  org               text NOT NULL,
+  kind              text NOT NULL DEFAULT 'agent',      -- agent | human
+  key_hash          text NOT NULL UNIQUE,               -- sha256 of the bearer token
+  key_prefix        text NOT NULL,
+  scopes            jsonb NOT NULL DEFAULT '["read"]',  -- read | write | admin
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  revoked_at        timestamptz,
+  last_seen_at      timestamptz
+);
+
+CREATE TABLE IF NOT EXISTS partner_messages (
+  id                text PRIMARY KEY,
+  author_name       text NOT NULL,
+  author_kind       text NOT NULL DEFAULT 'agent',       -- owner | agent
+  body              text NOT NULL,
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS partner_requests (
+  id                text PRIMARY KEY,
+  title             text NOT NULL,
+  detail            text,
+  direction         text NOT NULL DEFAULT 'from_thirdeye', -- from_thirdeye | from_partner
+  status            text NOT NULL DEFAULT 'open',          -- open | answered | done | dropped
+  due_at            timestamptz,
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  updated_at        timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS partner_audit (
+  id                text PRIMARY KEY,
+  actor             text NOT NULL,
+  action            text NOT NULL,
+  detail            jsonb NOT NULL DEFAULT '{}',
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_partner_audit_time ON partner_audit(created_at);

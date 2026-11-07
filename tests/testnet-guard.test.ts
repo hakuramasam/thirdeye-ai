@@ -53,3 +53,35 @@ test('the amount respects the reserve floor', () => {
   assert.equal(sweepAmount(100n, 250n), 0n)
   assert.equal(sweepAmount(1_000n), 1_000n)
 })
+
+import { hashPartnerKey, newPartnerKey, bearerToken, hasScope } from '../src/routes/partner.js'
+
+test('partner keys are stored hashed and hashing is deterministic', () => {
+  const { token, hash, prefix } = newPartnerKey()
+  assert.equal(hashPartnerKey(token), hash)
+  assert.equal(prefix, token.slice(0, 11))
+  assert.notEqual(hash, token)
+})
+
+test('two issued keys never collide', () => {
+  const a = newPartnerKey(), b = newPartnerKey()
+  assert.notEqual(a.token, b.token)
+  assert.notEqual(a.hash, b.hash)
+})
+
+test('bearer parsing rejects malformed headers', () => {
+  assert.equal(bearerToken('Bearer pk-abc'), 'pk-abc')
+  assert.equal(bearerToken('bearer  pk-abc '), 'pk-abc')
+  assert.equal(bearerToken('Token pk-abc'), null)
+  assert.equal(bearerToken(undefined), null)
+  assert.equal(bearerToken('Bearer '), null)
+})
+
+test('scopes gate reads and writes, and admin implies both', () => {
+  assert.equal(hasScope(['read'], 'read'), true)
+  assert.equal(hasScope(['read'], 'write'), false)
+  assert.equal(hasScope([], 'read'), false)
+  assert.equal(hasScope(undefined, 'read'), false)
+  assert.equal(hasScope(['admin'], 'write'), true)
+  assert.equal(hasScope(['admin'], 'read'), true)
+})
