@@ -295,3 +295,17 @@ CREATE TABLE IF NOT EXISTS agent_run_payments (
 );
 CREATE INDEX IF NOT EXISTS idx_run_payments_run ON agent_run_payments(run_id);
 CREATE INDEX IF NOT EXISTS idx_run_payments_tx ON agent_run_payments(tx_hash);
+
+-- Founder/partner credit allowances. A wallet listed here is not blocked by a low
+-- balance. monthly_cap_usd_micros = 0 means uncapped; usage is still metered.
+CREATE TABLE IF NOT EXISTS credit_allowances (
+  id            text PRIMARY KEY,
+  wallet        text NOT NULL,
+  label         text NOT NULL,
+  monthly_cap_usd_micros bigint NOT NULL DEFAULT 0,
+  enabled       boolean NOT NULL DEFAULT true,
+  note          text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_allowance_wallet ON credit_allowances(lower(wallet));
+ALTER TABLE partner_agents ADD COLUMN IF NOT EXISTS merchant_wallet text;

@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { query, one } from '../db/index.js'
 import { env } from '../lib/env.js'
 import { debitForUsage } from '../lib/billing.js'
+import { isCovered } from '../lib/allowance.js'
 import { computeCostMicros } from '../lib/pricing.js'
 import { getModelRow, type ProviderCall } from '../providers/index.js'
 import { createMcpTools, type McpTools, type McpServerConfig } from './mcp.js'
@@ -161,7 +162,9 @@ export async function runAgent(
           ? computeCostMicros(modelRow, res.prompt_tokens, res.completion_tokens, env.platformMarginPct, byok)
           : 0
       if (cost > 0) {
-        const debit = await debitForUsage(user.id, cost, `agent:${runId}`)
+        const debit = await debitForUsage(user.id, cost, `agent:${runId}`, {
+          allowNegative: await isCovered(user.wallet),
+        })
         if (!debit.ok) {
           return await finish('error', null, toolCalls, spend, 'Insufficient credits. Top up with USDC (Base) or USDG (Robinhood Chain) on the Deposit page.')
         }

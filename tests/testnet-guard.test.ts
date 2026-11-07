@@ -196,3 +196,14 @@ test('a 402 carrying a verification payload is still read as a result', async ()
   assert.equal(r.confirmations, 906646)
   assert.equal(r.verifiedOnchain, false)
 })
+
+import { allowanceAllows } from '../src/lib/allowance.js'
+
+test('an uncapped allowance always covers, a capped one stops at its ceiling', () => {
+  assert.equal(allowanceAllows(0, 0), true)
+  assert.equal(allowanceAllows(0, 99_000_000), true, 'cap 0 means uncapped')
+  assert.equal(allowanceAllows(5_000_000, 0), true)
+  assert.equal(allowanceAllows(5_000_000, 4_999_999), true)
+  assert.equal(allowanceAllows(5_000_000, 5_000_000), false, 'stops exactly at the ceiling')
+  assert.equal(allowanceAllows(5_000_000, 9_000_000), false)
+})

@@ -2,6 +2,7 @@ import type { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { query } from '../db/index.js'
 import { debitForUsage, getBalanceMicros } from '../lib/billing.js'
+import { isCovered } from '../lib/allowance.js'
 import { env, newId } from '../lib/env.js'
 import { apiKeyAuth } from '../lib/keys.js'
 import { computeCostMicros } from '../lib/pricing.js'
@@ -106,7 +107,9 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
     const isFreeModel = Number(modelRow.price_in_1m_usd_micros) === 0 && Number(modelRow.price_out_1m_usd_micros) === 0
     if (!providerCall.byok && !isFreeModel) {
       const balance = await getBalanceMicros(user.id)
-      if (balance < 10000) {
+      // A founder/partner allowance removes the refusal but never mints credit.
+      const covered = balance < 10000 ? await isCovered(user.wallet) : false
+      if (balance < 10000 && !covered) {
         await refundSlot(apiKey.id, estTokens)
         return c.json(
           {
@@ -192,7 +195,9 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
               providerCall.byok
             )
             if (costMicros > 0) {
-              await debitForUsage(user.id, costMicros, 'stream:' + newId())
+              await debitForUsage(user.id, costMicros, 'stream:' + newId(), {
+                allowNegative: await isCovered(user.wallet),
+              })
               await chargeKeyBudget(apiKey, costMicros)
             }
             await recordUsage({
@@ -259,7 +264,9 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
         const created = Math.floor(Date.now() / 1000)
 
         if (costMicros > 0) {
-          const debit = await debitForUsage(user.id, costMicros, 'req:' + chatId)
+          const debit = await debitForUsage(user.id, costMicros, 'req:' + chatId, {
+            allowNegative: await isCovered(user.wallet),
+          })
           if (!debit.ok) {
             await refundSlot(apiKey.id, estTokens)
             return c.json(

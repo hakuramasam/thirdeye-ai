@@ -12,15 +12,24 @@ export async function getBalanceMicros(userId: string): Promise<number> {
   return Number(r?.bal ?? 0)
 }
 
-/** Charge a request. Returns ok:false when the balance is insufficient. */
-export async function debitForUsage(userId: string, costMicros: number, ref: string): Promise<{ ok: boolean; balance: number }> {
+/**
+ * Charge a request. Returns ok:false when the balance is insufficient and no
+ * allowance covers the wallet. A covered wallet is charged anyway so the cost
+ * stays visible in the ledger, which is why the balance may go negative.
+ */
+export async function debitForUsage(
+  userId: string,
+  costMicros: number,
+  ref: string,
+  opts: { allowNegative?: boolean } = {}
+): Promise<{ ok: boolean; balance: number }> {
   if (costMicros <= 0) return { ok: true, balance: await getBalanceMicros(userId) }
   return tx(async (q) => {
     // Serialize per-user debits
     await q('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId])
     const b = await q('SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal FROM ledger WHERE user_id = $1', [userId])
     const balance = Number(b.rows[0]?.bal ?? 0)
-    if (balance < costMicros) return { ok: false, balance }
+    if (balance < costMicros && !opts.allowNegative) return { ok: false, balance }
     await q('INSERT INTO ledger (user_id, amount_usd_micros, kind, ref) VALUES ($1, $2, $3, $4)', [userId, -costMicros, 'usage', ref])
     return { ok: true, balance: balance - costMicros }
   })
