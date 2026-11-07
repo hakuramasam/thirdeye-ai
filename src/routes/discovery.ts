@@ -209,14 +209,18 @@ export function registerDiscoveryRoutes(app: Hono<AppEnv>): void {
     })
   })
 
+  // Served at the root by vercel.json rewrites; this alias covers the /api path too.
   app.get('/.well-known/agent-card.json', (c) => c.json(agentCard()))
+  app.get('/api/.well-known/agent-card.json', (c) => c.json(agentCard()))
 
-  app.post('/a2a', async (c) => {
+  const a2aHandler = async (c: any) => {
     const body = await c.req.json().catch(() => null)
     if (!body || body.jsonrpc !== '2.0' || typeof body.method !== 'string') {
       return c.json({ jsonrpc: '2.0', id: body?.id ?? null, error: { code: -32600, message: 'Invalid Request' } })
     }
     const out = a2aResponse(body.method, body.params, body.id)
     return c.json(out.body as any, out.status as any)
-  })
+  }
+  app.post('/a2a', a2aHandler)
+  app.post('/api/a2a', a2aHandler)
 }
