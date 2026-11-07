@@ -41,10 +41,16 @@ chain, method, expected recipient/token/amount, verified_onchain, confirmations,
 and asks the partner's verifier. `replay=true` is classified as `replay` with
 `verifiedOnchain: true`, never as an error.
 
-Measured 2026-11-07: Vesper's verifier at `/verify` answers **HTTP 402**, i.e. verification is
-itself a paid call. So with an unfunded wallet and an empty seller allowlist, verification is
-recorded as `unavailable` with the 402 evidence attached. Nothing is spent and the run is
-unaffected. End-to-end verification needs a funded wallet and an allowlist entry, both of which
-are spend decisions.
+**Corrected 2026-11-07.** An earlier reading of Vesper's `/verify` said verification was itself a
+paid call. That was wrong. With a well-formed request the endpoint answers HTTP 402 *and returns a
+complete on-chain result*: `confirmations: 906646`, `block: 53443985`, `from`, `exact_method.match`,
+`errors: []`, and no payment requirements block. The 402 here is a status meaning "not verified",
+not a payment demand.
+
+Two consequences:
+1. `verifyPayment` now judges by payload, not status code, so a 402 carrying evidence is recorded
+   as a real result instead of `unavailable`. Regression covered by test.
+2. Verifying costs nothing, so no allowlist entry or funding is needed **for verification**. A
+   funded wallet is only needed to make a paid skill call that there is something to verify.
 
 Not implemented: optional `receipt_stamp` receipt ids on run records.
