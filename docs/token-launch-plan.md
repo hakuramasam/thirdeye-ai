@@ -309,3 +309,27 @@ deployer balance correctly and stopped on the gas guard with
 lands in the deployer wallet after a claim transaction against Clanker's airdrop claim contract,
 using the merkle proof from `createAirdrop`. That call is not scripted yet, so today the sequence
 is claim by hand, then sweep by script.
+
+
+## Partner hub (live 2026-11-07, commit e108706)
+
+Private integration surface at `https://thirdeye-ai-alpha.vercel.app/partner`, gated
+server-side. No client-side gate exists anywhere.
+
+Access:
+- Owner: normal session cookie, full read/write/admin.
+- Partners/agents: bearer token, sha256 stored (never plaintext), scopes `read` | `write` |
+  `admin`, revocable via `DELETE /api/partner/keys/:id`. Keys are shown once at issue.
+- Partner keys can never mint or widen their own access; `admin` requires explicit
+  `confirm_admin: true` from an owner session.
+
+API: `GET /api/partner/hub` (identity, live cap and allowlist, open requests, thread,
+keys for admin only), `POST /api/partner/messages`, `POST /api/partner/requests`,
+`PATCH /api/partner/requests/:id`, `POST /api/partner/keys`, `DELETE /api/partner/keys/:id`.
+
+Verified live: `/partner` returns 200, `/api/partner/hub` returns 401 with no credentials and
+401 with a junk token, and a real partner token resolves to its own identity while hiding other
+keys. 64 of 64 tests pass.
+
+Not built yet: rate limiting on partner writes, per-partner message threading (currently one
+shared thread), and email or webhook notification when a partner posts.
