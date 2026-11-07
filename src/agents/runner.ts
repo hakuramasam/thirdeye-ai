@@ -11,6 +11,7 @@ import { computeCostMicros } from '../lib/pricing.js'
 import { getModelRow, type ProviderCall } from '../providers/index.js'
 import { createMcpTools, type McpTools, type McpServerConfig } from './mcp.js'
 import { paidFetch } from './x402.js'
+import { verifyPayment, txHashFrom } from '../lib/partnerVerify.js'
 import type { ModelRow } from '../lib/pricing.js'
 import type { UserRow } from '../lib/types.js'
 
@@ -198,6 +199,16 @@ export async function runAgent(
                 result = `Payment blocked: ${r.blocked.reason}. No payment was made. HTTP ${r.response.status}: ${text.slice(0, 500)}`
               } else {
                 result = `HTTP ${r.response.status}${r.paid ? ' (x402 paid)' : ''}: ${text.slice(0, MAX_TOOL_RESULT_CHARS)}`
+                if (r.paid) {
+                  // Record the payment and ask the seller to verify it. This never
+                  // throws: a partner being unreachable must not break a settled payment.
+                  void recordAndVerifyPayment({
+                    runId,
+                    url: String(args.url),
+                    header: r.response.headers.get('x-payment-response'),
+                    spentMicros: r.spentUsdMicros,
+                  })
+                }
                 if (r.spentUsdMicros > 0) {
                   spend += r.spentUsdMicros
                   if (spend > budget) {
@@ -230,4 +241,44 @@ export async function runAgent(
 
 export async function getAgent(id: string, userId: string): Promise<AgentRow | null> {
   return one(`SELECT * FROM agents WHERE id = $1 AND user_id = $2 AND status != 'deleted'`, [id, userId])
+}
+
+
+/**
+ * Persist an x402 payment our agent made and ask the partner to verify it.
+ * Failures here are recorded, never thrown: the run has already paid.
+ */
+async function recordAndVerifyPayment(input: {
+  runId: string
+  url: string
+  header: string | null
+  spentMicros: number
+}): Promise<void> {
+  try {
+    let decoded: any = null
+    try {
+      const { decodeXPaymentResponse } = await import('x402-fetch')
+      if (input.header) decoded = decodeXPaymentResponse(input.header)
+    } catch { /* header shape unknown; fall back to a regex scan */ }
+
+    const txHash = txHashFrom(decoded, input.header)
+    let host = ''
+    try { host = new URL(input.url).host } catch { host = input.url.slice(0, 80) }
+    const expected = {
+      recipient: decoded?.payTo ?? decoded?.recipient ?? null,
+      token: decoded?.asset ?? decoded?.token ?? null,
+      amount_units: decoded?.maxAmountRequired ?? decoded?.amount ?? String(input.spentMicros),
+    }
+
+    const check = await verifyPayment({ txHash, chain: 'base', method: 'x402', expected })
+    await query(
+      `INSERT INTO agent_run_payments
+         (id, run_id, seller_host, tx_hash, chain, method, expected, verified_onchain, confirmations, replay, status, response)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [
+        randomUUID(), input.runId, host, txHash, 'base', 'x402', JSON.stringify(expected),
+        check.verifiedOnchain, check.confirmations, check.replay, check.status, JSON.stringify(check.raw),
+      ]
+    )
+  } catch { /* bookkeeping only; never surface to the caller */ }
 }

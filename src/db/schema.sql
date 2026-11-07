@@ -276,3 +276,22 @@ CREATE TABLE IF NOT EXISTS partner_write_log (
   created_at        timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_partner_write_log ON partner_write_log(actor, created_at);
+
+-- x402 payments our agents made to a partner, plus the partner's verification of them.
+CREATE TABLE IF NOT EXISTS agent_run_payments (
+  id                text PRIMARY KEY,
+  run_id            text,
+  seller_host       text,
+  tx_hash           text,
+  chain             text,
+  method            text,
+  expected          jsonb NOT NULL DEFAULT '{}',
+  verified_onchain  boolean NOT NULL DEFAULT false,
+  confirmations     integer NOT NULL DEFAULT 0,
+  replay            boolean NOT NULL DEFAULT false,
+  status            text NOT NULL DEFAULT 'unverified', -- verified | replay | unverified | skipped | unavailable
+  response          jsonb NOT NULL DEFAULT '{}',
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_run_payments_run ON agent_run_payments(run_id);
+CREATE INDEX IF NOT EXISTS idx_run_payments_tx ON agent_run_payments(tx_hash);

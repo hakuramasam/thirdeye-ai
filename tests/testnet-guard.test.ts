@@ -106,3 +106,75 @@ test('the write throttle opens then closes', () => {
   assert.equal(isOverWriteLimit(PARTNER_WRITE_LIMIT), true)
   assert.equal(isOverWriteLimit(PARTNER_WRITE_LIMIT + 5), true)
 })
+
+import { pricePer1m, capabilityCard, agentCard, a2aResponse } from '../src/routes/discovery.js'
+import { classifyVerification, txHashFrom } from '../src/lib/partnerVerify.js'
+
+test('public catalogue shows catalogue and billed prices, margin included', () => {
+  const p = pricePer1m(150_000) // $0.15 per 1M catalogue
+  assert.equal(p.catalog_usd, 0.15)
+  assert.equal(p.billed_usd, 0.165) // +10%
+})
+
+test('the capability card carries every field a partner needs to route', () => {
+  const c = capabilityCard() as any
+  for (const k of ['service', 'version', 'protocols', 'endpoints', 'strengths', 'gaps_we_do_not_fill', 'peers']) {
+    assert.ok(c[k] !== undefined, `missing ${k}`)
+  }
+  assert.ok(c.endpoints.models_public.endsWith('/api/models/public'))
+  assert.ok(c.endpoints.agent_card.endsWith('/.well-known/agent-card.json'))
+  assert.ok(Array.isArray(c.peers) && c.peers.length >= 1)
+})
+
+test('the agent card is peer-addressable', () => {
+  const a = agentCard() as any
+  assert.equal(a.protocolVersion, '0.2.1')
+  assert.equal(a.preferredTransport, 'JSONRPC')
+  assert.ok(a.url.endsWith('/a2a'))
+  assert.ok(a.skills.length >= 3)
+  for (const s of a.skills) {
+    assert.ok(s.id && s.name && s.description, 'skill needs id, name, description')
+  }
+})
+
+test('a2a answers discovery and refuses unknown methods without spending', () => {
+  const ok = a2aResponse('message/send', { message: { text: 'hello' } }, 1)
+  assert.equal(ok.status, 200)
+  const body = ok.body as any
+  assert.equal(body.result.status.state, 'completed')
+  assert.match(body.result.artifacts[0].parts[0].text, /no inference/i)
+
+  const card = a2aResponse('agent/getCard', {}, 2) as any
+  assert.ok(card.body.result.skills)
+
+  const bad = a2aResponse('tasks/get', {}, 3) as any
+  assert.equal(bad.body.error.code, -32001)
+
+  const unknown = a2aResponse('does/not/exist', {}, 4) as any
+  assert.equal(unknown.body.error.code, -32601)
+
+  const stream = a2aResponse('message/stream', {}, 5) as any
+  assert.equal(stream.body.error.code, -32601)
+})
+
+test('replay is proof of prior accounting, never a failure', () => {
+  const r = classifyVerification({ replay: true, verified: false })
+  assert.equal(r.status, 'replay')
+  assert.equal(r.replay, true)
+  assert.equal(r.verifiedOnchain, true) // accounted for already
+
+  const v = classifyVerification({ data: { verified: true, confirmations: 12 } })
+  assert.equal(v.status, 'verified')
+  assert.equal(v.confirmations, 12)
+
+  const u = classifyVerification({ verified: false, confirmations: 0 })
+  assert.equal(u.status, 'unverified')
+})
+
+test('tx hash extraction accepts a header or a decoded payload', () => {
+  const h = '0x' + 'ab'.repeat(32)
+  assert.equal(txHashFrom(null, `payment-response=${h}`), h)
+  assert.equal(txHashFrom({ transaction: h }), h)
+  assert.equal(txHashFrom({ txHash: h.toUpperCase().replace('0X', '0x') }), h)
+  assert.equal(txHashFrom(null, 'no hash here'), null)
+})
