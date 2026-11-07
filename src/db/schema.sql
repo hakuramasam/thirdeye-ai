@@ -262,3 +262,17 @@ CREATE TABLE IF NOT EXISTS partner_audit (
 );
 
 CREATE INDEX IF NOT EXISTS idx_partner_audit_time ON partner_audit(created_at);
+
+-- Per-partner threading: messages belong to a partner's thread, so one partner
+-- cannot read another's conversation.
+ALTER TABLE partner_messages ADD COLUMN IF NOT EXISTS thread text NOT NULL DEFAULT 'general';
+CREATE INDEX IF NOT EXISTS idx_partner_messages_thread ON partner_messages(thread, created_at);
+
+-- Write throttling counters, per identity per window.
+CREATE TABLE IF NOT EXISTS partner_write_log (
+  id                text PRIMARY KEY,
+  actor             text NOT NULL,
+  action            text NOT NULL,
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_partner_write_log ON partner_write_log(actor, created_at);

@@ -34,6 +34,26 @@ export function bearerToken(header: string | undefined | null): string | null {
   return m ? m[1].trim() : null
 }
 
+/** A partner's thread name, derived from their org so it is stable and readable. */
+export function threadFor(org: string): string {
+  const slug = String(org || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return slug || 'general'
+}
+
+/**
+ * Write throttling. Partners are limited; the owner is not. Kept pure so the
+ * decision is testable without a database.
+ */
+export const PARTNER_WRITE_LIMIT = 20
+export const PARTNER_WRITE_WINDOW_SECONDS = 600
+
+export function isOverWriteLimit(recentCount: number, limit = PARTNER_WRITE_LIMIT): boolean {
+  return recentCount >= limit
+}
+
 export function hasScope(scopes: PartnerScope[] | null | undefined, needed: PartnerScope): boolean {
   const list = scopes ?? []
   if (list.includes('admin')) return true
@@ -59,6 +79,22 @@ export async function resolvePartner(c: Context<AppEnv>): Promise<PartnerIdentit
   const user = c.get('user')
   if (user) return { name: 'owner', org: 'Thirdeye', kind: 'owner', scopes: ['read', 'write', 'admin'] }
   return null
+}
+
+/**
+ * Records a write attempt and reports whether this identity is over its limit.
+ * Called before the write lands, so a throttled partner changes nothing.
+ */
+async function throttle(actor: string): Promise<{ allowed: boolean; remaining: number }> {
+  const r = await query(
+    `SELECT COUNT(*)::int AS n FROM partner_write_log
+      WHERE actor = $1 AND created_at > now() - ($2 || ' seconds')::interval`,
+    [actor, String(PARTNER_WRITE_WINDOW_SECONDS)]
+  )
+  const used = Number(r.rows[0]?.n ?? 0)
+  if (isOverWriteLimit(used)) return { allowed: false, remaining: 0 }
+  await query('INSERT INTO partner_write_log (id, actor, action) VALUES ($1, $2, $3)', [newId(), actor, 'write'])
+  return { allowed: true, remaining: PARTNER_WRITE_LIMIT - used - 1 }
 }
 
 async function audit(actor: string, action: string, detail: Record<string, unknown> = {}): Promise<void> {
@@ -118,7 +154,11 @@ export function registerPartnerRoutes(app: Hono<AppEnv>): void {
       query('SELECT name, mcp_servers, x402_enabled, x402_allowed_sellers, x402_max_per_call_usd_micros FROM agents ORDER BY created_at ASC LIMIT 5'),
       query(`SELECT id, title, detail, direction, status, due_at, created_at FROM partner_requests
               WHERE status = 'open' ORDER BY created_at DESC LIMIT 20`),
-      query('SELECT author_name, body, created_at FROM partner_messages ORDER BY created_at DESC LIMIT 20'),
+      who.kind === 'owner'
+        // The owner supervises every thread, so they see them all, labelled.
+        ? query('SELECT author_name, body, thread, created_at FROM partner_messages ORDER BY created_at DESC LIMIT 40')
+        // A partner sees only their own thread, enforced in SQL rather than in the UI.
+        : query('SELECT author_name, body, thread, created_at FROM partner_messages WHERE thread = $1 ORDER BY created_at DESC LIMIT 40', [threadFor(who.org)]),
       who.scopes.includes('admin')
         ? query('SELECT name, org, key_prefix, scopes, created_at, revoked_at, last_seen_at FROM partner_agents ORDER BY created_at ASC')
         : Promise.resolve({ rows: [], rowCount: 0 }),
@@ -135,6 +175,7 @@ export function registerPartnerRoutes(app: Hono<AppEnv>): void {
         per_call_cap_usd: Number(a.x402_max_per_call_usd_micros ?? 20000) / 1_000_000,
         note: 'Cap and allowlist are the live values; nothing is paid to a partner until a host is allowlisted.',
       },
+      thread: who.kind === 'owner' ? 'all' : threadFor(who.org),
       requests: requests.rows,
       messages: requests.rows.slice(0, 0).concat(messages.rows).reverse(),
       keys: who.scopes.includes('admin') ? keys.rows : undefined,
@@ -145,12 +186,21 @@ export function registerPartnerRoutes(app: Hono<AppEnv>): void {
     const who = await resolvePartner(c)
     if (!who) return c.json({ error: { message: 'Unauthorized', type: 'partner', code: 'unauthorized' } }, 401)
     if (!hasScope(who.scopes, 'write')) return c.json({ error: { message: 'Missing write scope', type: 'partner', code: 'forbidden' } }, 403)
-    const body = String((await c.req.json().catch(() => ({})))?.body ?? '').trim()
+    const payload = await c.req.json().catch(() => ({}))
+    const body = String(payload?.body ?? '').trim()
     if (!body) return c.json({ error: { message: 'body is required', type: 'partner', code: 'invalid_request' } }, 400)
     if (body.length > 4000) return c.json({ error: { message: 'body too long', type: 'partner', code: 'invalid_request' } }, 400)
+    if (who.kind === 'agent') {
+      const t = await throttle(who.name)
+      if (!t.allowed) {
+        return c.json({ error: { message: `Rate limit: ${PARTNER_WRITE_LIMIT} writes per ${PARTNER_WRITE_WINDOW_SECONDS}s`, type: 'partner', code: 'rate_limited' } }, 429)
+      }
+    }
+    // A partner can only write into their own thread; the owner may target any thread.
+    const thread = who.kind === 'owner' ? threadFor(String(payload?.thread ?? 'general')) : threadFor(who.org)
     const id = newId()
-    await query('INSERT INTO partner_messages (id, author_name, author_kind, body) VALUES ($1, $2, $3, $4)', [
-      id, who.name, who.kind, body,
+    await query('INSERT INTO partner_messages (id, author_name, author_kind, body, thread) VALUES ($1, $2, $3, $4, $5)', [
+      id, who.name, who.kind, body, thread,
     ])
     await audit(who.name, 'message.create', { id })
     return c.json({ ok: true, id })
@@ -163,6 +213,12 @@ export function registerPartnerRoutes(app: Hono<AppEnv>): void {
     const b = await c.req.json().catch(() => ({}))
     const title = String(b?.title ?? '').trim()
     if (!title) return c.json({ error: { message: 'title is required', type: 'partner', code: 'invalid_request' } }, 400)
+    if (who.kind === 'agent') {
+      const t = await throttle(who.name)
+      if (!t.allowed) {
+        return c.json({ error: { message: `Rate limit: ${PARTNER_WRITE_LIMIT} writes per ${PARTNER_WRITE_WINDOW_SECONDS}s`, type: 'partner', code: 'rate_limited' } }, 429)
+      }
+    }
     const id = newId()
     await query(
       `INSERT INTO partner_requests (id, title, detail, direction, status, due_at)

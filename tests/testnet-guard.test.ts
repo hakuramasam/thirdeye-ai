@@ -85,3 +85,24 @@ test('scopes gate reads and writes, and admin implies both', () => {
   assert.equal(hasScope(['admin'], 'write'), true)
   assert.equal(hasScope(['admin'], 'read'), true)
 })
+
+import { threadFor, isOverWriteLimit, PARTNER_WRITE_LIMIT } from '../src/routes/partner.js'
+
+test('each partner org maps to its own stable thread', () => {
+  assert.equal(threadFor('Vesper Intelligence'), 'vesper-intelligence')
+  assert.equal(threadFor('Vesper  Intelligence!!'), 'vesper-intelligence')
+  assert.equal(threadFor('ACME Corp'), 'acme-corp')
+  assert.equal(threadFor(''), 'general')
+  assert.equal(threadFor('---'), 'general')
+})
+
+test('two different partners never share a thread', () => {
+  assert.notEqual(threadFor('Vesper Intelligence'), threadFor('Acme Corp'))
+})
+
+test('the write throttle opens then closes', () => {
+  assert.equal(isOverWriteLimit(0), false)
+  assert.equal(isOverWriteLimit(PARTNER_WRITE_LIMIT - 1), false)
+  assert.equal(isOverWriteLimit(PARTNER_WRITE_LIMIT), true)
+  assert.equal(isOverWriteLimit(PARTNER_WRITE_LIMIT + 5), true)
+})
