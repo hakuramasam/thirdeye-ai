@@ -180,6 +180,24 @@ function Keys({ onChanged }: { onChanged: () => void }) {
   const revoke = async (id: string) => {
     try { await api('/api/keys/' + id, { method: 'DELETE' }); toast('Key revoked'); load(); onChanged() } catch (e: any) { toast(e.message, 'error') }
   }
+  // Per-key monthly budget. Empty string means uncapped (null), which the API accepts.
+  const saveBudget = async (id: string, usd: string) => {
+    const trimmed = usd.trim()
+    const micros = trimmed === '' ? null : Math.round(Number(trimmed) * 1_000_000)
+    if (micros !== null && (!Number.isFinite(micros) || micros < 0)) { toast('Enter a USD amount, or leave blank for uncapped', 'error'); return }
+    try {
+      await api('/api/keys/' + id, { method: 'PATCH', body: JSON.stringify({ budget_usd_micros: micros }) })
+      toast(micros === null ? 'Key is now uncapped' : `Monthly budget set to $${trimmed}`)
+      load(); onChanged()
+    } catch (e: any) { toast(e.message, 'error') }
+  }
+  const budgetLabel = (k: any) => {
+    const cap = k.budget_usd_micros == null ? null : Number(k.budget_usd_micros)
+    const spent = Number(k.period_spent_usd_micros ?? 0)
+    if (cap == null) return 'uncapped'
+    const left = Math.max(0, cap - spent)
+    return `${fmtUsd(spent)} of ${fmtUsd(cap)} used, ${fmtUsd(left)} left`
+  }
   return (
     <div>
       <div className="card">
@@ -204,13 +222,23 @@ function Keys({ onChanged }: { onChanged: () => void }) {
         <h2>Your keys</h2>
         {keys.length === 0 ? <p className="muted small">No keys yet.</p> : (
           <table>
-            <thead><tr><th>Name</th><th>Prefix</th><th>RPM / TPM</th><th>Created</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Prefix</th><th>RPM / TPM</th><th>Monthly budget</th><th>Set budget (USD)</th><th>Created</th><th>Status</th><th></th></tr></thead>
             <tbody>
               {keys.map((k) => (
                 <tr key={k.id}>
                   <td>{k.name}</td>
                   <td className="mono muted">{k.prefix}…</td>
                   <td className="muted">{k.rpm} / {k.tpm.toLocaleString()}</td>
+                  <td className="muted">{budgetLabel(k)}</td>
+                  <td>
+                    <input
+                      style={{ width: 90 }}
+                      placeholder="uncapped"
+                      defaultValue={k.budget_usd_micros == null ? '' : String(Number(k.budget_usd_micros) / 1_000_000)}
+                      onBlur={(e) => { if (e.target.value !== (k.budget_usd_micros == null ? '' : String(Number(k.budget_usd_micros) / 1_000_000))) saveBudget(k.id, e.target.value) }}
+                      onKeyDown={(e) => { if ((e.target as HTMLInputElement).key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                    />
+                  </td>
                   <td className="muted">{fmtDate(k.created_at)}</td>
                   <td>{k.revoked_at ? <span className="pill err">revoked</span> : <span className="pill on">active</span>}</td>
                   <td>{!k.revoked_at && <button className="danger-btn small-btn" onClick={() => revoke(k.id)}>Revoke</button>}</td>
