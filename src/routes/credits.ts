@@ -415,6 +415,27 @@ export function registerCreditsRoutes(app: SessionApp): void {
       )
     }
 
+    // Optionally load a specific key instead of the shared account balance. The key must
+    // belong to the caller, so a deposit can never be pointed at someone else's key.
+    const targetKeyId = body?.api_key_id ? String(body.api_key_id) : null
+    if (targetKeyId) {
+      const owned = await one('SELECT id FROM api_keys WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL', [targetKeyId, user.id])
+      if (!owned) {
+        return c.json({ error: { message: 'api_key_id must be one of your active keys', type: 'validation' } }, 400)
+      }
+      const dep = await creditDeposit(user.id, verification.amount_usd_micros, { chain, txHash: tx_hash, token: verification.token }, { toKeyId: targetKeyId })
+      if (!dep.credited) {
+        return c.json({ credited: false, loaded_to: 'key', api_key_id: targetKeyId, reason: 'already_credited' })
+      }
+      return c.json({
+        credited: true,
+        loaded_to: 'key',
+        api_key_id: targetKeyId,
+        key_credit_usd_micros: dep.keyCredit ?? null,
+        balance_usd_micros: dep.balance,
+      })
+    }
+
     const depositResult = await creditDeposit(user.id, verification.amount_usd_micros, {
       chain,
       txHash: tx_hash,

@@ -268,9 +268,11 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
         c.header('Content-Type', 'text/event-stream')
         c.header('Cache-Control', 'no-cache')
         c.header('Connection', 'keep-alive')
+        c.header('X-Thirdeye-Key-Credit-Remaining-Usd', ((await getKeyCreditMicros(apiKey.id)) / 1e6).toFixed(6))
         c.header('X-Thirdeye-Model', requestedModel)
         c.header('X-Thirdeye-Byok', providerCall.byok ? 'true' : 'false')
         c.header('X-Thirdeye-Cost-Usd', (reservedMicros / 1e6).toFixed(6))
+        c.header('X-Thirdeye-Key-Credit-Remaining-Usd', ((await getKeyCreditMicros(apiKey.id)) / 1e6).toFixed(6))
         c.header('X-RateLimit-Remaining-RPM', String(Math.max(0, apiKey.rpm - rl.rpm_used)))
 
         return c.body(stream1)

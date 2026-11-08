@@ -39,8 +39,9 @@ export async function debitForUsage(
 export async function creditDeposit(
   userId: string,
   amountMicros: number,
-  ref: { chain: string; txHash: string; token: string }
-): Promise<{ credited: boolean; balance: number }> {
+  ref: { chain: string; txHash: string; token: string },
+  opts: { toKeyId?: string | null } = {}
+): Promise<{ credited: boolean; balance: number; keyCredit?: number }> {
   return tx(async (q) => {
     await q('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId])
     const dep = await q(
@@ -53,11 +54,21 @@ export async function creditDeposit(
       const b = await q('SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal FROM ledger WHERE user_id = $1', [userId])
       return { credited: false, balance: Number(b.rows[0]?.bal ?? 0) }
     }
+    // A key-tagged deposit loads that key: the deposits row keeps the real amount and the
+    // replay protection, while the money lands on the key instead of the account ledger.
+    const balNow = async () => {
+      const b = await q('SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal FROM ledger WHERE user_id = $1', [userId])
+      return Number(b.rows[0]?.bal ?? 0)
+    }
+    if (opts.toKeyId) {
+      const k = await q('UPDATE api_keys SET credit_usd_micros = credit_usd_micros + $1 WHERE id = $2 RETURNING credit_usd_micros', [amountMicros, opts.toKeyId])
+      if (!k.rows[0]) throw new Error('api key not found for deposit credit')
+      return { credited: true, balance: await balNow(), keyCredit: Number(k.rows[0].credit_usd_micros) }
+    }
     await q('INSERT INTO ledger (user_id, amount_usd_micros, kind, ref) VALUES ($1, $2, $3, $4)', [
       userId, amountMicros, 'deposit', `${ref.chain}:${ref.txHash}`,
     ])
-    const b = await q('SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal FROM ledger WHERE user_id = $1', [userId])
-    return { credited: true, balance: Number(b.rows[0]?.bal ?? 0) }
+    return { credited: true, balance: await balNow() }
   })
 }
 

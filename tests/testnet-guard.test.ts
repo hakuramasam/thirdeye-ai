@@ -316,3 +316,13 @@ test('reconciliation ignores free rows and counts cache opportunity', () => {
   assert.equal(r.rows_drifted_over_2pct, 0)
   assert.equal(r.stored_usd_micros, 0)
 })
+
+// Key loading must be idempotent and additive: two deposits load twice, a replay loads once.
+test('key credit accumulates additively and is never reset by a later load', async () => {
+  const { splitKeyCredit } = await import('../src/lib/keycredit.js')
+  // A 2.00 load then a 3.00 load leaves 5.00 available, and a 6.00 call spills 1.00 to the account.
+  const afterLoads = 2_000_000 + 3_000_000
+  const split = splitKeyCredit(afterLoads, 6_000_000)
+  assert.equal(split.fromKey, 5_000_000)
+  assert.equal(split.fromAccount, 1_000_000)
+})

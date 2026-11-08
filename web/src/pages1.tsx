@@ -322,9 +322,12 @@ function Credits({ onChanged }: { onChanged: () => void }) {
   const [busy, setBusy] = useState(false)
   const [payInToken, setPayInToken] = useState<boolean | null>(null)
   const [tokenInfo, setTokenInfo] = useState<{ symbol: string; address: string } | null>(null)
+  const [keys, setKeys] = useState<KeyRow[]>([])
+  const [loadKeyId, setLoadKeyId] = useState('')
   const load = useCallback(() => {
     api('/api/credits/deposit-info').then(setInfo).catch(() => {})
     api('/api/credits').then(setCredits).catch(() => {})
+    api('/api/keys').then((r) => setKeys((r.keys || []).filter((k: KeyRow) => !k.revoked_at))).catch(() => {})
     api('/api/me')
       .then((me: any) => {
         setPayInToken(Boolean(me?.user?.pay_in_token))
@@ -336,8 +339,13 @@ function Credits({ onChanged }: { onChanged: () => void }) {
   const submit = async () => {
     setBusy(true)
     try {
-      const r = await api('/api/credits/deposit', { method: 'POST', body: JSON.stringify({ chain, tx_hash: txHash.trim() }) })
-      if (r.status === 'already_credited') toast('That deposit was already credited')
+      const r = await api('/api/credits/deposit', { method: 'POST', body: JSON.stringify({
+        chain,
+        tx_hash: txHash.trim(),
+        ...(loadKeyId ? { api_key_id: loadKeyId } : {}),
+      }) })
+      if (r.credited === false) toast('That deposit was already credited')
+      else if (r.loaded_to === 'key') toast('Loaded ' + fmtUsd(r.amount_usd_micros ?? r.key_credit_usd_micros) + ' onto the key')
       else toast('Credited ' + fmtUsd(r.amount_usd_micros))
       setTxHash(''); load(); onChanged()
     } catch (e: any) { toast(e.message, 'error') } finally { setBusy(false) }
@@ -409,6 +417,20 @@ function Credits({ onChanged }: { onChanged: () => void }) {
                 </select>
               </div>
               <div style={{ flex: 2 }}><label>Transaction hash</label><input value={txHash} className="mono" placeholder="0x…" onChange={(e) => setTxHash(e.target.value)} /></div>
+            </div>
+            <div className="row">
+              <div style={{ flex: 2 }}>
+                <label>Load into</label>
+                <select value={loadKeyId} onChange={(e) => setLoadKeyId(e.target.value)}>
+                  <option value="">Account balance (default)</option>
+                  {keys.map((k) => (
+                    <option key={k.id} value={k.id}>{k.name} · {k.prefix}…</option>
+                  ))}
+                </select>
+                <p className="muted small" style={{ marginTop: 6 }}>
+                  Choosing a key puts this deposit on that key alone. Calls then spend the key first and only fall back to your account balance, so a key can be handed out with its own funds.
+                </p>
+              </div>
             </div>
             <div style={{ marginTop: 14 }}><button onClick={submit} disabled={busy || !txHash.trim()}>Verify &amp; credit</button></div>
           </>
