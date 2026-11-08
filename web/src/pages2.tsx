@@ -11,6 +11,32 @@ type RunRow = { id: string; status: string; input: string; output: string | null
 type ModelRow = { model: string; provider: string; price_in_1m_usd_micros: number; price_out_1m_usd_micros: number }
 
 /* ---------------- agents ---------------- */
+type Draft = {
+  system_prompt: string; model: string; budget_usd: string; max_steps: string
+  cron: string; status: string; x402: boolean; sellers: string; cap_usd: string
+  mcp: { name: string; url: string; headers: string }[]
+}
+
+function draftFrom(a: AgentRow): Draft {
+  const cap = (a as any).x402_max_per_call_usd_micros ?? 20000
+  const sellers = (a as any).x402_allowed_sellers ?? []
+  return {
+    system_prompt: a.system_prompt || '',
+    model: a.model,
+    budget_usd: (Number(a.budget_usd_micros) / 1e6).toFixed(4),
+    max_steps: String(a.max_steps),
+    cron: a.cron || '',
+    status: a.status || 'active',
+    x402: !!a.x402_enabled,
+    sellers: (Array.isArray(sellers) ? sellers : []).join(', '),
+    cap_usd: (Number(cap) / 1e6).toFixed(4),
+    mcp: (a.mcp_servers || []).map((m: any) => ({
+      name: m.name || '',
+      url: m.url || '',
+      headers: m.headers ? JSON.stringify(m.headers, null, 0) : '',
+    })),
+  }
+}
 const emptyForm = {
   name: '', system_prompt: '', model: '', budget_usd_micros: '100000',
   max_steps: '8', cron: '', x402: false,
@@ -27,6 +53,9 @@ function Agents() {
   const [runResult, setRunResult] = useState<{ output: string | null; error: string | null; tool_calls: number; spend_usd_micros: number } | null>(null)
   const [runInput, setRunInput] = useState('')
   const [runBusy, setRunBusy] = useState(false)
+  const [editing, setEditing] = useState<string | null>(null)
+  const [draft, setDraft] = useState<Draft | null>(null)
+  const [saveBusy, setSaveBusy] = useState(false)
 
   const load = useCallback(() => {
     api('/api/agents').then((r) => setAgents(r.agents)).catch(() => {})
@@ -82,6 +111,50 @@ function Agents() {
 
   const setMcp = (i: number, patch: Partial<{ name: string; url: string }>) => {
     setForm((f) => ({ ...f, mcp: f.mcp.map((m, j) => (j === i ? { ...m, ...patch } : m)) }))
+  }
+
+  const startEdit = (a: AgentRow) => { setEditing(a.id); setDraft(draftFrom(a)) }
+  const pat = (patch: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...patch } : d))
+  const setDraftMcp = (i: number, patch: Partial<{ name: string; url: string; headers: string }>) =>
+    setDraft((d) => (d ? { ...d, mcp: d.mcp.map((m, j) => (j === i ? { ...m, ...patch } : m)) } : d))
+
+  const saveEdit = async (a: AgentRow) => {
+    if (!draft) return
+    setSaveBusy(true)
+    try {
+      // Only fields the PATCH route accepts, and only when they actually changed, so a
+      // stale draft never quietly rewrites something the user did not touch.
+      const body: any = {}
+      if (draft.system_prompt !== a.system_prompt) body.system_prompt = draft.system_prompt
+      if (draft.model !== a.model) body.model = draft.model
+      const budgetMicros = Math.round(Number(draft.budget_usd) * 1e6)
+      if (budgetMicros !== Number(a.budget_usd_micros)) body.budget_usd_micros = budgetMicros
+      if (Number(draft.max_steps) !== Number(a.max_steps)) body.max_steps = Number(draft.max_steps)
+      const cronNext = draft.cron.trim() || null
+      if (cronNext !== (a.cron || null)) body.cron = cronNext
+      if (draft.status !== a.status) body.status = draft.status
+      if (draft.x402 !== !!a.x402_enabled) body.x402_enabled = draft.x402
+      const sellers = draft.sellers.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean)
+      const prevSellers = ((a as any).x402_allowed_sellers || []) as string[]
+      if (sellers.join(',') !== prevSellers.join(',')) body.x402_allowed_sellers = sellers
+      const capMicros = Math.round(Number(draft.cap_usd) * 1e6)
+      if (capMicros !== Number((a as any).x402_max_per_call_usd_micros ?? 20000)) body.x402_max_per_call_usd_micros = capMicros
+      const mcp = draft.mcp.filter((m) => m.name && m.url).map((m) => {
+        const out: any = { name: m.name.trim(), url: m.url.trim() }
+        if (m.headers.trim()) {
+          try { out.headers = JSON.parse(m.headers) } catch { throw new Error('Headers for ' + m.name + ' must be valid JSON') }
+        }
+        return out
+      })
+      if (JSON.stringify(mcp) !== JSON.stringify((a.mcp_servers || []).map((m: any) => {
+        const o: any = { name: m.name, url: m.url }; if (m.headers) o.headers = m.headers; return o
+      }))) body.mcp_servers = mcp
+
+      if (Object.keys(body).length === 0) { toast('No changes'); setSaveBusy(false); return }
+      await api('/api/agents/' + a.id, { method: 'PATCH', body: JSON.stringify(body) })
+      toast('Agent updated')
+      setEditing(null); setDraft(null); load()
+    } catch (e: any) { toast(e.message, 'error') } finally { setSaveBusy(false) }
   }
 
   return (
@@ -140,6 +213,7 @@ function Agents() {
               {a.cron && <span className="pill">{a.cron}</span>}
               {a.mcp_servers.length > 0 && <span className="pill">{a.mcp_servers.length} MCP</span>}
               <span style={{ flex: 1 }} />
+              <button className="ghost small-btn" onClick={() => (editing === a.id ? (setEditing(null), setDraft(null)) : startEdit(a))}>{editing === a.id ? 'Close' : 'Edit'}</button>
               <button className="ghost small-btn" onClick={() => runNow(a)}>Run now</button>
               <button className="danger-btn small-btn" onClick={() => del(a.id)}>Delete</button>
             </div>
@@ -174,6 +248,58 @@ function Agents() {
                     </tbody>
                   </table>
                 )}
+              </div>
+            )}
+            {editing === a.id && draft && (
+              <div className="run-box" style={{ marginTop: 12 }}>
+                <div className="row">
+                  <div style={{ flex: 2 }}>
+                    <label>Model</label>
+                    <select value={draft.model} onChange={(e) => pat({ model: e.target.value })}>
+                      {models.map((m) => <option key={m.model} value={m.model}>{m.model}</option>)}
+                    </select>
+                  </div>
+                  <div><label>Status</label>
+                    <select value={draft.status} onChange={(e) => pat({ status: e.target.value })}>
+                      <option value="active">active</option>
+                      <option value="paused">paused</option>
+                    </select>
+                  </div>
+                </div>
+                <label>System prompt</label>
+                <textarea rows={3} value={draft.system_prompt} onChange={(e) => pat({ system_prompt: e.target.value })} />
+                <div className="row">
+                  <div><label>Budget per run (USD)</label><input value={draft.budget_usd} onChange={(e) => pat({ budget_usd: e.target.value })} /></div>
+                  <div><label>Max steps (1-20)</label><input value={draft.max_steps} onChange={(e) => pat({ max_steps: e.target.value })} /></div>
+                  <div><label>Cron (blank = manual)</label><input value={draft.cron} placeholder="*/30 * * * *" onChange={(e) => pat({ cron: e.target.value })} /></div>
+                </div>
+                <label>MCP servers</label>
+                {draft.mcp.length === 0 && <p className="muted small">None attached.</p>}
+                {draft.mcp.map((m, i) => (
+                  <div key={i} style={{ marginBottom: 8 }}>
+                    <div className="row">
+                      <div><input value={m.name} placeholder="name" onChange={(e) => setDraftMcp(i, { name: e.target.value })} /></div>
+                      <div style={{ flex: 2 }}><input value={m.url} className="mono" placeholder="https://example.com/mcp" onChange={(e) => setDraftMcp(i, { url: e.target.value })} /></div>
+                      <div style={{ flex: '0 0 auto' }}><button className="ghost small-btn" onClick={() => setDraft({ ...draft, mcp: draft.mcp.filter((_, j) => j !== i) })}>x</button></div>
+                    </div>
+                    <input className="mono" value={m.headers} placeholder='headers JSON, e.g. {"Authorization":"Bearer ..."}' onChange={(e) => setDraftMcp(i, { headers: e.target.value })} />
+                  </div>
+                ))}
+                {draft.mcp.length < 5 && (
+                  <button className="ghost small-btn" style={{ marginBottom: 12 }} onClick={() => setDraft({ ...draft, mcp: [...draft.mcp, { name: '', url: '', headers: '' }] })}>+ Add MCP server</button>
+                )}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input style={{ width: 'auto' }} type="checkbox" checked={draft.x402} onChange={(e) => pat({ x402: e.target.checked })} />
+                  x402 pay-per-call enabled
+                </label>
+                <div className="row">
+                  <div style={{ flex: 2 }}><label>Allowed sellers (comma separated hosts)</label><input className="mono" value={draft.sellers} placeholder="api.example.com, gateway.example.com" onChange={(e) => pat({ sellers: e.target.value })} /></div>
+                  <div><label>Per-call cap (USD, max 1.00)</label><input value={draft.cap_usd} onChange={(e) => pat({ cap_usd: e.target.value })} /></div>
+                </div>
+                <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                  <button disabled={saveBusy} onClick={() => saveEdit(a)}>{saveBusy ? 'Saving...' : 'Save changes'}</button>
+                  <button className="ghost" onClick={() => { setEditing(null); setDraft(null) }}>Cancel</button>
+                </div>
               </div>
             )}
           </div>
