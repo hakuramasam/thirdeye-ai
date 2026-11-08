@@ -207,3 +207,21 @@ test('an uncapped allowance always covers, a capped one stops at its ceiling', (
   assert.equal(allowanceAllows(5_000_000, 5_000_000), false, 'stops exactly at the ceiling')
   assert.equal(allowanceAllows(5_000_000, 9_000_000), false)
 })
+
+import { canonicalModelId, BRAND_ALIAS_PREFIXES } from '../src/providers/index.js'
+
+test('branded model aliases resolve to the canonical catalogue id', () => {
+  assert.equal(canonicalModelId('thirdeye/gpt-oss-120b'), 'gpt-oss-120b')
+  assert.equal(canonicalModelId('thirdeye-gpt-oss-120b'), 'gpt-oss-120b')
+  assert.equal(canonicalModelId('THIRDEYE/gpt-oss-120b'), 'gpt-oss-120b')
+  assert.equal(canonicalModelId('gpt-oss-120b'), 'gpt-oss-120b', 'plain ids keep working')
+  assert.equal(canonicalModelId('  thirdeye/qwen3.8-27b  '), 'qwen3.8-27b')
+  assert.equal(canonicalModelId('thirdeye/mistral-small'), 'mistral-small')
+})
+
+test('alias stripping is pure, so resolution order is what protects real ids', () => {
+  // A real model called thirdeye-mock exists. The resolver queries the exact id first and only
+  // then the stripped form, so the alias can never shadow a genuine catalogue entry.
+  assert.equal(canonicalModelId('thirdeye-mock'), 'mock')
+  assert.equal(BRAND_ALIAS_PREFIXES.length, 3)
+})

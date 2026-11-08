@@ -33,6 +33,19 @@ export type ProviderCall = {
   stream(params: Record<string, any>): Promise<Response>
 }
 
+// Branded aliases. A caller may name a model as thirdeye/<model> or thirdeye-<model> and we
+// resolve it to the canonical catalogue id. Nothing is renamed upstream, so both forms keep
+// working; the alias only makes our platform visible in a client's model picker.
+export const BRAND_ALIAS_PREFIXES = ['thirdeye/', 'thirdeye-', 'thirdeye_']
+
+export function canonicalModelId(requested: string): string {
+  const raw = String(requested || '').trim()
+  for (const prefix of BRAND_ALIAS_PREFIXES) {
+    if (raw.toLowerCase().startsWith(prefix)) return raw.slice(prefix.length)
+  }
+  return raw
+}
+
 // 30-second TTL cache for getModelRow
 const modelCache = new Map<string, { row: ModelRow | null; expiresAt: number }>()
 
@@ -43,7 +56,12 @@ export async function getModelRow(modelName: string): Promise<ModelRow | null> {
     return cached.row
   }
 
-  const row = await one('SELECT * FROM models_catalog WHERE model = $1', [modelName])
+  // Exact catalogue id wins, so a real model whose name starts with the brand prefix
+  // (thirdeye-mock) is never mistaken for an alias. Only then try the stripped form.
+  const canonical = canonicalModelId(modelName)
+  const row =
+    (await one('SELECT * FROM models_catalog WHERE model = $1', [modelName])) ??
+    (canonical === modelName ? null : await one('SELECT * FROM models_catalog WHERE model = $1', [canonical]))
   modelCache.set(modelName, { row, expiresAt: now + 30000 })
   return row
 }

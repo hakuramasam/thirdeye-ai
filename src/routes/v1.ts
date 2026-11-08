@@ -30,7 +30,8 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
       id: row.model,
       object: 'model',
       created: 1700000000,
-      owned_by: row.provider,
+      owned_by: 'thirdeye-ai',
+      owned_by_upstream: row.provider,
       pricing: {
         prompt: (Number(row.price_in_1m_usd_micros) / 1e6).toString(),
         completion: (Number(row.price_out_1m_usd_micros) / 1e6).toString(),
