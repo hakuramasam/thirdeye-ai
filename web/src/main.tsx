@@ -3,11 +3,13 @@ import './styles.css'
 import { api, short, toast, Toasts, ChainBadge, NetworkPrompt } from './wallet'
 import { Landing, Overview, Keys, Byok, Credits } from './pages1'
 import { Agents, Models, Docs } from './pages2'
+import { Playground } from './pages3'
 
-type Tab = 'overview' | 'keys' | 'byok' | 'credits' | 'agents' | 'models' | 'docs'
+type Tab = 'overview' | 'playground' | 'keys' | 'byok' | 'credits' | 'agents' | 'models' | 'docs'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
+  { id: 'playground', label: 'Playground' },
   { id: 'keys', label: 'API Keys' },
   { id: 'byok', label: 'BYOK' },
   { id: 'credits', label: 'Credits' },
@@ -72,6 +74,7 @@ function App() {
           ))}
         </div>
         {tab === 'overview' && <Overview user={user} refreshKey={refreshKey} />}
+        {tab === 'playground' && <Playground user={user} onChanged={onChanged} />}
         {tab === 'keys' && <Keys onChanged={onChanged} />}
         {tab === 'byok' && <Byok onChanged={onChanged} />}
         {tab === 'credits' && <Credits onChanged={onChanged} />}
