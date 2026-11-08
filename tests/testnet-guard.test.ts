@@ -225,3 +225,18 @@ test('alias stripping is pure, so resolution order is what protects real ids', (
   assert.equal(canonicalModelId('thirdeye-mock'), 'mock')
   assert.equal(BRAND_ALIAS_PREFIXES.length, 3)
 })
+
+import { splitKeyCredit } from '../src/lib/keycredit.js'
+
+test('key credit is spent before the account balance', () => {
+  assert.deepEqual(splitKeyCredit(1_000_000, 250_000), { fromKey: 250_000, fromAccount: 0 })
+  assert.deepEqual(splitKeyCredit(100_000, 250_000), { fromKey: 100_000, fromAccount: 150_000 })
+  assert.deepEqual(splitKeyCredit(0, 250_000), { fromKey: 0, fromAccount: 250_000 })
+})
+
+test('a free call and a negative or junk key credit never mis-charge', () => {
+  assert.deepEqual(splitKeyCredit(1_000_000, 0), { fromKey: 0, fromAccount: 0 })
+  assert.deepEqual(splitKeyCredit(-5, 100), { fromKey: 0, fromAccount: 100 })
+  assert.deepEqual(splitKeyCredit(1_000_000, -10), { fromKey: 0, fromAccount: 0 })
+  assert.deepEqual(splitKeyCredit(Number.NaN, 100), { fromKey: 0, fromAccount: 100 })
+})

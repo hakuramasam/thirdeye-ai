@@ -309,3 +309,8 @@ CREATE TABLE IF NOT EXISTS credit_allowances (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_allowance_wallet ON credit_allowances(lower(wallet));
 ALTER TABLE partner_agents ADD COLUMN IF NOT EXISTS merchant_wallet text;
+
+-- Key-scoped credit: a balance belonging to one API key, funded by an onchain payment
+-- tagged to that key and spent before the account balance.
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS credit_usd_micros bigint NOT NULL DEFAULT 0;
+ALTER TABLE payment_intents ADD COLUMN IF NOT EXISTS api_key_id text;

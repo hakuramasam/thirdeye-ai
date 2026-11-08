@@ -10,7 +10,7 @@ export function registerKeysRoutes(app: SessionApp): void {
   app.get('/api/keys', requireUser, async (c) => {
     const user = c.get('user')!
     const res = await query(
-      `SELECT id, name, key_prefix AS prefix, key_prefix, rpm, tpm, created_at, revoked_at,
+      `SELECT id, name, key_prefix AS prefix, key_prefix, rpm, tpm, created_at, revoked_at, credit_usd_micros,
               budget_usd_micros, period_start, period_spent_usd_micros
        FROM api_keys
        WHERE user_id = $1

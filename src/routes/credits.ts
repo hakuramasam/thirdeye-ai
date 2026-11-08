@@ -3,6 +3,8 @@ import { requireUser } from '../lib/session.js'
 import { env } from '../lib/env.js'
 import { query } from '../db/index.js'
 import { getBalanceMicros, creditDeposit } from '../lib/billing.js'
+import { one } from '../db/index.js'
+import { creditKey } from '../lib/keycredit.js'
 import { CHAINS } from '../payments/chains.js'
 import { verifyDeposit } from '../payments/verify.js'
 import { findIncomingTransfer } from '../payments/verify.js'
@@ -20,6 +22,28 @@ export function chainSlugFor(chainId: number): string | null {
  * recorded), has not been recorded before, and carries a positive value.
  * Refusals and replays never credit.
  */
+
+/**
+ * Route a verified payment to where the payer asked it to go: a key-tagged intent
+ * funds that key, anything else credits the account ledger as before.
+ */
+async function creditVerified(
+  userId: string,
+  usdMicros: number,
+  args: { chain: string; txHash: string; token: string },
+  intentId?: string | null
+) {
+  if (intentId) {
+    const it = await one('SELECT api_key_id FROM payment_intents WHERE id = $1 AND user_id = $2', [intentId, userId])
+    if (it?.api_key_id) {
+      const keyCredit = await creditKey(it.api_key_id, usdMicros)
+      return { credited: true, to: 'key' as const, api_key_id: it.api_key_id, key_credit_usd_micros: keyCredit }
+    }
+  }
+  const dep = await creditDeposit(userId, usdMicros, args)
+  return { credited: (dep as any).credited, to: 'account' as const, deposit: dep }
+}
+
 export function shouldCreditPayment(args: { status: string; duplicate: boolean; usdMicros: number }): boolean {
   return args.status === 'recorded' && !args.duplicate && args.usdMicros > 0
 }
@@ -135,12 +159,19 @@ export function registerCreditsRoutes(app: SessionApp): void {
     const memoRaw = typeof body?.memo === 'string' ? body.memo : ''
     const memo = memoRaw.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140) || null
     const chainId = body?.chain_id != null ? Number(body.chain_id) : null
+    // Optional key tag: funds attach to that key instead of the account balance.
+    let keyId: string | null = null
+    if (body?.api_key_id != null && body.api_key_id !== '') {
+      const k = await one('SELECT id FROM api_keys WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL', [String(body.api_key_id), user.id])
+      if (!k) return c.json({ error: { message: 'api_key_id must be one of your active keys', type: 'validation' } }, 400)
+      keyId = String(body.api_key_id)
+    }
     const ttlMinutes = Math.min(Math.max(Number(process.env.PAYMENT_INTENT_TTL_MINUTES || 30), 5), 1440)
     const id = 'pi_' + randomBytes(9).toString('hex')
     await query(
-      `INSERT INTO payment_intents (id, user_id, purpose, memo, expected_usd_micros, chain_id, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, now() + ($7 || ' minutes')::interval)`,
-      [id, user.id, purpose, memo, Math.round(expectedUsd * 1_000_000), chainId, String(ttlMinutes)]
+      `INSERT INTO payment_intents (id, user_id, purpose, memo, expected_usd_micros, chain_id, api_key_id, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, now() + ($8 || ' minutes')::interval)`,
+      [id, user.id, purpose, memo, Math.round(expectedUsd * 1_000_000), chainId, keyId, String(ttlMinutes)]
     )
     const row = (await query(`SELECT id, purpose, memo, expected_usd_micros, chain_id, status, expires_at FROM payment_intents WHERE id = $1`, [id])).rows[0] as any
     return c.json({
@@ -255,9 +286,9 @@ export function registerCreditsRoutes(app: SessionApp): void {
     let balanceMicros: number | null = null
     const chainSlug = chainSlugFor(chainId)
     if (chainSlug && shouldCreditPayment({ status: 'recorded', duplicate: recorded.duplicate, usdMicros })) {
-      const dep = await creditDeposit(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token })
-      credited = dep.credited
-      balanceMicros = dep.balance
+      const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
+      credited = Boolean(dep.credited)
+      balanceMicros = dep.to === 'account' ? (dep.deposit as any).balance : await getBalanceMicros(c.get('user')!.id)
     } else if (recorded.duplicate) {
       balanceMicros = await getBalanceMicros(c.get('user')!.id)
     }

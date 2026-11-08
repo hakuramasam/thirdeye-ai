@@ -7,6 +7,7 @@ import { env, newId } from '../lib/env.js'
 import { apiKeyAuth } from '../lib/keys.js'
 import { computeCostMicros } from '../lib/pricing.js'
 import { chargeKeyBudget, checkKeyBudget } from '../lib/keybudget.js'
+import { chargeCall, getKeyCreditMicros } from '../lib/keycredit.js'
 import { checkAndConsume, refundSlot } from '../lib/ratelimit.js'
 import type { AppEnv } from '../lib/types.js'
 import { recordUsage } from '../lib/usage.js'
@@ -108,9 +109,12 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
     const isFreeModel = Number(modelRow.price_in_1m_usd_micros) === 0 && Number(modelRow.price_out_1m_usd_micros) === 0
     if (!providerCall.byok && !isFreeModel) {
       const balance = await getBalanceMicros(user.id)
+      // Key-scoped credit counts as available funds for this key.
+      const keyCredit = await getKeyCreditMicros(apiKey.id)
+      const available = balance + keyCredit
       // A founder/partner allowance removes the refusal but never mints credit.
-      const covered = balance < 10000 ? await isCovered(user.wallet) : false
-      if (balance < 10000 && !covered) {
+      const covered = available < 10000 ? await isCovered(user.wallet) : false
+      if (available < 10000 && !covered) {
         await refundSlot(apiKey.id, estTokens)
         return c.json(
           {
@@ -196,7 +200,7 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
               providerCall.byok
             )
             if (costMicros > 0) {
-              await debitForUsage(user.id, costMicros, 'stream:' + newId(), {
+              await chargeCall(apiKey.id, user.id, costMicros, 'stream:' + newId(), {
                 allowNegative: await isCovered(user.wallet),
               })
               await chargeKeyBudget(apiKey, costMicros)
@@ -265,7 +269,7 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
         const created = Math.floor(Date.now() / 1000)
 
         if (costMicros > 0) {
-          const debit = await debitForUsage(user.id, costMicros, 'req:' + chatId, {
+          const debit = await chargeCall(apiKey.id, user.id, costMicros, 'req:' + chatId, {
             allowNegative: await isCovered(user.wallet),
           })
           if (!debit.ok) {

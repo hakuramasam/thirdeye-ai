@@ -3,7 +3,12 @@ import './styles.css'
 
 /* ---------------- types ---------------- */
 export type User = { id: string; wallet: string; role: string }
-export type KeyRow = { id: string; prefix: string; name: string; rpm: number; tpm: number; created_at: string; revoked_at: string | null }
+export type KeyRow = {
+  id: string; prefix: string; name: string; rpm: number; tpm: number
+  created_at: string; revoked_at: string | null
+  budget_usd_micros?: number | null; period_spent_usd_micros?: number | null
+  credit_usd_micros?: number | null
+}
 export type ByokRow = { provider: string; created_at: string }
 export type ModelRow = { model: string; provider: string; price_in_1m_usd_micros: number; price_out_1m_usd_micros: number }
 export type AgentRow = {
