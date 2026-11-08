@@ -287,3 +287,32 @@ test('a cache write rate above input rate costs more, as it should', () => {
   const usage = { prompt_tokens: 1_000_000, completion_tokens: 0, input_cached_read: 0, input_cache_write: 1_000_000 }
   assert.equal(computeCostMicrosDetailed(dear, usage, 0, false), 1_250_000)
 })
+
+import { rebuildCostMicros, summarize } from '../src/lib/reconcile.js'
+
+const rates = new Map([['m', { model: 'm', price_in: 1_000_000, price_out: 1_000_000 }]])
+
+test('a charge can be rebuilt from the tokens we stored', () => {
+  const row: any = { model: 'm', prompt_tokens: 1000, completion_tokens: 500, input_cached_read: 0, input_cache_write: 0, cost_usd_micros: 1500, rate_card_version: 'v1', status: '200' }
+  assert.equal(rebuildCostMicros(row, rates, 0), 1500)
+  assert.equal(rebuildCostMicros(row, rates, 10), 1650)
+})
+
+test('reconciliation flags a row whose stored cost cannot be reproduced', () => {
+  const good: any = { model: 'm', prompt_tokens: 100, completion_tokens: 100, input_cached_read: 0, input_cache_write: 0, cost_usd_micros: 200, rate_card_version: 'v1', status: '200' }
+  const bad: any = { model: 'm', prompt_tokens: 100, completion_tokens: 100, input_cached_read: 0, input_cache_write: 0, cost_usd_micros: 400, rate_card_version: 'v1', status: '200' }
+  const r1 = summarize([good], rates, 0)
+  assert.equal(r1.within_tolerance, true)
+  assert.equal(r1.rows_drifted_over_2pct, 0)
+  const r2 = summarize([good, bad], rates, 0)
+  assert.equal(r2.rows_drifted_over_2pct, 1)
+  assert.equal(r2.within_tolerance, false)
+})
+
+test('reconciliation ignores free rows and counts cache opportunity', () => {
+  const zero: any = { model: 'm', prompt_tokens: 900, completion_tokens: 0, input_cached_read: 0, input_cache_write: 0, cost_usd_micros: 0, rate_card_version: null, status: '402' }
+  const r = summarize([zero], rates, 0)
+  assert.equal(r.rows_checked, 1)
+  assert.equal(r.rows_drifted_over_2pct, 0)
+  assert.equal(r.stored_usd_micros, 0)
+})

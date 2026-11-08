@@ -166,6 +166,7 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
           let completionTokens = 0
           let totalChars = 0
           try {
+            let streamUsage: any = null
             const reader = stream2.getReader()
             const decoder = new TextDecoder()
             let buffer = ''
@@ -185,6 +186,8 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
                     if (parsed.usage) {
                       if (typeof parsed.usage.prompt_tokens === 'number') promptTokens = parsed.usage.prompt_tokens
                       if (typeof parsed.usage.completion_tokens === 'number') completionTokens = parsed.usage.completion_tokens
+                      // Keep the provider's own usage object so cache and reasoning tokens survive streaming.
+                      streamUsage = parsed.usage
                     }
                     if (parsed.choices?.[0]?.delta?.content) {
                       totalChars += parsed.choices[0].delta.content.length
@@ -197,10 +200,10 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
               completionTokens = Math.ceil(totalChars / 4)
             }
             const latencyMs = Date.now() - startTime
-            const costMicros = computeCostMicros(
+            const usage = normalizeUsage(streamUsage, { prompt: promptTokens, completion: completionTokens })
+            const costMicros = computeCostMicrosDetailed(
               modelRow,
-              promptTokens,
-              completionTokens,
+              usage,
               env.platformMarginPct,
               providerCall.byok
             )
@@ -218,6 +221,10 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
               byok: providerCall.byok,
               prompt_tokens: promptTokens,
               completion_tokens: completionTokens,
+              input_cached_read: usage.input_cached_read,
+              input_cache_write: usage.input_cache_write,
+              reasoning_tokens: usage.reasoning_tokens,
+              rate_card_version: RATE_CARD_VERSION,
               cost_usd_micros: costMicros,
               status: 'stream',
               latency_ms: latencyMs,

@@ -20,10 +20,12 @@ export function computeCostMicros(
 ): number {
   const inC = Number(m.price_in_1m_usd_micros)
   const outC = Number(m.price_out_1m_usd_micros)
-  const base = (promptTokens * inC) / 1e6 + (completionTokens * outC) / 1e6
-  const withMargin = base * (1 + marginPct / 100)
+  // base is already in USD micros: price_*_1m_usd_micros x tokens / 1e6
+  const baseMicros = ((promptTokens * inC) + (completionTokens * outC)) / 1e6
+  if (baseMicros <= 0) return 0
+  const withMarginMicros = Math.round(baseMicros * (100 + marginPct) / 100)
   const byokRate = byok ? 0.02 : 1 // BYOK calls cover metering costs only (2% of catalog price)
-  return Math.ceil(base <= 0 ? 0 : Math.max(withMargin * byokRate, 1))
+  return Math.max(Math.round(withMarginMicros * byokRate), 1)
 }
 
 /**
@@ -45,13 +47,13 @@ export function computeCostMicrosDetailed(
   const cacheWrite = Math.min(usage.input_cache_write || 0, Math.max(0, (usage.prompt_tokens || 0) - cachedRead))
   const uncached = Math.max(0, (usage.prompt_tokens || 0) - cachedRead - cacheWrite)
 
-  const base =
+  const baseMicros =
     (uncached * pIn) / 1e6 +
     (cachedRead * pCached) / 1e6 +
     (cacheWrite * pWrite) / 1e6 +
     ((usage.completion_tokens || 0) * pOut) / 1e6
-
-  const withMargin = base * (1 + marginPct / 100)
+  if (baseMicros <= 0) return 0
+  const withMarginMicros = Math.round(baseMicros * (100 + marginPct) / 100)
   const byokRate = byok ? 0.02 : 1
-  return Math.ceil(base <= 0 ? 0 : Math.max(withMargin * byokRate, 1))
+  return Math.max(Math.round(withMarginMicros * byokRate), 1)
 }
