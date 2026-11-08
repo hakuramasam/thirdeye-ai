@@ -164,7 +164,7 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
         const [stream1, stream2] = upstreamRes.body.tee()
 
         // Background processing of stream2 to parse usage and charge
-        ;(async () => {
+        const streamTask = (async () => {
           let promptTokens = estTokens
           let completionTokens = 0
           let totalChars = 0
@@ -239,6 +239,14 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
             console.error('Error processing stream tee:', e)
           }
         })()
+        // Keep the accounting alive after the response closes. Without this the runtime is
+        // free to freeze the function the moment the stream ends, which silently loses the
+        // true-up; awaiting as a fallback is slower but never wrong.
+        try {
+          c.executionCtx.waitUntil(streamTask)
+        } catch {
+          streamTask.catch(() => {})
+        }
 
         // Reserve an estimate before the first token leaves: if the accounting task never
         // finishes (serverless can end a function once the response closes) the call is still
