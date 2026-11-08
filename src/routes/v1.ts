@@ -268,7 +268,6 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
         c.header('Content-Type', 'text/event-stream')
         c.header('Cache-Control', 'no-cache')
         c.header('Connection', 'keep-alive')
-        c.header('X-Thirdeye-Key-Credit-Remaining-Usd', ((await getKeyCreditMicros(apiKey.id)) / 1e6).toFixed(6))
         c.header('X-Thirdeye-Model', requestedModel)
         c.header('X-Thirdeye-Byok', providerCall.byok ? 'true' : 'false')
         c.header('X-Thirdeye-Cost-Usd', (reservedMicros / 1e6).toFixed(6))
@@ -346,6 +345,7 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
           latency_ms: latencyMs,
         })
 
+        c.header('X-Thirdeye-Key-Credit-Remaining-Usd', ((await getKeyCreditMicros(apiKey.id)) / 1e6).toFixed(6))
         c.header('X-Thirdeye-Model', requestedModel)
         c.header('X-Thirdeye-Byok', providerCall.byok ? 'true' : 'false')
         c.header('X-Thirdeye-Cost-Usd', (costMicros / 1e6).toFixed(6))
