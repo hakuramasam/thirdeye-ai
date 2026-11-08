@@ -11,6 +11,11 @@ import { chargeCall, getKeyCreditMicros } from '../lib/keycredit.js'
 import { checkAndConsume, refundSlot } from '../lib/ratelimit.js'
 import type { AppEnv } from '../lib/types.js'
 import { recordUsage } from '../lib/usage.js'
+import { normalizeUsage } from '../lib/tokenUsage.js'
+import { computeCostMicrosDetailed } from '../lib/pricing.js'
+
+/** Bumped when catalogue prices change, so historical rows stay explainable. */
+const RATE_CARD_VERSION = process.env.RATE_CARD_VERSION || 'catalog-2026-11'
 import { getModelRow, resolveProvider, UpstreamError } from '../providers/index.js'
 
 export function registerV1Routes(app: Hono<AppEnv>): void {
@@ -256,15 +261,10 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
       try {
         const res = await providerCall.call(body)
         const latencyMs = Date.now() - startTime
-        const pt = res.prompt_tokens
-        const ct = res.completion_tokens
-        const costMicros = computeCostMicros(
-          modelRow,
-          pt,
-          ct,
-          env.platformMarginPct,
-          providerCall.byok
-        )
+        const usage = normalizeUsage(res.raw?.usage, { prompt: res.prompt_tokens, completion: res.completion_tokens })
+        const pt = usage.prompt_tokens
+        const ct = usage.completion_tokens
+        const costMicros = computeCostMicrosDetailed(modelRow, usage, env.platformMarginPct, providerCall.byok)
         const chatId = 'chatcmpl-thirdeye-' + newId()
         const created = Math.floor(Date.now() / 1000)
 
@@ -296,6 +296,11 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
           byok: providerCall.byok,
           prompt_tokens: pt,
           completion_tokens: ct,
+          input_cached_read: usage.input_cached_read,
+          input_cache_write: usage.input_cache_write,
+          reasoning_tokens: usage.reasoning_tokens,
+          rate_card_version: RATE_CARD_VERSION,
+          provider_request_id: (res.raw as any)?.id ?? null,
           cost_usd_micros: costMicros,
           status: '200',
           latency_ms: latencyMs,
@@ -328,6 +333,11 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
           usage: {
             prompt_tokens: pt,
             completion_tokens: ct,
+            input_cached_read: usage.input_cached_read,
+            input_cache_write: usage.input_cache_write,
+            reasoning_tokens: usage.reasoning_tokens,
+            rate_card_version: RATE_CARD_VERSION,
+            provider_request_id: (res.raw as any)?.id ?? null,
             total_tokens: pt + ct,
           },
         })

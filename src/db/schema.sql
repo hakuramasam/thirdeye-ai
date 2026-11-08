@@ -314,3 +314,13 @@ ALTER TABLE partner_agents ADD COLUMN IF NOT EXISTS merchant_wallet text;
 -- tagged to that key and spent before the account balance.
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS credit_usd_micros bigint NOT NULL DEFAULT 0;
 ALTER TABLE payment_intents ADD COLUMN IF NOT EXISTS api_key_id text;
+
+-- Token accounting: the cache split and reconciliation keys, so a bill can be explained
+-- and checked against the provider instead of guessed.
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS input_cached_read integer NOT NULL DEFAULT 0;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS input_cache_write integer NOT NULL DEFAULT 0;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS reasoning_tokens integer NOT NULL DEFAULT 0;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS rate_card_version text;
+ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS provider_request_id text;
+ALTER TABLE models_catalog ADD COLUMN IF NOT EXISTS price_in_cached_1m_usd_micros bigint;
+ALTER TABLE models_catalog ADD COLUMN IF NOT EXISTS price_in_cache_write_1m_usd_micros bigint;

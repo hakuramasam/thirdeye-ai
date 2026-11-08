@@ -11,12 +11,17 @@ export type UsageEventInput = {
   cost_usd_micros: number
   status: string
   latency_ms: number
+  input_cached_read?: number
+  input_cache_write?: number
+  reasoning_tokens?: number
+  rate_card_version?: string | null
+  provider_request_id?: string | null
 }
 
 export async function recordUsage(event: UsageEventInput): Promise<void> {
   await query(
-    `INSERT INTO usage_events (user_id, api_key_id, model, provider, byok, prompt_tokens, completion_tokens, cost_usd_micros, status, latency_ms)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    `INSERT INTO usage_events (user_id, api_key_id, model, provider, byok, prompt_tokens, completion_tokens, cost_usd_micros, status, latency_ms, input_cached_read, input_cache_write, reasoning_tokens, rate_card_version, provider_request_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
     [
       event.user_id,
       event.api_key_id,
@@ -28,6 +33,11 @@ export async function recordUsage(event: UsageEventInput): Promise<void> {
       event.cost_usd_micros,
       event.status,
       event.latency_ms,
+      (event as any).input_cached_read ?? 0,
+      (event as any).input_cache_write ?? 0,
+      (event as any).reasoning_tokens ?? 0,
+      (event as any).rate_card_version ?? null,
+      (event as any).provider_request_id ?? null,
     ]
   )
 }

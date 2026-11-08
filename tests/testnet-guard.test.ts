@@ -240,3 +240,50 @@ test('a free call and a negative or junk key credit never mis-charge', () => {
   assert.deepEqual(splitKeyCredit(1_000_000, -10), { fromKey: 0, fromAccount: 0 })
   assert.deepEqual(splitKeyCredit(Number.NaN, 100), { fromKey: 0, fromAccount: 100 })
 })
+
+import { normalizeUsage, uncachedInput } from '../src/lib/tokenUsage.js'
+import { computeCostMicrosDetailed } from '../src/lib/pricing.js'
+
+const row: any = { model: 'm', provider: 'openai', upstream_model: 'm', base_url: null, price_in_1m_usd_micros: 1_000_000, price_out_1m_usd_micros: 2_000_000, enabled: true }
+
+test('anthropic cache split is read from its own fields', () => {
+  const u = normalizeUsage({ input_tokens: 1000, output_tokens: 200, cache_read_input_tokens: 600, cache_creation_input_tokens: 100 })
+  assert.equal(u.prompt_tokens, 1000)
+  assert.equal(u.input_cached_read, 600)
+  assert.equal(u.input_cache_write, 100)
+  assert.equal(uncachedInput(u), 300)
+})
+
+test('openai cached and reasoning tokens are read from detail objects', () => {
+  const u = normalizeUsage({ prompt_tokens: 500, completion_tokens: 300, prompt_tokens_details: { cached_tokens: 200 }, completion_tokens_details: { reasoning_tokens: 120 } })
+  assert.equal(u.input_cached_read, 200)
+  assert.equal(u.reasoning_tokens, 120)
+  assert.equal(uncachedInput(u), 300)
+})
+
+test('a bogus split never exceeds the input count', () => {
+  const u = normalizeUsage({ prompt_tokens: 100, cache_read_input_tokens: 90, cache_creation_input_tokens: 90 })
+  assert.equal(u.input_cached_read + u.input_cache_write, 100)
+})
+
+test('with no cache rates configured the bill is identical to the old formula', () => {
+  const usage = { prompt_tokens: 1_000_000, completion_tokens: 0, input_cached_read: 500_000, input_cache_write: 0 }
+  const detailed = computeCostMicrosDetailed(row, usage, 0, false)
+  const plain = Math.ceil((1_000_000 * 1_000_000) / 1e6)
+  assert.equal(detailed, plain, 'cached tokens fall back to the full input rate')
+})
+
+test('a configured cache rate actually lowers the bill', () => {
+  const cheap: any = { ...row, price_in_cached_1m_usd_micros: 100_000 } // 10x cheaper
+  const usage = { prompt_tokens: 1_000_000, completion_tokens: 0, input_cached_read: 500_000, input_cache_write: 0 }
+  const withCache = computeCostMicrosDetailed(cheap, usage, 0, false)
+  const without = computeCostMicrosDetailed(row, usage, 0, false)
+  assert.ok(withCache < without, `expected ${withCache} < ${without}`)
+  assert.equal(withCache, 550_000)
+})
+
+test('a cache write rate above input rate costs more, as it should', () => {
+  const dear: any = { ...row, price_in_cache_write_1m_usd_micros: 1_250_000 }
+  const usage = { prompt_tokens: 1_000_000, completion_tokens: 0, input_cached_read: 0, input_cache_write: 1_000_000 }
+  assert.equal(computeCostMicrosDetailed(dear, usage, 0, false), 1_250_000)
+})
