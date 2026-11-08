@@ -8,6 +8,7 @@ import { apiKeyAuth } from '../lib/keys.js'
 import { computeCostMicros } from '../lib/pricing.js'
 import { chargeKeyBudget, checkKeyBudget } from '../lib/keybudget.js'
 import { chargeCall, getKeyCreditMicros } from '../lib/keycredit.js'
+import { adjustCredit } from '../lib/billing.js'
 import { checkAndConsume, refundSlot } from '../lib/ratelimit.js'
 import type { AppEnv } from '../lib/types.js'
 import { recordUsage } from '../lib/usage.js'
@@ -158,6 +159,8 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
           throw new UpstreamError('No stream body received from provider stream', 500)
         }
 
+        let reservedMicros = 0
+
         const [stream1, stream2] = upstreamRes.body.tee()
 
         // Background processing of stream2 to parse usage and charge
@@ -207,12 +210,15 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
               env.platformMarginPct,
               providerCall.byok
             )
-            if (costMicros > 0) {
-              await chargeCall(apiKey.id, user.id, costMicros, 'stream:' + newId(), {
+            const deltaMicros = costMicros - reservedMicros
+            if (deltaMicros > 0) {
+              await chargeCall(apiKey.id, user.id, deltaMicros, 'stream-trueup:' + newId(), {
                 allowNegative: await isCovered(user.wallet),
               })
-              await chargeKeyBudget(apiKey, costMicros)
+            } else if (deltaMicros < 0) {
+              await adjustCredit(user.id, -deltaMicros, 'stream-trueup-refund')
             }
+            if (costMicros > 0) await chargeKeyBudget(apiKey, costMicros)
             await recordUsage({
               user_id: user.id,
               api_key_id: apiKey.id,
@@ -234,12 +240,29 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
           }
         })()
 
+        // Reserve an estimate before the first token leaves: if the accounting task never
+        // finishes (serverless can end a function once the response closes) the call is still
+        // paid for, and the tee trues it up to the real figure.
+        if (!providerCall.byok) {
+          const est = normalizeUsage(null, { prompt: estTokens, completion: Number(body.max_tokens) || 120 })
+          reservedMicros = computeCostMicrosDetailed(modelRow, est, env.platformMarginPct, false)
+          if (reservedMicros > 0) {
+            const res1 = await chargeCall(apiKey.id, user.id, reservedMicros, 'stream-reserve:' + newId(), {
+              allowNegative: await isCovered(user.wallet),
+            })
+            if (!res1.ok) {
+              await refundSlot(apiKey.id, estTokens)
+              return c.json({ error: { message: 'Insufficient credits. Top up with USDC on Base.', type: 'billing', code: 402 } }, 402)
+            }
+          }
+        }
+
         c.header('Content-Type', 'text/event-stream')
         c.header('Cache-Control', 'no-cache')
         c.header('Connection', 'keep-alive')
         c.header('X-Thirdeye-Model', requestedModel)
         c.header('X-Thirdeye-Byok', providerCall.byok ? 'true' : 'false')
-        c.header('X-Thirdeye-Cost-Usd', '0')
+        c.header('X-Thirdeye-Cost-Usd', (reservedMicros / 1e6).toFixed(6))
         c.header('X-RateLimit-Remaining-RPM', String(Math.max(0, apiKey.rpm - rl.rpm_used)))
 
         return c.body(stream1)
