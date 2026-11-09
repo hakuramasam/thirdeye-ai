@@ -14,6 +14,40 @@ import { adjustCredit } from '../lib/billing.js'
 const SIGNUP_BONUS_MICROS = 20_000
 import type { AppEnv } from '../lib/types.js'
 
+
+/**
+ * Redacted diagnostics for a failed SIWE parse (SEC-004).
+ *
+ * The raw message used to be logged. It carries the wallet address, the nonce, the domain and
+ * the URI, so a log reader could replay a still-valid nonce or correlate a user's address across
+ * failures. Everything here describes the message structurally instead: enough to tell a CRLF
+ * problem from a missing field, nothing that identifies or authorises anyone.
+ */
+export function describeSiweParseFailure(
+  message: string,
+  err?: unknown
+): { code: string; length: number; has_address: boolean; has_nonce: boolean; has_crlf: boolean; parser_error: string } {
+  const errName = err instanceof Error ? err.name : typeof err
+  // The parser's own message can quote the input, so keep only a classified shape of it.
+  const errShape = String((err as any)?.message ?? '')
+    .toLowerCase()
+    .includes('nonce')
+    ? 'nonce_unparseable'
+    : String((err as any)?.message ?? '')
+        .toLowerCase()
+        .includes('expiration')
+      ? 'expiration_unparseable'
+      : 'format_unparseable'
+  return {
+    code: 'siwe_parse_failed',
+    length: typeof message === 'string' ? message.length : 0,
+    has_address: /0x[a-fA-F0-9]{40}/.test(message || ''),
+    has_nonce: /Nonce:\s*[A-Za-z0-9_-]+/i.test(message || ''),
+    has_crlf: /\r\n/.test(message || ''),
+    parser_error: `${errName}:${errShape}`,
+  }
+}
+
 export function registerAuthRoutes(app: Hono<AppEnv>): void {
   // GET /api/auth/nonce
   app.get('/api/auth/nonce', async (c) => {
@@ -46,9 +80,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
       const addr = message.match(/0x[a-fA-F0-9]{40}/)?.[0]
       const nonce = message.match(/Nonce:\s*([A-Za-z0-9_-]+)/i)?.[1]
       if (!addr || !nonce) {
-        console.warn(
-          `[auth] SIWE parse failed: ${(e as Error).message}; raw message: ${JSON.stringify(message.slice(0, 500))}`
-        )
+        console.warn('[auth] SIWE parse failed', describeSiweParseFailure(message, e))
         return c.json(
           { error: { message: 'Invalid SIWE message format.', type: 'invalid_request', code: 400 } },
           400
@@ -56,9 +88,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
       }
       lenient = true
       siweMsg = { address: addr, nonce, issuedAt: '' } as unknown as SiweMessage
-      console.warn(
-        `[auth] SIWE strict parse failed, using lenient parse; raw message: ${JSON.stringify(message.slice(0, 500))}`
-      )
+      console.warn('[auth] SIWE strict parse failed, using lenient parse', describeSiweParseFailure(message, e))
     }
 
     // Single-use nonce check
