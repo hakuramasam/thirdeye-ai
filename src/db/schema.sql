@@ -132,6 +132,27 @@ CREATE TABLE IF NOT EXISTS auth_nonces (
   wallet     text,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_auth_nonces_age ON auth_nonces(created_at);
+
+-- ── Feedback intake ──────────────────────────────────────────────────────
+-- One row per report, from a signed-in user or an anonymous visitor. Kept separate from
+-- support tickets because the point is a durable, queryable signal about what to build next.
+CREATE TABLE IF NOT EXISTS feedback (
+  id          text PRIMARY KEY,
+  user_id     text,
+  kind        text NOT NULL DEFAULT 'idea',
+  title       text NOT NULL,
+  body        text NOT NULL,
+  page        text,
+  contact     text,
+  severity    text NOT NULL DEFAULT 'normal',
+  status      text NOT NULL DEFAULT 'new',
+  note        text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status, created_at DESC);
 
 -- ── Seed model catalog ───────────────────────────────────────────────────
 INSERT INTO models_catalog (model, provider, upstream_model, base_url, price_in_1m_usd_micros, price_out_1m_usd_micros)

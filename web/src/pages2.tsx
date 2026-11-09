@@ -380,3 +380,136 @@ console.log(res.choices[0].message.content)`}</pre>
 }
 
 export { Agents, Models, Docs }
+
+export function Feedback() {
+  const [kind, setKind] = useState('bug')
+  const [title, setTitle] = useState('')
+  const [body, setBody] = useState('')
+  const [contact, setContact] = useState('')
+  const [severity, setSeverity] = useState('normal')
+  const [busy, setBusy] = useState(false)
+  const [sent, setSent] = useState<string | null>(null)
+  const [mine, setMine] = useState<any[]>([])
+
+  const loadMine = useCallback(async () => {
+    try {
+      const r = await api('/api/feedback/mine')
+      setMine(r.items || [])
+    } catch {
+      setMine([])
+    }
+  }, [])
+
+  useEffect(() => {
+    loadMine()
+  }, [loadMine])
+
+  async function submit() {
+    if (title.trim().length < 4) return toast('Give it a title of at least 4 characters.', 'error')
+    if (body.trim().length < 10) return toast('Describe it in a little more detail.', 'error')
+    setBusy(true)
+    try {
+      const r = await api('/api/feedback', {
+        method: 'POST',
+        body: JSON.stringify({
+          kind,
+          title: title.trim(),
+          body: body.trim(),
+          severity,
+          contact: contact.trim() || null,
+          page: window.location.pathname,
+        }),
+      })
+      setSent(r.id)
+      setTitle('')
+      setBody('')
+      setContact('')
+      toast('Report received.', 'ok')
+      loadMine()
+    } catch (e: any) {
+      toast(e.message || 'Could not send the report.', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>Report an issue or send an idea</h2>
+      <p className="muted small">
+        Goes straight into the triage queue we actually read. For a billing or deposit problem, include the transaction
+        hash and the chain so it can be matched without a round trip. Reports are stored with your account when you are
+        signed in, and contact details are optional.
+      </p>
+
+      <div className="row">
+        <select value={kind} onChange={(e) => setKind(e.target.value)}>
+          <option value="bug">Bug</option>
+          <option value="idea">Idea</option>
+          <option value="billing">Billing or deposit</option>
+          <option value="docs">Documentation</option>
+          <option value="agent">Agent behaviour</option>
+          <option value="partnership">Partnership</option>
+          <option value="other">Other</option>
+        </select>
+        <select value={severity} onChange={(e) => setSeverity(e.target.value)}>
+          <option value="low">Low</option>
+          <option value="normal">Normal</option>
+          <option value="high">High</option>
+          <option value="blocking">Blocking</option>
+        </select>
+      </div>
+
+      <label className="muted small">Summary</label>
+      <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={160} placeholder="Deposit credited twice" />
+
+      <label className="muted small">What happened</label>
+      <textarea
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        maxLength={4000}
+        rows={5}
+        placeholder="What you did, what you expected, what happened instead. Tx hash and chain if money is involved."
+      />
+
+      <label className="muted small">Contact (optional, only if you want a reply)</label>
+      <input value={contact} onChange={(e) => setContact(e.target.value)} maxLength={320} placeholder="email, @handle or address" />
+
+      <div className="row">
+        <button className="primary" onClick={submit} disabled={busy}>
+          {busy ? 'Sending…' : 'Send report'}
+        </button>
+        {sent && <span className="pill on">received {sent.slice(0, 8)}</span>}
+      </div>
+
+      {mine.length > 0 && (
+        <>
+          <h3>Your reports</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Kind</th>
+                <th>Summary</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {mine.map((m) => (
+                <tr key={m.id}>
+                  <td className="mono small">{String(m.created_at).slice(0, 16).replace('T', ' ')}</td>
+                  <td>{m.kind}</td>
+                  <td>{m.title}</td>
+                  <td>
+                    <span className="pill">{m.status}</span>
+                    {m.note && <div className="muted small">{m.note}</div>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  )
+}

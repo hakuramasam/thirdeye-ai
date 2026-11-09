@@ -52,3 +52,30 @@ export async function refundSlot(apiKeyId: string, tokens: number): Promise<void
     [apiKeyId, Math.max(1, tokens)]
   )
 }
+
+/**
+ * Rate limit something that has no API key yet, such as an unauthenticated auth endpoint.
+ *
+ * Reuses the same fixed-window table with a namespaced bucket string ("auth:verify:<hash>"),
+ * because the table has no foreign key. Buckets are lowercased and hashed by the caller, so a raw
+ * client IP is never stored.
+ */
+export async function checkBucketLimit(
+  bucket: string,
+  rpmLimit: number
+): Promise<{ ok: boolean; used: number; limit: number; reset_seconds: number }> {
+  const windowStart = new Date()
+  windowStart.setSeconds(0, 0)
+  const resetSeconds = 60 - Math.floor((Date.now() % 60000) / 1000)
+  const res = await one(
+    `INSERT INTO ratelimit_counters (api_key_id, window_start, rpm_count, tpm_count)
+     VALUES ($1, $2::timestamptz, 1, 0)
+     ON CONFLICT (api_key_id) DO UPDATE SET
+       rpm_count = CASE WHEN ratelimit_counters.window_start = $2::timestamptz THEN ratelimit_counters.rpm_count + 1 ELSE 1 END,
+       window_start = $2::timestamptz
+     RETURNING rpm_count`,
+    [bucket, windowStart.toISOString()]
+  )
+  const used = res?.rpm_count ?? 1
+  return { ok: used <= rpmLimit, used, limit: rpmLimit, reset_seconds: resetSeconds }
+}

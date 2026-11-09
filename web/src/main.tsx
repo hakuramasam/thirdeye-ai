@@ -2,10 +2,10 @@ import React, { useEffect, useState, useCallback } from 'react'
 import './styles.css'
 import { api, short, toast, Toasts, ChainBadge, NetworkPrompt } from './wallet'
 import { Landing, Overview, Keys, Byok, Credits } from './pages1'
-import { Agents, Models, Docs } from './pages2'
+import { Agents, Models, Docs, Feedback } from './pages2'
 import { Playground } from './pages3'
 
-type Tab = 'overview' | 'playground' | 'keys' | 'byok' | 'credits' | 'agents' | 'models' | 'docs'
+type Tab = 'overview' | 'playground' | 'keys' | 'byok' | 'credits' | 'agents' | 'models' | 'docs' | 'feedback'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'overview', label: 'Overview' },
@@ -16,6 +16,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'agents', label: 'Agents' },
   { id: 'models', label: 'Models' },
   { id: 'docs', label: 'Docs' },
+  { id: 'feedback', label: 'Feedback' },
 ]
 
 function App() {
@@ -81,6 +82,7 @@ function App() {
         {tab === 'agents' && <Agents />}
         {tab === 'models' && <Models />}
         {tab === 'docs' && <Docs />}
+        {tab === 'feedback' && <Feedback />}
       </div>
       {netPrompt && <NetworkPrompt onDismiss={() => setNetPrompt(false)} />}
       <Toasts />

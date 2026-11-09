@@ -4,7 +4,8 @@ import { verifyMessage } from 'viem'
 import { SiweMessage } from 'siwe'
 import { decideSiwe } from '../lib/security.js'
 import { query, one, dbMode } from '../db/index.js'
-import { env, newId } from '../lib/env.js'
+import { env, newId, sha256 } from '../lib/env.js'
+import { checkBucketLimit } from '../lib/ratelimit.js'
 import { createSessionToken, setSessionCookie, clearSessionCookie, attachUser, requireUser } from '../lib/session.js'
 import { adjustCredit } from '../lib/billing.js'
 
@@ -48,16 +49,64 @@ export function describeSiweParseFailure(
   }
 }
 
+
+/**
+ * Auth abuse protection (SEC-006).
+ *
+ * `/api/auth/nonce` and `/api/auth/verify` are unauthenticated by definition, so they are limited
+ * per client rather than per key. The client identity is hashed: the counters table never holds a
+ * raw IP. Limits are deliberately generous enough for a normal retry loop and tight enough that a
+ * flood costs the attacker more than it costs us.
+ */
+export const AUTH_NONCE_RPM = 20
+export const AUTH_VERIFY_RPM = 10
+/** Public feedback intake: generous for a person, hostile to a script. */
+export const FEEDBACK_RPM = 6
+/** A nonce older than this cannot be used, so it should not be kept either. */
+export const NONCE_TTL_MINUTES = 15
+
+export function clientBucket(kind: 'nonce' | 'verify' | 'feedback', c: any): string {
+  const fwd = String(c?.req?.header?.('x-forwarded-for') || '').split(',')[0].trim()
+  const ip = fwd || String(c?.req?.header?.('cf-connecting-ip') || '') || String(c?.req?.header?.('x-real-ip') || '') || 'unknown'
+  return `auth:${kind}:${sha256(ip).slice(0, 24)}`
+}
+
+/** Best-effort sweep so issued-but-unused nonces cannot accumulate forever. */
+export async function pruneExpiredNonces(): Promise<void> {
+  await query(`DELETE FROM auth_nonces WHERE created_at < now() - ($1 || ' minutes')::interval`, [String(NONCE_TTL_MINUTES)])
+}
+
 export function registerAuthRoutes(app: Hono<AppEnv>): void {
   // GET /api/auth/nonce
   app.get('/api/auth/nonce', async (c) => {
+    const limit = await checkBucketLimit(clientBucket('nonce', c), AUTH_NONCE_RPM)
+    if (!limit.ok) {
+      c.header('retry-after', String(limit.reset_seconds))
+      return c.json(
+        { error: { message: 'Too many nonce requests. Try again shortly.', type: 'rate_limit', code: 429 } },
+        429
+      )
+    }
     const nonce = randomBytes(16).toString('hex') // 32 hex chars
     await query('INSERT INTO auth_nonces (nonce) VALUES ($1)', [nonce])
+    // Bounded cleanup: a nonce that was issued and never used must not live forever.
+    await pruneExpiredNonces().catch(() => {})
     return c.json({ nonce })
   })
 
   // POST /api/auth/verify
   app.post('/api/auth/verify', async (c) => {
+    // Brute force against a live nonce is infeasible, but the endpoint is a cheap way to make us
+    // do secp256k1 work and mint session tokens. Limited per client before the body is parsed.
+    const verifyLimit = await checkBucketLimit(clientBucket('verify', c), AUTH_VERIFY_RPM)
+    if (!verifyLimit.ok) {
+      c.header('retry-after', String(verifyLimit.reset_seconds))
+      return c.json(
+        { error: { message: 'Too many sign-in attempts. Try again shortly.', type: 'rate_limit', code: 429 } },
+        429
+      )
+    }
+
     const body = await c.req.json().catch(() => ({}))
     const { message, signature } = body
 

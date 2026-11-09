@@ -16,6 +16,7 @@ import { registerAgentsRoutes, registerCronRoute } from './routes/agents.js'
 import { registerPartnerRoutes } from './routes/partner.js'
 import { registerDiscoveryRoutes } from './routes/discovery.js'
 import { registerProfitRoutes } from './routes/profit.js'
+import { registerFeedbackRoutes } from './routes/feedback.js'
 import { registerPlaygroundRoutes } from './routes/playground.js'
 
 const app = new Hono<AppEnv>()
@@ -53,6 +54,7 @@ registerStatsRoutes(app)
 registerPartnerRoutes(app)
 registerDiscoveryRoutes(app)
 registerProfitRoutes(app)
+registerFeedbackRoutes(app)
 registerPlaygroundRoutes(app)
 registerAgentsRoutes(app)
 registerCronRoute(app)
