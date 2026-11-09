@@ -65,21 +65,91 @@ export const env = {
 export const newId = (): string => randomBytes(12).toString('hex')
 export const sha256 = (s: string): string => createHash('sha256').update(s).digest('hex')
 
-/** AES-256-GCM encrypt/decrypt for BYOK keys at rest. */
-function key32(): Buffer {
-  return createHash('sha256').update(env.masterKey).digest()
+/**
+ * AES-256-GCM encrypt/decrypt for BYOK keys at rest.
+ *
+ * Ciphertext format is `v1.<iv>.<tag>.<data>`, base64url, with a fresh 12-byte IV per record and
+ * the GCM auth tag stored alongside so tampering is detected rather than decrypted. The version
+ * prefix exists so a future key-derivation change can be introduced without having to guess how
+ * to read old rows: unprefixed three-part values are the original format and still decrypt.
+ *
+ * Rotation is supported without a downtime window. When `MASTER_KEY_PREVIOUS` is set, a payload
+ * that fails the current key is retried against the previous one, and `decryptSecretDetailed`
+ * reports that it was rotated so the caller can re-encrypt it under the current key. Failures
+ * are classified and never echo the ciphertext or any partial plaintext into the error.
+ */
+function key32From(secret: string): Buffer {
+  return createHash('sha256').update(secret).digest()
 }
+function key32(): Buffer {
+  // Read through process.env so a rotation takes effect without a code path that caches the key,
+  // and so tests can swap keys. Boot-time validation above still guarantees a safe value in
+  // production; env.masterKey is only the fallback for a validated boot.
+  return key32From(process.env.MASTER_KEY || env.masterKey)
+}
+function previousKey32(): Buffer | null {
+  const prev = process.env.MASTER_KEY_PREVIOUS || ''
+  if (!prev || prev === env.masterKey) return null
+  return key32From(prev)
+}
+
+export class SecretDecryptError extends Error {
+  code: 'decryption_failed' | 'malformed_payload'
+  constructor(code: 'decryption_failed' | 'malformed_payload') {
+    super(
+      code === 'malformed_payload'
+        ? 'Encrypted secret is malformed and cannot be read with any configured key'
+        : 'Encrypted secret cannot be read with the configured key'
+    )
+    this.name = 'SecretDecryptError'
+    this.code = code
+  }
+}
+
 export function encryptSecret(plain: string): string {
   const iv = randomBytes(12)
   const c = createCipheriv('aes-256-gcm', key32(), iv)
   const enc = Buffer.concat([c.update(plain, 'utf8'), c.final()])
-  return `${iv.toString('base64url')}.${c.getAuthTag().toString('base64url')}.${enc.toString('base64url')}`
+  return `v1.${iv.toString('base64url')}.${c.getAuthTag().toString('base64url')}.${enc.toString('base64url')}`
 }
-export function decryptSecret(payload: string): string {
-  const [ivb, tagb, data] = payload.split('.')
-  const d = createDecipheriv('aes-256-gcm', key32(), Buffer.from(ivb, 'base64url'))
+
+function decryptWith(key: Buffer, ivb: string, tagb: string, data: string): string {
+  const d = createDecipheriv('aes-256-gcm', key, Buffer.from(ivb, 'base64url'))
   d.setAuthTag(Buffer.from(tagb, 'base64url'))
   return Buffer.concat([d.update(Buffer.from(data, 'base64url')), d.final()]).toString('utf8')
+}
+
+/** Decrypt and report whether the previous key had to be used, so the row can be re-wrapped. */
+export function decryptSecretDetailed(payload: string): { plain: string; rotated: boolean } {
+  const parts = String(payload ?? '').split('.')
+  if (parts[0] === 'v1' && parts.length !== 4) throw new SecretDecryptError('malformed_payload')
+  const versioned = parts[0] === 'v1' && parts.length === 4
+  const body = versioned ? parts.slice(1) : parts
+  if (body.length !== 3 || body.some((p) => !p)) throw new SecretDecryptError('malformed_payload')
+  const [ivb, tagb, data] = body
+
+  try {
+    return { plain: decryptWith(key32(), ivb, tagb, data), rotated: false }
+  } catch (primaryError) {
+    const prev = previousKey32()
+    if (!prev) throw new SecretDecryptError('decryption_failed')
+    try {
+      return { plain: decryptWith(prev, ivb, tagb, data), rotated: true }
+    } catch {
+      // Report the classified failure, never the underlying crypto error text.
+      throw new SecretDecryptError('decryption_failed')
+    }
+  }
+}
+
+export function decryptSecret(payload: string): string {
+  return decryptSecretDetailed(payload).plain
+}
+
+/** Re-encrypt a payload under the current key, for migrating rows after a rotation. */
+export function reencryptSecret(payload: string): { plain: string; ciphertext: string; rotated: boolean } {
+  const { plain, rotated } = decryptSecretDetailed(payload)
+  return { plain, ciphertext: encryptSecret(plain), rotated }
 }
 
 
