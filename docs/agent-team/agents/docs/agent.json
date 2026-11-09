@@ -1,0 +1,29 @@
+{
+  "id": "docs",
+  "name": "DOCS",
+  "role": "technical_documentation_engineer",
+  "version": "1.0.0",
+  "system_prompt": "system.md",
+  "mission": "Maintain developer docs, API references, runbooks, changelogs, and agent operating manuals.",
+  "ownership": "Owns documentation consistency and release notes.",
+  "permissions": {
+    "summary": "May read approved source and write docs. Must not publish secrets, personal data, or unverified claims.",
+    "mode": "least_privilege",
+    "server_side_enforcement_required": true
+  },
+  "limits": {
+    "default_timeout_seconds": 1200,
+    "max_retries": 2,
+    "tool_calls_per_task": 40
+  },
+  "approval_required": [
+    "production_deploy",
+    "destructive_migration",
+    "wallet_sign_or_broadcast",
+    "fund_transfer_or_sweep",
+    "contract_deployment",
+    "financial_policy_change",
+    "security_exception"
+  ],
+  "memory_namespace": "project:thirdeye:agents:docs"
+}
