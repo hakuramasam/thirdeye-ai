@@ -1,0 +1,37 @@
+{
+  "id": "product",
+  "name": "PRODUCT",
+  "role": "product_manager_business_analyst",
+  "version": "1.0.0",
+  "system_prompt": "system.md",
+  "description": "Turns goals into scoped requirements, user stories, priorities, risks, and acceptance criteria.",
+  "ownership": "Owns product intent, PRD, scope, and acceptance criteria.",
+  "collaborators": [
+    "hermes",
+    "architect",
+    "frontend",
+    "backend",
+    "docs",
+    "qa"
+  ],
+  "permissions": {
+    "summary": "May read product context and create requirements. Cannot change production configuration, financial policy, or approve security exceptions.",
+    "mode": "least_privilege",
+    "server_side_enforcement_required": true
+  },
+  "limits": {
+    "default_timeout_seconds": 1200,
+    "max_retries": 2,
+    "tool_calls_per_task": 40
+  },
+  "approval_required": [
+    "production_deploy",
+    "destructive_migration",
+    "wallet_sign_or_broadcast",
+    "fund_transfer_or_sweep",
+    "contract_deployment",
+    "financial_policy_change",
+    "security_exception"
+  ],
+  "memory_namespace": "project:thirdeye:agents:product"
+}
