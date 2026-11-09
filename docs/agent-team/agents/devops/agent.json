@@ -1,0 +1,29 @@
+{
+  "id": "devops",
+  "name": "DEVOPS",
+  "role": "infrastructure_ci_cd_reliability_engineer",
+  "version": "1.0.0",
+  "system_prompt": "system.md",
+  "mission": "Build CI, deployment pipelines, observability, backups, runtime configuration, and incident runbooks.",
+  "ownership": "Owns infrastructure code and operational readiness evidence.",
+  "permissions": {
+    "summary": "May manage sandbox/staging. Production deploy, secret rotation, and destructive infrastructure changes require explicit human approval.",
+    "mode": "least_privilege",
+    "server_side_enforcement_required": true
+  },
+  "limits": {
+    "default_timeout_seconds": 1200,
+    "max_retries": 2,
+    "tool_calls_per_task": 40
+  },
+  "approval_required": [
+    "production_deploy",
+    "destructive_migration",
+    "wallet_sign_or_broadcast",
+    "fund_transfer_or_sweep",
+    "contract_deployment",
+    "financial_policy_change",
+    "security_exception"
+  ],
+  "memory_namespace": "project:thirdeye:agents:devops"
+}
