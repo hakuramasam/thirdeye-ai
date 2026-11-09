@@ -488,7 +488,7 @@ test('a successful conversion credits the MEASURED stablecoin delta, not the quo
     prepare: async () => ({ ok: true, expectedOut: 9_999n, outToken: 'usdc', approval: null, swap: { to: '0xrouter', data: '0xdead', value: '0' } }),
     readBalance: async () => 0n, // delta handled below via sequence
     waitForReceipt: async () => ({ ok: true }),
-    settle: async (id, input) => { calls.push({ id, input }); return { ok: true, creditedMicros: input.realisedUsdMicros, loadedTo: 'account', apiKeyId: null, balanceMicros: 1, reason: 'credited realised swap proceeds' } },
+    settle: async (id: any, input: any) => { calls.push({ id, input }); return { ok: true, creditedMicros: input.realisedUsdMicros, loadedTo: 'account', apiKeyId: null, balanceMicros: 1, reason: 'credited realised swap proceeds' } },
   } as any).catch((e) => ({ status: 'threw', detail: String(e?.message ?? e) }))
   // The DB is unavailable in unit tests, so the honest assertion here is that it fails cleanly
   // rather than crediting anything on a guess.
@@ -501,4 +501,12 @@ test('a deposit held in a wallet we cannot sign for is blocked, never converted'
     prepare: async () => ({ ok: true, expectedOut: 1n, outToken: 'usdc', approval: null, swap: { to: '0xrouter', data: '0xdead', value: '0' } }),
   } as any).catch((e) => ({ status: 'threw', detail: String(e?.message ?? e) }))
   assert.ok(['threw', 'blocked', 'failed', 'skipped'].includes((outcome as any).status), JSON.stringify(outcome))
+})
+
+import { inngestConfigured } from '../src/inngest/client.js'
+
+test('Inngest reports unconfigured until both keys exist', () => {
+  assert.equal(inngestConfigured({} as any), false)
+  assert.equal(inngestConfigured({ INNGEST_EVENT_KEY: 'x' } as any), false, 'signing key is required too')
+  assert.equal(inngestConfigured({ INNGEST_EVENT_KEY: 'x', INNGEST_SIGNING_KEY: 'y' } as any), true)
 })
