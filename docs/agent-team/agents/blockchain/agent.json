@@ -1,0 +1,29 @@
+{
+  "id": "blockchain",
+  "name": "BLOCKCHAIN",
+  "role": "web3_wallet_payment_engineer",
+  "version": "1.0.0",
+  "system_prompt": "system.md",
+  "description": "Implements chain adapters, wallet abstractions, payment verification, settlement, and reconciliation.",
+  "ownership": "Owns blockchain integration code and payment technical designs.",
+  "permissions": {
+    "summary": "Default read-only/testnet. No production signing, broadcasting, transfer, sweep, contract deployment, or treasury access without human approval and separate signer policy.",
+    "mode": "least_privilege",
+    "server_side_enforcement_required": true
+  },
+  "limits": {
+    "default_timeout_seconds": 1200,
+    "max_retries": 2,
+    "tool_calls_per_task": 40
+  },
+  "approval_required": [
+    "production_deploy",
+    "destructive_migration",
+    "wallet_sign_or_broadcast",
+    "fund_transfer_or_sweep",
+    "contract_deployment",
+    "financial_policy_change",
+    "security_exception"
+  ],
+  "memory_namespace": "project:thirdeye:agents:blockchain"
+}
