@@ -302,6 +302,9 @@ export async function findIncomingTransfer(params: {
     return { ok: false, code: 'failed_tx', message: 'Transaction did not succeed' }
   }
 
+  // Native sends are recorded against the zero address, the same sentinel Uniswap v4 and the
+  // market analyser use for the native coin.
+  const NATIVE_SENTINEL = '0x0000000000000000000000000000000000000000'
   const candidates: Array<{ token: string; from: string; to: string; value: bigint }> = []
   for (const l of receipt.logs || []) {
     if (String(l.topics?.[0] || '').toLowerCase() !== TRANSFER_TOPIC) continue
@@ -312,11 +315,25 @@ export async function findIncomingTransfer(params: {
     if (value <= 0n) continue
     candidates.push({ token: String(l.address || '').toLowerCase(), from: parseTopicAddress(l.topics[1]), to, value })
   }
+  // A native send (ETH, BNB) emits no Transfer log, so it has to be read from the transaction
+  // itself. Without this a native deposit looked like "wrong recipient" and could never be claimed.
+  if (candidates.length === 0) {
+    try {
+      const tx: any = await client.request({ method: 'eth_getTransactionByHash', params: [params.txHash as `0x${string}`] } as any)
+      const to = String(tx?.to || '').toLowerCase()
+      const value = tx?.value ? BigInt(tx.value) : 0n
+      if (tx && to && receivers.includes(to) && value > 0n) {
+        candidates.push({ token: NATIVE_SENTINEL, from: String(tx.from || '').toLowerCase(), to, value })
+      }
+    } catch {
+      // Fall through to the refusal below; an unreadable tx is not a deposit.
+    }
+  }
   if (candidates.length === 0) {
     return {
       ok: false,
       code: 'wrong_recipient',
-      message: `No ERC-20 transfer to a platform wallet in this transaction (looked for ${receivers.length} receiver${receivers.length === 1 ? '' : 's'})`,
+      message: `No ERC-20 or native transfer to a platform wallet in this transaction (looked for ${receivers.length} receiver${receivers.length === 1 ? '' : 's'})`,
     }
   }
 
@@ -325,7 +342,8 @@ export async function findIncomingTransfer(params: {
   const pick = candidates[0]
   const registeredToken = chainConfig.tokens.find((t) => t.address.toLowerCase() === pick.token)
 
-  let decimals = registeredToken?.decimals
+  // ETH and BNB are both 18 decimals and have no contract to ask.
+  let decimals = registeredToken?.decimals ?? (pick.token === NATIVE_SENTINEL ? 18 : undefined)
   if (decimals === undefined) {
     try {
       const dec = await client.readContract({
