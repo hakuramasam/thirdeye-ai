@@ -65,6 +65,37 @@ export const CHAINS: ChainConfig[] = [
           haircutBps: 1000,
         },
       },
+      {
+        // haku85 creator coin ($HAKU85). One contract answers to both spellings; there is no
+        // separate HAKU85 token on Base. Its only market is a Uniswap v4 haku85/ZORA pool that
+        // is far below the liquidity floor, so deposits are expected to be refused until it deepens.
+        symbol: 'haku85',
+        address: '0xf21ec85ce0b05640436ffd7e8fabba5d82eb0774',
+        decimals: 18,
+        stable: false,
+        oracle: {
+          provider: 'geckoterminal',
+          network: 'base',
+          minLiquidityUsd: 5000,
+          maxDepositUsd: 25,
+          haircutBps: 1000,
+        },
+      },
+      {
+        // AASA (Authorized Agentic Social Avatar). Only market is a Uniswap v4 AASA/METAc pool
+        // with no 24h volume, so the same conservative deposit rules apply as for TREND.
+        symbol: 'AASA',
+        address: '0xb2000000000000000000001582178dd38a037f83',
+        decimals: 18,
+        stable: false,
+        oracle: {
+          provider: 'geckoterminal',
+          network: 'base',
+          minLiquidityUsd: 5000,
+          maxDepositUsd: 25,
+          haircutBps: 1000,
+        },
+      },
     ],
   },
   {
