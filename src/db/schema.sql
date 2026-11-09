@@ -365,3 +365,39 @@ CREATE INDEX IF NOT EXISTS idx_agent_schedule_status ON agent_schedule_lock(stat
 
 -- none | read | write. Only 'read' and 'write' receive the repo_read tool today.
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS repo_access text NOT NULL DEFAULT 'none';
+
+-- Profit accounting (docs/profit-split.md). A period records what was measured, so a
+-- distribution can be recomputed and audited later instead of living in a spreadsheet.
+CREATE TABLE IF NOT EXISTS profit_periods (
+  id                       text PRIMARY KEY,
+  period_start             timestamptz NOT NULL,
+  period_end               timestamptz NOT NULL,
+  revenue_usd_micros       bigint NOT NULL DEFAULT 0,
+  provider_cost_usd_micros bigint NOT NULL DEFAULT 0,
+  gas_cost_usd_micros      bigint NOT NULL DEFAULT 0,
+  infra_cost_usd_micros    bigint NOT NULL DEFAULT 0,
+  profit_usd_micros        bigint NOT NULL DEFAULT 0,
+  level                    integer NOT NULL DEFAULT 1,
+  founder_bps              integer NOT NULL DEFAULT 200,
+  notes                    text,
+  status                   text NOT NULL DEFAULT 'draft', -- draft | approved | distributed | void
+  created_by               text,
+  created_at               timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (period_start, period_end)
+);
+
+-- One row per recipient per period. 'planned' means computed and stored, nothing sent.
+CREATE TABLE IF NOT EXISTS profit_distributions (
+  id                bigserial PRIMARY KEY,
+  period_id         text NOT NULL REFERENCES profit_periods(id) ON DELETE CASCADE,
+  recipient_kind    text NOT NULL,                       -- founder | platform_agent | team_agent | vault
+  recipient_ref     text,                                -- agent id, or a label
+  wallet_address    text,
+  bps               integer NOT NULL,
+  amount_usd_micros bigint NOT NULL,
+  swept_usd_micros  bigint NOT NULL DEFAULT 0,           -- team agents: portion swept to the founder
+  status            text NOT NULL DEFAULT 'planned',     -- planned | sent | failed | skipped
+  tx_hash           text,
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_profit_dist_period ON profit_distributions(period_id, recipient_kind);
