@@ -358,3 +358,41 @@ test('an unparseable SIWE message is refused in production but allowed locally',
   assert.equal(decideSiwe({ strictParseFailed: true, nodeEnv: 'development' }).ok, true)
   assert.equal(decideSiwe({ strictParseFailed: true, nodeEnv: 'production', allowLenient: true }).ok, true)
 })
+
+import { decideCredit, isSettlementToken } from '../src/lib/creditPolicy.js'
+
+const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+const TREND = '0xbf981cff1234567890abcdef1234567890abcdef'
+
+test('a settlement stablecoin is credited at face value', () => {
+  const d = decideCredit({ chainSlug: 'base', token: USDC_BASE, oracleMicros: 1_000_000 })
+  assert.equal(d.status, 'credited')
+  assert.equal(d.creditMicros, 1_000_000)
+  assert.equal(d.settlement, true)
+})
+
+test('a volatile token with no settled swap earns NOTHING', () => {
+  const d = decideCredit({ chainSlug: 'base', token: TREND, oracleMicros: 5_000_000 })
+  assert.equal(d.status, 'pending_conversion')
+  assert.equal(d.creditMicros, 0, 'no spendable credit before the swap settles')
+})
+
+test('a settled swap credits the realised amount, never more than the oracle', () => {
+  const cheaper = decideCredit({ chainSlug: 'base', token: TREND, oracleMicros: 5_000_000, realisedMicros: 3_000_000 })
+  assert.equal(cheaper.status, 'credited')
+  assert.equal(cheaper.creditMicros, 3_000_000)
+  const better = decideCredit({ chainSlug: 'base', token: TREND, oracleMicros: 5_000_000, realisedMicros: 9_000_000 })
+  assert.equal(better.creditMicros, 5_000_000, 'capped at the valuation used for the claim')
+})
+
+test('a swap that realised nothing credits nothing', () => {
+  const d = decideCredit({ chainSlug: 'base', token: TREND, oracleMicros: 5_000_000, realisedMicros: 0 })
+  assert.equal(d.status, 'zero_value')
+  assert.equal(d.creditMicros, 0)
+})
+
+test('settlement detection is per chain and case-insensitive', () => {
+  assert.equal(isSettlementToken('base', USDC_BASE.toLowerCase()), true)
+  assert.equal(isSettlementToken('base', TREND), false)
+  assert.equal(isSettlementToken('robinhood', USDC_BASE), false, 'USDC is not Robinhood settlement (that is USDG)')
+})

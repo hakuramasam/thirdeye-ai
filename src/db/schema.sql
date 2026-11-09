@@ -327,3 +327,7 @@ ALTER TABLE models_catalog ADD COLUMN IF NOT EXISTS price_in_cache_write_1m_usd_
 
 -- Agent teams: an agent that may delegate work to named teammates.
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS can_delegate boolean NOT NULL DEFAULT false;
+
+-- Realised value from a settled swap. Until this is set, a volatile-token deposit earns no credit.
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS realised_usd_micros bigint;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS settlement_swap_tx text;

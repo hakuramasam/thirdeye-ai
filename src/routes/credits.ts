@@ -5,6 +5,7 @@ import { query } from '../db/index.js'
 import { getBalanceMicros, creditDeposit } from '../lib/billing.js'
 import { one } from '../db/index.js'
 import { creditKey } from '../lib/keycredit.js'
+import { decideCredit } from '../lib/creditPolicy.js'
 import { CHAINS } from '../payments/chains.js'
 import { verifyDeposit } from '../payments/verify.js'
 import { findIncomingTransfer } from '../payments/verify.js'
@@ -65,7 +66,7 @@ async function recordPayment(args: {
   transfer: IncomingTransfer
   receivedAt: string
   usdMicros: number
-  status: 'recorded' | 'refused'
+  status: 'recorded' | 'refused' | 'pending_conversion'
   refusalCode: string | null
   priceUsd?: number | null
   pool?: string | null
@@ -273,9 +274,18 @@ export function registerCreditsRoutes(app: SessionApp): void {
       )
     }
     const usdMicros = Math.round(prepared.analysis.amountUsd * 1_000_000)
+    const chainSlugForPolicy = chainSlugFor(chainId)
+    // Credit only what we actually hold as settlement money. A volatile token earns nothing
+    // until a swap has settled; it is recorded and left pending instead.
+    const decision = decideCredit({
+      chainSlug: chainSlugForPolicy ?? '',
+      token: t.token,
+      oracleMicros: usdMicros,
+    })
     const recorded = await recordPayment({
       intent, userId: c.get('user')!.id, transfer: t, receivedAt: received_at,
-      usdMicros, status: 'recorded', refusalCode: null,
+      usdMicros, status: decision.status === 'credited' ? 'recorded' : 'pending_conversion',
+      refusalCode: decision.status === 'credited' ? null : decision.status,
       priceUsd: prepared.analysis.priceUsd, pool: prepared.analysis.poolAddress,
     })
 
@@ -285,6 +295,26 @@ export function registerCreditsRoutes(app: SessionApp): void {
     let credited = false
     let balanceMicros: number | null = null
     const chainSlug = chainSlugFor(chainId)
+    if (decision.status !== 'credited') {
+      // No credit yet: the payment is stored, the token sits with us, and the user is told
+      // exactly why. Converting and releasing it is a separate, auditable step.
+      return c.json({
+        accepted: true,
+        received_at,
+        verification: { ok: true, ...t },
+        intent: memoOf(intent),
+        payment_id: recorded.paymentId,
+        credited: false,
+        credit_status: decision.status,
+        credit_reason: decision.reason,
+        oracle_usd: usdMicros / 1_000_000,
+        next_step: decision.status === 'pending_conversion'
+          ? 'This token is not a settlement asset, so no spendable credit is issued yet. Once the deposit is converted to ' +
+            (chainSlugForPolicy ? String(CHAINS.find((c: any) => c.id === chainSlugForPolicy)?.settlement?.symbol ?? 'the settlement stablecoin') : 'the settlement stablecoin') +
+            ', the realised amount is credited automatically.'
+          : 'The received token valued at zero, so nothing was credited.',
+      })
+    }
     if (chainSlug && shouldCreditPayment({ status: 'recorded', duplicate: recorded.duplicate, usdMicros })) {
       const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
       credited = Boolean(dep.credited)
