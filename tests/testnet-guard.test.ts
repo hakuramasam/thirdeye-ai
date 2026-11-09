@@ -326,3 +326,35 @@ test('key credit accumulates additively and is never reset by a later load', asy
   assert.equal(split.fromKey, 5_000_000)
   assert.equal(split.fromAccount, 1_000_000)
 })
+
+import { validateSecrets, decideSiwe } from '../src/lib/security.js'
+
+test('production refuses to start on development or short secrets', () => {
+  const bad = validateSecrets({ sessionSecret: 'thirdeye-dev-session-secret', masterKey: 'thirdeye-dev-master-key', nodeEnv: 'production' })
+  assert.equal(bad.length, 2)
+  const short = validateSecrets({ sessionSecret: 'abc', masterKey: 'x'.repeat(40), nodeEnv: 'production' })
+  assert.equal(short.length, 1)
+  assert.equal(short[0].name, 'SESSION_SECRET')
+  const same = validateSecrets({ sessionSecret: 'y'.repeat(40), masterKey: 'y'.repeat(40), nodeEnv: 'production' })
+  assert.ok(same.some((p) => p.name === 'SESSION_SECRET/MASTER_KEY'))
+  const good = validateSecrets({ sessionSecret: 'a'.repeat(44), masterKey: 'b'.repeat(44), nodeEnv: 'production' })
+  assert.deepEqual(good, [])
+})
+
+test('development keeps working with the built-in defaults', () => {
+  assert.deepEqual(validateSecrets({ sessionSecret: 'thirdeye-dev-session-secret', masterKey: 'thirdeye-dev-master-key', nodeEnv: 'development' }), [])
+})
+
+test('a SIWE domain mismatch is rejected, not logged', () => {
+  const d = decideSiwe({ messageDomain: 'evil.example', host: 'thirdeye-ai-alpha.vercel.app', strictParseFailed: false, nodeEnv: 'production' })
+  assert.equal(d.ok, false)
+  assert.equal(d.reason, 'domain mismatch')
+  const ok = decideSiwe({ messageDomain: 'thirdeye-ai-alpha.vercel.app', host: 'thirdeye-ai-alpha.vercel.app', strictParseFailed: false, nodeEnv: 'production' })
+  assert.equal(ok.ok, true)
+})
+
+test('an unparseable SIWE message is refused in production but allowed locally', () => {
+  assert.equal(decideSiwe({ strictParseFailed: true, nodeEnv: 'production' }).ok, false)
+  assert.equal(decideSiwe({ strictParseFailed: true, nodeEnv: 'development' }).ok, true)
+  assert.equal(decideSiwe({ strictParseFailed: true, nodeEnv: 'production', allowLenient: true }).ok, true)
+})

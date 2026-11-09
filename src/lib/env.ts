@@ -1,4 +1,5 @@
 import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'node:crypto'
+import { validateSecrets } from './security.js'
 
 /** Central typed config. Everything optional for dev/demo; set in production. */
 const num = (v: string | undefined, d: number) => (v == null || v === '' ? d : Number(v))
@@ -68,4 +69,19 @@ export function decryptSecret(payload: string): string {
   const d = createDecipheriv('aes-256-gcm', key32(), Buffer.from(ivb, 'base64url'))
   d.setAuthTag(Buffer.from(tagb, 'base64url'))
   return Buffer.concat([d.update(Buffer.from(data, 'base64url')), d.final()]).toString('utf8')
+}
+
+
+// Fail closed: a production boot with a development or short secret is refused outright
+// rather than serving forgeable sessions.
+const secretProblems = validateSecrets({
+  sessionSecret: process.env.SESSION_SECRET,
+  masterKey: process.env.MASTER_KEY,
+  nodeEnv: process.env.NODE_ENV,
+})
+if (secretProblems.length > 0) {
+  throw new Error(
+    'Refusing to start in production with unsafe secrets: ' +
+      secretProblems.map((p) => `${p.name} is ${p.problem}`).join('; ')
+  )
 }

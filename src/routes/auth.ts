@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { randomBytes } from 'node:crypto'
 import { verifyMessage } from 'viem'
 import { SiweMessage } from 'siwe'
+import { decideSiwe } from '../lib/security.js'
 import { query, one, dbMode } from '../db/index.js'
 import { env, newId } from '../lib/env.js'
 import { createSessionToken, setSessionCookie, clearSessionCookie, attachUser, requireUser } from '../lib/session.js'
@@ -90,10 +91,19 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
       }
     }
 
-    // Domain mismatch check (logging only)
+    // Domain mismatch check (rejecting, not merely logging)
     const host = c.req.header('host')
-    if (host && siweMsg.domain && siweMsg.domain !== host) {
-      console.warn(`[auth] SIWE domain mismatch: message domain="${siweMsg.domain}", host="${host}"`)
+    const decision = decideSiwe({
+      messageDomain: siweMsg.domain,
+      host,
+      strictParseFailed: lenient,
+      nodeEnv: env.nodeEnv,
+      allowLenient: process.env.ALLOW_LENIENT_SIWE === '1',
+      allowDomainMismatch: process.env.ALLOW_SIWE_DOMAIN_MISMATCH === '1',
+    })
+    if (!decision.ok) {
+      console.warn(`[auth] SIWE rejected: ${decision.reason}; domain="${siweMsg.domain ?? ''}", host="${host ?? ''}"`)
+      return c.json({ error: { message: 'Signature does not match this site or message format.', type: 'auth', code: 401 } }, 401)
     }
 
     // Signature verification using viem

@@ -11,6 +11,7 @@ import { Hono, type Context } from 'hono'
 import { createHash, randomBytes } from 'node:crypto'
 import { one, query } from '../db/index.js'
 import { newId } from '../lib/env.js'
+import { env } from '../lib/env.js'
 import { requireUser } from '../lib/session.js'
 import type { AppEnv } from '../lib/types.js'
 
@@ -249,8 +250,16 @@ export function registerPartnerRoutes(app: Hono<AppEnv>): void {
     const org = String(b?.org ?? '').trim()
     const scopes: PartnerScope[] = Array.isArray(b?.scopes) ? b.scopes.filter((s: string) => ['read', 'write', 'admin'].includes(s)) : ['read']
     if (!name || !org) return c.json({ error: { message: 'name and org are required', type: 'partner', code: 'invalid_request' } }, 400)
-    if (scopes.includes('admin') && b?.confirm_admin !== true) {
-      return c.json({ error: { message: 'admin scope requires confirm_admin: true', type: 'partner', code: 'invalid_request' } }, 400)
+    // confirm_admin is a courtesy flag, never an authorisation. An admin-scoped partner key
+    // can only be minted by the operator holding the master key.
+    const requireOwnerForAdmin = (c: any) => c.req.header('x-master-key') === env.masterKey
+    if (scopes.includes('admin')) {
+      if (!requireOwnerForAdmin(c)) {
+        return c.json({ error: { message: 'admin scope requires owner authorisation', type: 'partner', code: 'forbidden' } }, 403)
+      }
+      if (b?.confirm_admin !== true) {
+        return c.json({ error: { message: 'admin scope requires confirm_admin: true', type: 'partner', code: 'invalid_request' } }, 400)
+      }
     }
     const { token, hash, prefix } = newPartnerKey()
     const id = newId()
