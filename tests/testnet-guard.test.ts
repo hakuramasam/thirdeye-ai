@@ -396,3 +396,56 @@ test('settlement detection is per chain and case-insensitive', () => {
   assert.equal(isSettlementToken('base', TREND), false)
   assert.equal(isSettlementToken('robinhood', USDC_BASE), false, 'USDC is not Robinhood settlement (that is USDG)')
 })
+
+import { validateAgentMessage, validateAgentReport, validateTask, parseAndValidate } from '../src/team/validate.js'
+
+const goodMessage = {
+  message_id: 'm1', task_id: 't1', from_agent: 'HERMES', to_agent: 'QA', message_type: 'task_assignment',
+  created_at: new Date().toISOString(), payload: { instruction: 'list the risks' },
+}
+
+test('a well formed inter-agent message validates', () => {
+  const r = validateAgentMessage(goodMessage)
+  assert.equal(r.ok, true, JSON.stringify((r as any).errors))
+})
+
+test('an unknown message_type is refused, not coerced', () => {
+  const bad = { ...goodMessage, message_type: 'do_whatever' }
+  const r = validateAgentMessage(bad)
+  assert.equal(r.ok, false)
+  assert.ok((r as any).errors.some((e: string) => e.includes('message_type') || e.includes('enum')))
+})
+
+test('a message missing required fields is refused', () => {
+  const { payload, ...missing } = goodMessage
+  const r = validateAgentMessage(missing)
+  assert.equal(r.ok, false)
+  assert.ok((r as any).errors.some((e: string) => e.includes('payload')))
+})
+
+test('extra properties are refused because the schema forbids them', () => {
+  const r = validateAgentMessage({ ...goodMessage, sneaky: true })
+  assert.equal(r.ok, false)
+})
+
+test('an agent report must carry evidence, tests and risks', () => {
+  const base = { task_id: 't1', agent_id: 'QA', status: 'completed', summary: 's', evidence: ['x'], tests: [{ name: 'unit', result: 'passed' }], risks: [], created_at: new Date().toISOString() }
+  assert.equal(validateAgentReport(base).ok, true)
+  const { risks, ...noRisks } = base
+  assert.equal(validateAgentReport(noRisks).ok, false, 'risks is required, even when empty')
+})
+
+test('a task must carry acceptance criteria and a status from the schema enum', () => {
+  const task = {
+    task_id: 't1', project_id: 'thirdeye-ai', title: 'Close the credit gap', objective: 'o', owner: 'qa', created_by: 'hermes',
+    status: 'queued', priority: 'normal', acceptance_criteria: ['works'], created_at: new Date().toISOString(),
+  }
+  assert.equal(validateTask(task).ok, true, JSON.stringify((validateTask(task) as any).errors))
+  assert.equal(validateTask({ ...task, status: 'nonsense' }).ok, false)
+})
+
+test('model output that is not JSON is refused with a clear reason', () => {
+  const r = parseAndValidate('message', 'I think we should proceed.')
+  assert.equal(r.ok, false)
+  assert.deepEqual((r as any).errors, ['not valid JSON'])
+})

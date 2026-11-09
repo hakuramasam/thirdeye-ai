@@ -11,6 +11,7 @@ import { isCovered } from '../lib/allowance.js'
 import { computeCostMicros } from '../lib/pricing.js'
 import { getModelRow, type ProviderCall } from '../providers/index.js'
 import { createMcpTools, type McpTools, type McpServerConfig } from './mcp.js'
+import { validateTask } from '../team/validate.js'
 import { paidFetch } from './x402.js'
 import { verifyPayment, txHashFrom } from '../lib/partnerVerify.js'
 import type { ModelRow } from '../lib/pricing.js'
@@ -254,7 +255,26 @@ export async function runAgent(
                 )
                 if (!child) {
                   result = `No active teammate named "${wanted}". Your roster: ${(deps as any).roster ?? 'unavailable'}.`
+
                 } else {
+                  // The delegation boundary is a contract: check the task against the
+                  // blueprint schema before a teammate spends money on it.
+                  const taskDoc = {
+                    task_id: `${agent.id}:${String(args.task || '').slice(0, 24)}:${Date.now()}`,
+                    project_id: 'thirdeye-ai',
+                    title: String(args.task || '').slice(0, 80) || 'delegated task',
+                    objective: String(args.task || ''),
+                    owner: String(wanted).toLowerCase(),
+                    created_by: String(agent.name).toLowerCase(),
+                    status: 'assigned',
+                    priority: 'normal',
+                    acceptance_criteria: ['a report with evidence, tests and risks'],
+                    created_at: new Date().toISOString(),
+                  }
+                  const taskCheck = validateTask(taskDoc)
+                  if (!taskCheck.ok) {
+                    result = `Delegation refused: the task did not validate against task.schema.json (${taskCheck.errors.join('; ')}). Rewrite it as one bounded instruction.`
+                  } else {
                   const childRun = await runAgent(
                     child as AgentRow,
                     `[delegated by ${agent.name}] ${String(args.task || '').slice(0, 4000)}`,
@@ -265,6 +285,7 @@ export async function runAgent(
                     (childRun.output ? `: ${String(childRun.output).slice(0, MAX_TOOL_RESULT_CHARS)}` : '') +
                     (childRun.error ? ` error: ${String(childRun.error).slice(0, 400)}` : '') +
                     ` [spend ${childRun.spend_usd_micros ?? 0} micros]`
+                  }
                 }
               }
             } else if (mcpTools) {
