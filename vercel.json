@@ -15,6 +15,42 @@
       "destination": "/api"
     },
     {
+      "source": "/platform",
+      "destination": "/api"
+    },
+    {
+      "source": "/status",
+      "destination": "/api"
+    },
+    {
+      "source": "/roadmap",
+      "destination": "/api"
+    },
+    {
+      "source": "/changelog",
+      "destination": "/api"
+    },
+    {
+      "source": "/partnerships",
+      "destination": "/api"
+    },
+    {
+      "source": "/docs",
+      "destination": "/api"
+    },
+    {
+      "source": "/docs/api",
+      "destination": "/api"
+    },
+    {
+      "source": "/docs/mcp",
+      "destination": "/api"
+    },
+    {
+      "source": "/docs/x402",
+      "destination": "/api"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
