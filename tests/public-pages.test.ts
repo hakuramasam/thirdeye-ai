@@ -15,7 +15,7 @@ function app() {
   return a
 }
 
-const PATHS = ['/platform', '/docs', '/docs/api', '/docs/mcp', '/docs/x402', '/roadmap', '/partnerships', '/changelog']
+const PATHS = ['/platform', '/docs', '/docs/api', '/docs/mcp', '/docs/x402', '/docs/agents', '/roadmap', '/partnerships', '/changelog', '/agents']
 
 test('every public page renders as html with a title', async () => {
   await migrate()
@@ -75,6 +75,20 @@ test('the partnership page states terms are private and names only disclosed par
   const body = await (await app().request('/partnerships')).text()
   assert.match(body, /never its terms/i)
   assert.ok(body.includes('Coin Gawd'), 'the disclosed partner should be listed')
+})
+
+test('the agent directory page renders an empty state rather than an error when nothing is registered', async () => {
+  await migrate()
+  const body = await (await app().request('/agents')).text()
+  assert.match(body, /Agent directory/)
+  assert.match(body, /No agents registered yet|homepage/)
+})
+
+test('the agent docs state the billing basis instead of implying an agent can fund itself', async () => {
+  await migrate()
+  const body = await (await app().request('/docs/agents')).text()
+  assert.match(body, /cannot hold its own balance/i)
+  assert.ok(body.includes('/api/v1/agents/directory'))
 })
 
 test('an unknown path is not handled by the public module', async () => {
