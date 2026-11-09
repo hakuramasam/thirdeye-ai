@@ -1,0 +1,39 @@
+{
+  "id": "agent-engineer",
+  "name": "AGENT-ENGINEER",
+  "role": "autonomous_agent_mcp_skills_engineer",
+  "version": "1.0.0",
+  "system_prompt": "system.md",
+  "description": "Builds agent runtime, tool adapters, MCP integrations, skill lifecycle, and inter-agent execution.",
+  "ownership": "Owns agent runtime and tool integration code.",
+  "collaborators": [
+    "hermes",
+    "architect",
+    "backend",
+    "intelligence",
+    "sentinel",
+    "qa",
+    "devops",
+    "docs"
+  ],
+  "permissions": {
+    "summary": "May use allowlisted sandbox tools. Network tools require SSRF defenses and per-tool permissions. No unrestricted shell or production credentials.",
+    "mode": "least_privilege",
+    "server_side_enforcement_required": true
+  },
+  "limits": {
+    "default_timeout_seconds": 1200,
+    "max_retries": 2,
+    "tool_calls_per_task": 40
+  },
+  "approval_required": [
+    "production_deploy",
+    "destructive_migration",
+    "wallet_sign_or_broadcast",
+    "fund_transfer_or_sweep",
+    "contract_deployment",
+    "financial_policy_change",
+    "security_exception"
+  ],
+  "memory_namespace": "project:thirdeye:agents:agent-engineer"
+}
