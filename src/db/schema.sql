@@ -324,3 +324,6 @@ ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS rate_card_version text;
 ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS provider_request_id text;
 ALTER TABLE models_catalog ADD COLUMN IF NOT EXISTS price_in_cached_1m_usd_micros bigint;
 ALTER TABLE models_catalog ADD COLUMN IF NOT EXISTS price_in_cache_write_1m_usd_micros bigint;
+
+-- Agent teams: an agent that may delegate work to named teammates.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS can_delegate boolean NOT NULL DEFAULT false;

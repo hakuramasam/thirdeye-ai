@@ -48,6 +48,10 @@ export type LlmResult = {
 }
 
 export type RunnerDeps = {
+  /** Depth of the current delegation chain, so a team cannot recurse forever. */
+  delegationDepth?: number
+  /** Comma-separated teammate names, shown to the model when a delegation target is wrong. */
+  roster?: string
   /** Injectable for tests; default resolves via the provider layer. */
   llm?: { call(params: Record<string, any>): Promise<LlmResult> }
   mcpTools?: McpTools
@@ -62,6 +66,7 @@ export type RunResult = {
   error: string | null
 }
 
+const MAX_DELEGATION_DEPTH = 3
 const MAX_TOOL_RESULT_CHARS = 4000
 
 function asMcpServers(v: McpServerConfig[] | string): McpServerConfig[] {
@@ -70,6 +75,23 @@ function asMcpServers(v: McpServerConfig[] | string): McpServerConfig[] {
 }
 
 /** Built-in http_fetch tool when the agent has x402 enabled. */
+const DELEGATE_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'delegate_to_agent',
+    description:
+      'Delegate one bounded task to a named teammate agent and get its report back. Use it for work outside your own remit. The teammate runs with its own system prompt, budget and step limit; you receive a short report, not its transcript.',
+    parameters: {
+      type: 'object',
+      properties: {
+        agent: { type: 'string', description: 'Teammate name exactly as listed in your roster, e.g. QA' },
+        task: { type: 'string', description: 'A self-contained instruction. The teammate cannot see this conversation.' },
+      },
+      required: ['agent', 'task'],
+    },
+  },
+}
+
 const HTTP_FETCH_TOOL = {
   type: 'function' as const,
   function: {
@@ -139,6 +161,7 @@ export async function runAgent(
   }
 
   const tools = [...(mcpTools?.tools ?? [])]
+  if ((agent as any).can_delegate) tools.push(DELEGATE_TOOL)
   if (agent.x402_enabled) tools.push(HTTP_FETCH_TOOL)
 
   try {
@@ -217,6 +240,31 @@ export async function runAgent(
                   if (spend > budget) {
                     return await finish('error', null, toolCalls, spend, 'Budget exceeded (x402 payments counted)')
                   }
+                }
+              }
+            } else if (tc.function.name === 'delegate_to_agent' && (agent as any).can_delegate) {
+              const depth = Number((deps as any).delegationDepth ?? 0)
+              if (depth >= MAX_DELEGATION_DEPTH) {
+                result = `Delegation refused: depth limit ${MAX_DELEGATION_DEPTH} reached. Do the work yourself or report the blocker.`
+              } else {
+                const wanted = String(args.agent || '').trim()
+                const child = await one(
+                  `SELECT * FROM agents WHERE user_id = $1 AND lower(name) = lower($2) AND status = 'active' AND id <> $3 LIMIT 1`,
+                  [user.id, wanted, agent.id]
+                )
+                if (!child) {
+                  result = `No active teammate named "${wanted}". Your roster: ${(deps as any).roster ?? 'unavailable'}.`
+                } else {
+                  const childRun = await runAgent(
+                    child as AgentRow,
+                    `[delegated by ${agent.name}] ${String(args.task || '').slice(0, 4000)}`,
+                    user,
+                    { delegationDepth: depth + 1 }
+                  )
+                  result = `REPORT from ${child.name} (status ${childRun.status})` +
+                    (childRun.output ? `: ${String(childRun.output).slice(0, MAX_TOOL_RESULT_CHARS)}` : '') +
+                    (childRun.error ? ` error: ${String(childRun.error).slice(0, 400)}` : '') +
+                    ` [spend ${childRun.spend_usd_micros ?? 0} micros]`
                 }
               }
             } else if (mcpTools) {
