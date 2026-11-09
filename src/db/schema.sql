@@ -134,6 +134,30 @@ CREATE TABLE IF NOT EXISTS auth_nonces (
 );
 CREATE INDEX IF NOT EXISTS idx_auth_nonces_age ON auth_nonces(created_at);
 
+-- ── Agent identities ─────────────────────────────────────────────────────
+-- An outside agent can hold its own identity without holding its own money. An identity belongs to
+-- a user account and its keys bill that account, because billing is per user and one account must
+-- never be charged for another agent's traffic. What the identity adds is name, description,
+-- advertised capabilities and a public directory presence.
+CREATE TABLE IF NOT EXISTS agent_identities (
+  id            text PRIMARY KEY,
+  owner_user_id text NOT NULL REFERENCES users(id),
+  slug          text NOT NULL UNIQUE,
+  name          text NOT NULL,
+  description   text NOT NULL,
+  capabilities  jsonb NOT NULL DEFAULT '[]',
+  homepage      text,
+  callback_url  text,
+  status        text NOT NULL DEFAULT 'active',
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_identities_owner ON agent_identities(owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_agent_identities_status ON agent_identities(status, created_at DESC);
+
+-- Which key speaks for which identity. Nullable, so ordinary user keys stay ordinary.
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS agent_identity_id text;
+
 -- ── Feedback intake ──────────────────────────────────────────────────────
 -- One row per report, from a signed-in user or an anonymous visitor. Kept separate from
 -- support tickets because the point is a durable, queryable signal about what to build next.

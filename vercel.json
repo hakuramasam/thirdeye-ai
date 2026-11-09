@@ -51,6 +51,14 @@
       "destination": "/api"
     },
     {
+      "source": "/agents",
+      "destination": "/api"
+    },
+    {
+      "source": "/docs/agents",
+      "destination": "/api"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

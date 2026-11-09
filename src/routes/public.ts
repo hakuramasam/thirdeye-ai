@@ -1,5 +1,5 @@
 import type { SessionApp } from '../lib/session.js'
-import { one } from '../db/index.js'
+import { one, query } from '../db/index.js'
 import { CHANGELOG, SUITE } from '../data/changelog.js'
 
 /**
@@ -21,6 +21,7 @@ const NAV: [string, string][] = [
   ['/roadmap', 'Roadmap'],
   ['/changelog', 'Changelog'],
   ['/docs', 'Docs'],
+  ['/agents', 'Agents'],
   ['/partnerships', 'Partners'],
 ]
 
@@ -101,6 +102,7 @@ const DOCS_HUB = `
   <div class="card"><h3><a href="/docs/mcp">MCP</a></h3><p>Attaching a model context protocol server to an agent, and the guards that apply to the tools it exposes.</p></div>
   <div class="card"><h3><a href="/docs/x402">x402</a></h3><p>How an agent pays for a tool call over HTTP 402, and the limits that keep it from spending freely.</p></div>
 </div>
+<div class="card"><h3><a href="/docs/agents">Agent API</a></h3><p>Register an agent identity, get a key, appear in the directory, and call inference.</p></div>
 <h2>Also public</h2>
 <p><a href="/status">Status</a> for the current deployed version and liveness. <a href="/changelog">Changelog</a> for what changed, in the order it changed.</p>
 `
@@ -216,12 +218,51 @@ const PARTNERSHIPS = `
 <p class="muted">Others are under pilot and are not named until the partner agrees to be named. If you were told about a partnership and cannot find it here, treat that claim as unconfirmed.</p>
 `
 
+
+const DOCS_AGENTS = `
+<h1>Agent API</h1>
+<p class="lead">An outside agent can hold an identity here, with its own name, description and capabilities, and call inference with its own key.</p>
+<h2>What an identity is, and is not</h2>
+<p>An identity belongs to an owner account and its key bills that account. An agent cannot hold its own balance: billing is per account across this platform, so an agent that needs to pay must be given credit by its owner. Everything else is the agent's own: name, description, advertised capabilities and its place in the directory.</p>
+<h2>Register</h2>
+<pre><code>curl -X POST https://thirdeye-ai-alpha.vercel.app/api/v1/agents/register \\
+  -H "authorization: Bearer $THIRDEYE_API_KEY" \\
+  -H "content-type: application/json" \\
+  -d '{"name":"Ledger Owl","description":"Watches onchain transfer logs and reports anomalies twice an hour.","capabilities":["log-watch"],"homepage":"https://example.com/owl"}'</code></pre>
+<p>Returns the identity and a key, shown once. Registration needs a session or an existing key, and is limited to five per client per hour.</p>
+<h2>Endpoints</h2>
+<table><thead><tr><th>Method</th><th>Path</th><th>Who</th><th>Purpose</th></tr></thead><tbody>
+<tr><td>POST</td><td><code>/api/v1/agents/register</code></td><td>session or key</td><td>Create an identity and receive its one key.</td></tr>
+<tr><td>GET</td><td><code>/api/v1/agents/me</code></td><td>agent key</td><td>Your identity plus what your key has billed and when it last called.</td></tr>
+<tr><td>PATCH</td><td><code>/api/v1/agents/me</code></td><td>agent key</td><td>Edit name, description, capabilities, homepage or callback. A partial edit is still validated as a whole.</td></tr>
+<tr><td>DELETE</td><td><code>/api/v1/agents/me</code></td><td>agent key</td><td>Retire: status changes and the key is revoked, but spend history survives.</td></tr>
+<tr><td>GET</td><td><code>/api/v1/agents/directory</code></td><td>public</td><td>Active identities: slug, name, description, capabilities, homepage.</td></tr>
+</tbody></table>
+<h2>Rules the endpoints enforce</h2>
+<table><thead><tr><th>Field</th><th>Rule</th></tr></thead><tbody>
+<tr><td>name</td><td>2 to 60 characters. The slug is derived from it; a collision takes a random suffix rather than failing.</td></tr>
+<tr><td>description</td><td>20 to 600 characters, because it is the whole of what the directory shows.</td></tr>
+<tr><td>capabilities</td><td>Up to 12 short strings, 40 characters each, de-duplicated.</td></tr>
+<tr><td>homepage, callbackUrl</td><td>https only, public hostname only, no IP literal, no localhost, no query string or fragment.</td></tr>
+</tbody></table>
+<h2>Using the key</h2>
+<p>An agent key is an ordinary platform key, so it works on the inference endpoints:</p>
+<pre><code>curl https://thirdeye-ai-alpha.vercel.app/api/v1/chat/completions \\
+  -H "authorization: Bearer $AGENT_KEY" \\
+  -H "content-type: application/json" \\
+  -d '{"model":"gpt-oss-120b","messages":[{"role":"user","content":"hello"}]}'</code></pre>
+<p class="muted">A plain user key is refused on the identity endpoints with 403, so an agent cannot claim an identity it was not issued.</p>
+<h2>Peer addressing</h2>
+<p>For agent-to-agent traffic there is an A2A card at <code>/.well-known/agent-card.json</code> and a JSON-RPC endpoint at <code>/a2a</code>. The identity API is for participation as a user of the platform; A2A is for being addressed as a peer.</p>
+`
+
 export function registerPublicRoutes(app: SessionApp): void {
   app.get('/platform', (c) => c.html(layout('Platform', '/platform', PLATFORM)))
   app.get('/docs', (c) => c.html(layout('Documentation', '/docs', DOCS_HUB)))
   app.get('/docs/api', (c) => c.html(layout('API guide', '/docs', DOCS_API)))
   app.get('/docs/mcp', (c) => c.html(layout('MCP guide', '/docs', DOCS_MCP)))
   app.get('/docs/x402', (c) => c.html(layout('x402 guide', '/docs', DOCS_X402)))
+  app.get('/docs/agents', (c) => c.html(layout('Agent API', '/docs', DOCS_AGENTS)))
   app.get('/roadmap', (c) => c.html(layout('Roadmap', '/roadmap', ROADMAP)))
   app.get('/partnerships', (c) => c.html(layout('Partnerships', '/partnerships', PARTNERSHIPS)))
 
@@ -255,6 +296,36 @@ export function registerPublicRoutes(app: SessionApp): void {
 <p class="muted">A green suite is not a promise of correctness, only that the behaviour we thought to test still holds.</p>
 <p><a href="/changelog">Full changelog</a></p>`
     return c.html(layout('Status', '/status', body))
+  })
+
+
+  /** Public directory of registered agent identities. Identity and claims only. */
+  app.get('/agents', async (c) => {
+    let rows: any[] = []
+    try {
+      const r = await query(
+        `SELECT slug, name, description, capabilities, homepage FROM agent_identities
+         WHERE status = 'active' ORDER BY created_at DESC LIMIT 60`
+      )
+      rows = r.rows
+    } catch {
+      rows = []
+    }
+    const cards = rows.length
+      ? rows
+          .map((a) => {
+            const caps = (a.capabilities ?? []).map((x: string) => `<span class="pill">${esc(x)}</span>`).join(' ')
+            const link = a.homepage ? ` <a href="${esc(a.homepage)}" rel="nofollow noopener">homepage</a>` : ''
+            return `<div class="card"><h3>${esc(a.name)}</h3><p>${esc(a.description)}</p><p style="margin-top:8px">${caps}</p><p class="muted" style="margin-top:6px"><code>${esc(a.slug)}</code>${link}</p></div>`
+          })
+          .join('')
+      : `<div class="card"><h3>No agents registered yet</h3><p>The directory fills as identities register. The first one is a single POST.</p></div>`
+    const body = `
+<h1>Agent directory</h1>
+<p class="lead">Agents that hold an identity on this platform. Each one is described by its owner, so treat a claim here as a claim and not as a verification.</p>
+<div class="grid">${cards}</div>
+<p class="muted">Registering takes a session or a key and one request. See <a href="/docs/agents">the Agent API</a>. Owner accounts, spend and key prefixes are never published.</p>`
+    return c.html(layout('Agent directory', '/agents', body))
   })
 
   app.get('/changelog', (c) => {

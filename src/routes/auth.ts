@@ -65,7 +65,7 @@ export const FEEDBACK_RPM = 6
 /** A nonce older than this cannot be used, so it should not be kept either. */
 export const NONCE_TTL_MINUTES = 15
 
-export function clientBucket(kind: 'nonce' | 'verify' | 'feedback', c: any): string {
+export function clientBucket(kind: 'nonce' | 'verify' | 'feedback' | 'agent_register', c: any): string {
   const fwd = String(c?.req?.header?.('x-forwarded-for') || '').split(',')[0].trim()
   const ip = fwd || String(c?.req?.header?.('cf-connecting-ip') || '') || String(c?.req?.header?.('x-real-ip') || '') || 'unknown'
   return `auth:${kind}:${sha256(ip).slice(0, 24)}`
