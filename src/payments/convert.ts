@@ -134,9 +134,11 @@ export async function convertOne(paymentId: string, deps: ConvertDeps = {}): Pro
     return { paymentId, status: 'skipped', reason: `status is ${(settled.rows[0] as any)?.status}` }
   }
 
-  const chainSlug = p.chain_slug || 'base'
-  const chain = CHAINS.find((c: any) => c.id === chainSlug)
-  if (!chain) return { paymentId, status: 'blocked', reason: 'unsupported_chain', detail: `No chain config for ${chainSlug}` }
+  // Resolve by chain id first: the payments table stores chain_id, and there is no chain_slug column,
+  // so reading the slug first silently treated every non-Base deposit as Base.
+  const chain = CHAINS.find((c: any) => c.chainId === Number(p.chain_id)) ?? CHAINS.find((c: any) => c.id === (p.chain_slug || 'base'))
+  const chainSlug = chain?.id ?? 'base'
+  if (!chain) return { paymentId, status: 'blocked', reason: 'unsupported_chain', detail: `No chain config for ${p.chain_id}` }
   // Native assets go through the Privy swap engine, which covers Base and BSC. ERC-20 conversions
   // still run through our own v3 router on Base only.
   const nativeAsset = isNativeAsset(chain.chainId, String(p.token ?? ''))
