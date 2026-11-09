@@ -49,6 +49,17 @@ export const env = {
   telegramAdminIds: (process.env.TELEGRAM_ADMIN_IDS || '').split(',').map((x) => x.trim()).filter(Boolean),
   telegramBotId: process.env.TELEGRAM_BOT_ID || '',
   cronSecret: process.env.CRON_SECRET || '',
+
+  /** Hosts allowed to be private for MCP/HTTP egress (comma separated). Empty by default. */
+  mcpAllowedHosts: (process.env.MCP_ALLOWED_HOSTS || '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean),
+
+  /** Read-only repo access for team agents (GitHub REST). Absent = tool unavailable. */
+  githubToken: process.env.GITHUB_TOKEN || '',
+  githubRepo: process.env.GITHUB_REPO || 'hakuramasam/thirdeye-ai',
+  githubRef: process.env.GITHUB_REPO_REF || 'main',
 }
 
 export const newId = (): string => randomBytes(12).toString('hex')

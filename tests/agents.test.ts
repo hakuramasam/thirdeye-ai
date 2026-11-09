@@ -77,7 +77,9 @@ describe('Agents Module C Tests', () => {
   })
 
   it('(b) runAgent with real MCP server + injected fake llm', async () => {
-    const mcpTools = await createMcpTools([{ name: 'test', url: mcpUrl }])
+    // The SSRF guard refuses loopback by default (that is the point of it), so the test
+    // server has to be allowlisted explicitly rather than the guard being relaxed.
+    const mcpTools = await createMcpTools([{ name: 'test', url: mcpUrl }], { allowHosts: ['127.0.0.1'] })
     assert.equal(mcpTools.errors.length, 0)
     const weatherTool = mcpTools.tools.find((t) => t.function.name === 'mcp_test_weather')
     assert.ok(weatherTool, 'weather tool listed with namespace')

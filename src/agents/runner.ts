@@ -14,6 +14,8 @@ import { createMcpTools, type McpTools, type McpServerConfig } from './mcp.js'
 import { validateTask } from '../team/validate.js'
 import { emitAgentRunSpan, traceIdFrom, spanIdFrom } from '../telemetry/langfuse.js'
 import { paidFetch } from './x402.js'
+import { REPO_TOOL, runRepoTool, hasRepoAccess } from './repo-tools.js'
+import { assertPublicUrl } from '../lib/ssrf.js'
 import { verifyPayment, txHashFrom } from '../lib/partnerVerify.js'
 import type { ModelRow } from '../lib/pricing.js'
 import type { UserRow } from '../lib/types.js'
@@ -50,6 +52,11 @@ export type LlmResult = {
 }
 
 export type RunnerDeps = {
+  /**
+   * Idempotency key for this run. Callers that run a schedule slot pass the run id from
+   * agent_schedule_lock, so a replay of the same slot cannot create a second run row.
+   */
+  runId?: string
   /** Depth of the current delegation chain, so a team cannot recurse forever. */
   delegationDepth?: number
   /** Comma-separated teammate names, shown to the model when a delegation target is wrong. */
@@ -66,6 +73,8 @@ export type RunResult = {
   tool_calls: number
   spend_usd_micros: number
   error: string | null
+  /** True when this call did not run anything because the run id was already used. */
+  replayed?: boolean
 }
 
 const MAX_DELEGATION_DEPTH = 3
@@ -112,21 +121,65 @@ const HTTP_FETCH_TOOL = {
   },
 }
 
+/**
+ * Crash-safe entry point. The runner used to leave agent_runs stuck at 'running' with no
+ * error whenever an unexpected throw escaped a step (observed in production on 2026-11-09
+ * when the orchestrator died mid-mission). Every run now terminates as success or error.
+ */
 export async function runAgent(
   agent: AgentRow,
   input: string,
   user: UserRow,
   deps: RunnerDeps = {}
 ): Promise<RunResult> {
-  const runId = randomUUID()
+  const runId = deps.runId || randomUUID()
+  try {
+    return await runAgentInner(agent, input, user, { ...deps, runId })
+  } catch (e: any) {
+    const message = String(e?.message || e).slice(0, 500)
+    try {
+      await query(
+        `UPDATE agent_runs SET status='error', error=$1 WHERE id=$2 AND status='running'`,
+        [`uncaught: ${message}`, runId]
+      )
+      await query(`UPDATE agents SET last_run_at = now() WHERE id = $1`, [agent.id])
+    } catch {
+      /* the run row is best-effort here; the caller still gets the error */
+    }
+    return { runId, status: 'error', output: null, tool_calls: 0, spend_usd_micros: 0, error: `uncaught: ${message}` }
+  }
+}
+
+async function runAgentInner(
+  agent: AgentRow,
+  input: string,
+  user: UserRow,
+  deps: RunnerDeps = {}
+): Promise<RunResult> {
+  const runId = deps.runId || randomUUID()
   const startedAt = Date.now()
   const budget = Number(agent.budget_usd_micros)
   const maxSteps = Math.min(Math.max(agent.max_steps || 8, 1), 20)
 
-  await query(
-    `INSERT INTO agent_runs (id, agent_id, user_id, status, input) VALUES ($1, $2, $3, 'running', $4)`,
+  const inserted = await query(
+    `INSERT INTO agent_runs (id, agent_id, user_id, status, input) VALUES ($1, $2, $3, 'running', $4)
+     ON CONFLICT (id) DO NOTHING RETURNING id`,
     [runId, agent.id, user.id, input]
   )
+  if (inserted.rowCount === 0) {
+    // Same idempotency key seen before: return the recorded outcome instead of re-running
+    // and re-charging. This is what makes a duplicated cron tick harmless.
+    const existing = await one(`SELECT status, output, tool_calls, spend_usd_micros, error FROM agent_runs WHERE id = $1`, [runId])
+    return {
+      runId,
+      status: (existing?.status === 'success' ? 'success' : 'error') as 'success' | 'error',
+      output: existing?.output ?? null,
+      tool_calls: Number(existing?.tool_calls ?? 0),
+      spend_usd_micros: Number(existing?.spend_usd_micros ?? 0),
+      error: existing?.error ?? 'duplicate run id (replay)',
+      replayed: true,
+    }
+  }
 
   const finish = async (
     status: 'success' | 'error',
@@ -187,6 +240,7 @@ export async function runAgent(
   const tools = [...(mcpTools?.tools ?? [])]
   if ((agent as any).can_delegate) tools.push(DELEGATE_TOOL)
   if (agent.x402_enabled) tools.push(HTTP_FETCH_TOOL)
+  if (hasRepoAccess((agent as any).repo_access)) tools.push(REPO_TOOL)
 
   try {
     const messages: any[] = [
@@ -231,10 +285,15 @@ export async function runAgent(
           let result = 'Tool unavailable'
           try {
             const args = JSON.parse(tc.function.arguments || '{}')
-            if (tc.function.name === 'http_fetch' && agent.x402_enabled) {
+            if (tc.function.name === 'repo_read' && hasRepoAccess((agent as any).repo_access)) {
+              result = await runRepoTool(args)
+            } else if (tc.function.name === 'http_fetch' && agent.x402_enabled) {
               const sellers = typeof agent.x402_allowed_sellers === 'string'
                 ? JSON.parse(agent.x402_allowed_sellers || '[]')
                 : (agent.x402_allowed_sellers ?? [])
+              // Validate before dialling: x402-fetch owns its own HTTP client, so we cannot
+              // pin the socket here, but a non-public target must never be paid for either.
+              await assertPublicUrl(String(args.url), { allowHosts: env.mcpAllowedHosts })
               const r = await paidFetch(String(args.url), {
                 method: args.method === 'POST' ? 'POST' : 'GET',
                 headers: args.body ? { 'content-type': 'application/json' } : undefined,

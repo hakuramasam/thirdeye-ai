@@ -341,3 +341,27 @@ CREATE TABLE IF NOT EXISTS payment_conversion_audit (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_pca_payment ON payment_conversion_audit(payment_id, created_at);
+
+-- Sprint 1 (2026-11-09): durable scheduled runs + read-only repo tool for team agents.
+
+-- One row per (agent, schedule slot). Unique (agent_id, lock_key) is what makes a slot
+-- single-owner; lock_expires_at plus status make it recoverable after a crash.
+CREATE TABLE IF NOT EXISTS agent_schedule_lock (
+  id bigserial PRIMARY KEY,
+  agent_id text NOT NULL,
+  lock_key text NOT NULL,
+  scheduled_at timestamptz NOT NULL DEFAULT now(),
+  run_id text NOT NULL,
+  lock_acquired_at timestamptz NOT NULL DEFAULT now(),
+  lock_expires_at timestamptz NOT NULL,
+  status text NOT NULL DEFAULT 'LOCKED',
+  heartbeat_ts timestamptz,
+  metadata jsonb NOT NULL DEFAULT '{}',
+  CONSTRAINT uniq_agent_schedule UNIQUE (agent_id, lock_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_schedule_expires ON agent_schedule_lock(lock_expires_at);
+CREATE INDEX IF NOT EXISTS idx_agent_schedule_status ON agent_schedule_lock(status, lock_expires_at);
+
+-- none | read | write. Only 'read' and 'write' receive the repo_read tool today.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS repo_access text NOT NULL DEFAULT 'none';

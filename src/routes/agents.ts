@@ -7,6 +7,7 @@ import type { SessionApp } from '../lib/session.js'
 import { requireUser } from '../lib/session.js'
 import { parseCron, isCronDue } from '../agents/cron.js'
 import { runAgent, type AgentRow } from '../agents/runner.js'
+import { acquireScheduleLock, finishScheduleLock, cronSlotKey } from '../agents/schedule-lock.js'
 
 type McpServerIn = { name?: string; url?: string; headers?: Record<string, string> }
 
@@ -278,7 +279,20 @@ export function registerCronRoute(app: SessionApp): void {
       if (!user) return c.json({ error: { message: 'Owner not found', type: 'not_found' } }, 404)
       const input = String(body?.input || '').trim()
       if (!input) return c.json({ error: { message: 'input is required when agent_id is set', type: 'invalid_request' } }, 400)
-      const r = await runAgent(row as AgentRow, input.slice(0, 4000), user)
+
+      // Optional idempotency key: a retried ops call with the same key must not run or charge
+      // twice. Without a key an ops call is a deliberate fresh run and is not deduplicated.
+      const idem = body?.idempotency_key ? String(body.idempotency_key).slice(0, 200) : ''
+      let lock: Awaited<ReturnType<typeof acquireScheduleLock>> = null
+      if (idem) {
+        lock = await acquireScheduleLock(opsRun, `ops:${idem}`, { runId: crypto.randomUUID() })
+        if (!lock) {
+          return c.json({ triggered: [], skipped: [{ agent_id: opsRun, reason: 'idempotency key already used or in flight' }] })
+        }
+      }
+
+      const r = await runAgent(row as AgentRow, input.slice(0, 4000), user, lock ? { runId: lock.runId } : {})
+      if (lock) await finishScheduleLock(lock.id, lock.runId, r.status === 'success' ? 'COMPLETED' : 'FAILED')
       return c.json({ triggered: [opsRun], results: [{ agent_id: opsRun, ...r }] })
     }
 
@@ -287,23 +301,47 @@ export function registerCronRoute(app: SessionApp): void {
     )
     const triggered: string[] = []
     const results: any[] = []
+    const skipped: any[] = []
     const now = new Date()
+    const slot = cronSlotKey(now)
     for (const row of res.rows as AgentRow[]) {
       let due = false
       try { due = isCronDue(row.cron!, now, row.last_run_at ? new Date(row.last_run_at) : null) } catch { due = false }
       if (!due) continue
+
+      // One owner per (agent, slot). A second overlapping tick gets null, records a skip and
+      // never double-executes or double-charges the run.
+      let lock: Awaited<ReturnType<typeof acquireScheduleLock>> = null
+      try {
+        lock = await acquireScheduleLock(row.id, slot, { scheduledAt: now, runId: crypto.randomUUID() })
+      } catch (e: any) {
+        results.push({ agent_id: row.id, status: 'error', error: `lock error: ${String(e?.message || e).slice(0, 200)}` })
+        continue
+      }
+      if (!lock) {
+        skipped.push({ agent_id: row.id, reason: 'slot already running or completed', slot })
+        continue
+      }
+
       triggered.push(row.id)
       try {
-        const user = await one(`SELECT * FROM users WHERE id = $1`, [row.user_id])
-        if (user) {
-          const r = await runAgent(row, `Scheduled run at ${now.toISOString()}`, user)
-          results.push({ agent_id: row.id, ...r })
+        const user = await one('SELECT * FROM users WHERE id = $1', [row.user_id])
+        if (!user) {
+          await finishScheduleLock(lock.id, lock.runId, 'FAILED', { reason: 'owner not found' })
+          results.push({ agent_id: row.id, status: 'error', error: 'owner not found' })
+          continue
         }
+        const r = await runAgent(row, `Scheduled run at ${now.toISOString()}`, user, { runId: lock.runId })
+        await finishScheduleLock(lock.id, lock.runId, r.status === 'success' ? 'COMPLETED' : 'FAILED', {
+          spend_usd_micros: r.spend_usd_micros,
+        })
+        results.push({ agent_id: row.id, ...r })
       } catch (e: any) {
+        await finishScheduleLock(lock.id, lock.runId, 'FAILED', { reason: String(e?.message || e).slice(0, 200) })
         results.push({ agent_id: row.id, status: 'error', error: String(e?.message || e).slice(0, 300) })
       }
     }
-    return c.json({ triggered, results })
+    return c.json({ triggered, results, skipped, slot })
   }
   // Vercel cron sends GET with `Authorization: Bearer $CRON_SECRET`; accept both.
   app.on(['GET', 'POST'], '/api/cron/agents', handler)
