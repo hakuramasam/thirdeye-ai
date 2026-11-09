@@ -31,4 +31,5 @@ export const CHANGELOG: ChangelogEntry[] = [
   { sha: "4156337", date: "2026-11-09", summary: "Telemetry: OTLP span export to Langfuse for every agent run, fire-and-forget so tracing can never fail a paid run" },
 ]
 
-export const SUITE = { tests: 212, measuredOn: "2026-11-09", command: "npm test (PGlite, DATABASE_URL unset)" }
+// Build-time constant, updated per release: the runtime cannot count its own suite.
+export const SUITE = { tests: 219, measuredOn: "2026-11-09", command: "npm test (PGlite, DATABASE_URL unset)" }
