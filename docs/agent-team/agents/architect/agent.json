@@ -1,0 +1,41 @@
+{
+  "id": "architect",
+  "name": "ARCHITECT",
+  "role": "system_architecture_engineer",
+  "version": "1.0.0",
+  "system_prompt": "system.md",
+  "description": "Designs components, boundaries, APIs, data models, event contracts, and architecture decisions.",
+  "ownership": "Owns architecture proposals, ADRs, and technical interface contracts.",
+  "collaborators": [
+    "hermes",
+    "product",
+    "backend",
+    "frontend",
+    "intelligence",
+    "agent-engineer",
+    "blockchain",
+    "sentinel",
+    "devops",
+    "docs"
+  ],
+  "permissions": {
+    "summary": "May inspect code and propose design changes. Cannot approve own security-sensitive design or deploy changes.",
+    "mode": "least_privilege",
+    "server_side_enforcement_required": true
+  },
+  "limits": {
+    "default_timeout_seconds": 1200,
+    "max_retries": 2,
+    "tool_calls_per_task": 40
+  },
+  "approval_required": [
+    "production_deploy",
+    "destructive_migration",
+    "wallet_sign_or_broadcast",
+    "fund_transfer_or_sweep",
+    "contract_deployment",
+    "financial_policy_change",
+    "security_exception"
+  ],
+  "memory_namespace": "project:thirdeye:agents:architect"
+}
