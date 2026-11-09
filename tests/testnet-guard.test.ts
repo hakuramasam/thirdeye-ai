@@ -510,3 +510,42 @@ test('Inngest reports unconfigured until both keys exist', () => {
   assert.equal(inngestConfigured({ INNGEST_EVENT_KEY: 'x' } as any), false, 'signing key is required too')
   assert.equal(inngestConfigured({ INNGEST_EVENT_KEY: 'x', INNGEST_SIGNING_KEY: 'y' } as any), true)
 })
+
+import { buildOtlpPayload, traceIdFrom, spanIdFrom, langfuseConfigured, langfuseConfig } from '../src/telemetry/langfuse.js'
+
+test('trace and span ids have the lengths OpenTelemetry requires', () => {
+  assert.equal(traceIdFrom('run-abc').length, 32)
+  assert.equal(spanIdFrom('run-abc').length, 16)
+  assert.match(traceIdFrom('run-abc'), /^[0-9a-f]{32}$/)
+  assert.notEqual(traceIdFrom('run-abc'), traceIdFrom('run-abd'), 'different runs get different traces')
+  assert.equal(traceIdFrom('run-abc'), traceIdFrom('run-abc'), 'the same run id is stable, so a retry is the same trace')
+})
+
+test('the OTLP payload carries the agent attributes and a status', () => {
+  const span = { traceId: traceIdFrom('r1'), spanId: spanIdFrom('r1'), name: 'agent.run QA', startMs: 1000, endMs: 2500,
+    attributes: { 'agent.name': 'QA', 'agent.spend_usd_micros': 12, 'agent.status': 'error' } }
+  const p: any = buildOtlpPayload(span)
+  const s = p.resourceSpans[0].scopeSpans[0].spans[0]
+  assert.equal(s.traceId, span.traceId)
+  assert.equal(s.startTimeUnixNano, '1000000000')
+  assert.equal(s.endTimeUnixNano, '2500000000')
+  assert.equal(s.status.code, 2, 'a failed run exports an error status')
+  const spend = s.attributes.find((a: any) => a.key === 'agent.spend_usd_micros')
+  assert.equal(spend.value.intValue, '12')
+})
+
+test('Langfuse is considered unconfigured without both keys', () => {
+  assert.equal(langfuseConfigured({} as any), false)
+  assert.equal(langfuseConfigured({ LANGFUSE_PUBLIC_KEY: 'pk' } as any), false)
+  assert.equal(langfuseConfigured({ LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' } as any), true)
+  assert.equal(langfuseConfig({ LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk' } as any)?.baseUrl, 'https://cloud.langfuse.com')
+  assert.equal(langfuseConfig({ LANGFUSE_PUBLIC_KEY: 'pk', LANGFUSE_SECRET_KEY: 'sk', LANGFUSE_BASE_URL: 'https://eu.example.com/' } as any)?.baseUrl, 'https://eu.example.com')
+})
+
+test('attributes are also emitted under the Langfuse metadata namespace', () => {
+  const span = { traceId: traceIdFrom('r2'), spanId: spanIdFrom('r2'), name: 'agent.run QA', startMs: 1, endMs: 2,
+    attributes: { 'agent.name': 'QA', 'agent.spend_usd_micros': 12 } }
+  const keys = (buildOtlpPayload(span) as any).resourceSpans[0].scopeSpans[0].spans[0].attributes.map((a: any) => a.key)
+  assert.ok(keys.includes('agent.name'), 'plain key kept')
+  assert.ok(keys.includes('langfuse.observation.metadata.agent_name'), 'namespaced key present for Langfuse mapping')
+})

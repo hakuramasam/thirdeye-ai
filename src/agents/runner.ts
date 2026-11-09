@@ -12,6 +12,7 @@ import { computeCostMicros } from '../lib/pricing.js'
 import { getModelRow, type ProviderCall } from '../providers/index.js'
 import { createMcpTools, type McpTools, type McpServerConfig } from './mcp.js'
 import { validateTask } from '../team/validate.js'
+import { emitAgentRunSpan, traceIdFrom, spanIdFrom } from '../telemetry/langfuse.js'
 import { paidFetch } from './x402.js'
 import { verifyPayment, txHashFrom } from '../lib/partnerVerify.js'
 import type { ModelRow } from '../lib/pricing.js'
@@ -118,6 +119,7 @@ export async function runAgent(
   deps: RunnerDeps = {}
 ): Promise<RunResult> {
   const runId = randomUUID()
+  const startedAt = Date.now()
   const budget = Number(agent.budget_usd_micros)
   const maxSteps = Math.min(Math.max(agent.max_steps || 8, 1), 20)
 
@@ -138,6 +140,24 @@ export async function runAgent(
       [status, output, toolCalls, spend, error, runId]
     )
     await query(`UPDATE agents SET last_run_at = now() WHERE id = $1`, [agent.id])
+    // Fire-and-forget: a tracing outage must never fail a paid run.
+    void emitAgentRunSpan({
+      traceId: traceIdFrom(runId),
+      spanId: spanIdFrom(runId),
+      name: `agent.run ${agent.name}`,
+      startMs: startedAt,
+      endMs: Date.now(),
+      attributes: {
+        'agent.id': agent.id,
+        'agent.name': agent.name,
+        'agent.model': agent.model,
+        'agent.status': status,
+        'agent.tool_calls': toolCalls,
+        'agent.spend_usd_micros': spend,
+        'run.id': runId,
+        ...(error ? { 'agent.error': error.slice(0, 300) } : {}),
+      },
+    })
     return { runId, status, output, tool_calls: toolCalls, spend_usd_micros: spend, error }
   }
 
