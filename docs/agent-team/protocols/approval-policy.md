@@ -1,0 +1,5 @@
+# Human Approval Policy
+
+Explicit human approval is mandatory for production deploy/promotion/rollback; destructive production migrations/data operations; signing or broadcasting transactions; transfers, treasury movement, sweeps, allowance or admin-role changes; contract deployment/upgrade; tokenomics, pricing, billing, conversion, spend-limit or payment-recipient changes; disabling controls or accepting critical/high residual risk; exporting sensitive production data.
+
+Approval is a durable server-side record bound to requester, approver, exact action and parameters, target/environment, risk summary, expiry, and one-time nonce. Any parameter change invalidates it. Missing, expired, ambiguous, reused, or mismatched approval means deny. The proposing agent cannot approve; HERMES cannot impersonate a human. SENTINEL/QA review is not human approval.
