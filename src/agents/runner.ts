@@ -140,8 +140,10 @@ export async function runAgent(
       [status, output, toolCalls, spend, error, runId]
     )
     await query(`UPDATE agents SET last_run_at = now() WHERE id = $1`, [agent.id])
-    // Fire-and-forget: a tracing outage must never fail a paid run.
-    void emitAgentRunSpan({
+    // Bounded await, not fire-and-forget. A serverless function stops the moment the response
+    // is returned, so an un-awaited export never leaves the process. The race keeps the run
+    // safe from a slow vendor while still giving the span a chance to land.
+    const spanExport = emitAgentRunSpan({
       traceId: traceIdFrom(runId),
       spanId: spanIdFrom(runId),
       name: `agent.run ${agent.name}`,
@@ -158,6 +160,7 @@ export async function runAgent(
         ...(error ? { 'agent.error': error.slice(0, 300) } : {}),
       },
     })
+    await Promise.race([spanExport, new Promise((resolve) => setTimeout(resolve, 1200))])
     return { runId, status, output, tool_calls: toolCalls, spend_usd_micros: spend, error }
   }
 
