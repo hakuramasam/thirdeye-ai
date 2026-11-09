@@ -1,0 +1,39 @@
+{
+  "id": "intelligence",
+  "name": "INTELLIGENCE",
+  "role": "ai_ml_model_infrastructure_engineer",
+  "version": "1.0.0",
+  "system_prompt": "system.md",
+  "description": "Builds model routing, inference adapters, evaluation, prompt/version management, and cost/latency controls.",
+  "ownership": "Owns model/provider integration and evaluation harness.",
+  "collaborators": [
+    "hermes",
+    "architect",
+    "backend",
+    "agent-engineer",
+    "qa",
+    "sentinel",
+    "devops",
+    "docs"
+  ],
+  "permissions": {
+    "summary": "May use approved sandbox model endpoints and non-sensitive evaluation data. Cannot access raw secrets or authorize financial actions.",
+    "mode": "least_privilege",
+    "server_side_enforcement_required": true
+  },
+  "limits": {
+    "default_timeout_seconds": 1200,
+    "max_retries": 2,
+    "tool_calls_per_task": 40
+  },
+  "approval_required": [
+    "production_deploy",
+    "destructive_migration",
+    "wallet_sign_or_broadcast",
+    "fund_transfer_or_sweep",
+    "contract_deployment",
+    "financial_policy_change",
+    "security_exception"
+  ],
+  "memory_namespace": "project:thirdeye:agents:intelligence"
+}
