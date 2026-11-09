@@ -13,6 +13,15 @@
 import { analyseToken, DEFAULT_MARKET_POLICY, type MarketPolicy } from './market.js'
 import { settlementTokenFor, swapOnBase } from './swap.js'
 import { CHAINS } from './chains.js'
+import {
+  executeNativeSwap,
+  isNativeAsset,
+  nativeRail,
+  privyEnvFromEnv,
+  quoteNativeSwap,
+  readErc20Balance,
+  toMicros,
+} from './nativeSwap.js'
 
 export type AutoConvertPolicy = MarketPolicy & {
   enabled: boolean
@@ -75,6 +84,8 @@ export async function prepareAutoConvert(params: {
   amountRaw: bigint
   decimals: number
   policy?: AutoConvertPolicy
+  /** Injectable so the native rail can be tested without the network. */
+  deps?: { quoteNative?: typeof quoteNativeSwap }
 }): Promise<PrepareResult> {
   const policy = params.policy ?? autoConvertPolicyFromEnv()
   if (!policy.enabled) {
@@ -114,6 +125,43 @@ export async function prepareAutoConvert(params: {
     }
   }
 
+  // Native ETH and BNB have no ERC-20 contract for our v3 router to trade against, so they are
+  // priced by the same engine that will convert them. Trusting the zero-address pool our analyser
+  // finds would quote a market we cannot execute in, which is how these assets used to get stuck.
+  if (isNativeAsset(params.chainId, params.tokenAddress)) {
+    const rail = nativeRail(params.chainId)!
+    const quoteNative = params.deps?.quoteNative ?? quoteNativeSwap
+    const quote = await quoteNative({ chainId: params.chainId, amountRaw: params.amountRaw })
+    if (!quote.ok) return { ok: false, code: quote.code, message: quote.message }
+    const amountUsd = toMicros(quote.estOutAmount, rail.settlement.decimals) / 1e6
+    if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+      return { ok: false, code: 'amount_too_large', message: 'Native payment value could not be determined' }
+    }
+    if (amountUsd > policy.maxAutoConvertUsd) {
+      return {
+        ok: false,
+        code: 'amount_too_large',
+        message: `Payment of $${amountUsd.toFixed(2)} exceeds the $${policy.maxAutoConvertUsd} auto-credit ceiling`,
+      }
+    }
+    return {
+      ok: true,
+      analysis: {
+        tradable: true,
+        priceUsd: amountUsd / Number(params.amountRaw) * 1e18,
+        liquidityUsd: 0,
+        volume24hUsd: 0,
+        amountUsd,
+        impactBps: 0,
+        poolAddress: 'privy-swap',
+        dex: 'privy',
+        source: 'native-quote',
+      } as any,
+      settlementToken: settlement,
+      note: `${rail.symbol} converts to ${rail.settlement.symbol} through the Privy swap engine at ~$${amountUsd.toFixed(2)}`,
+    }
+  }
+
   const analysis = await analyseToken(params)
   if (!analysis.tradable) {
     return { ok: false, code: analysis.code, message: analysis.message }
@@ -141,6 +189,33 @@ export async function executeAutoConvert(params: {
   const policy = params.policy ?? autoConvertPolicyFromEnv()
   const prepared = await prepareAutoConvert(params)
   if (!prepared.ok) return prepared
+
+  // Native assets: Privy moves them, we still credit only what lands in the wallet.
+  if (isNativeAsset(params.chainId, params.tokenAddress)) {
+    const rail = nativeRail(params.chainId)!
+    const auth = privyEnvFromEnv()
+    if (!auth) return { ok: false, code: 'privy_not_configured', message: 'Privy credentials are not configured for native conversions' }
+    const before = await readErc20Balance(params.chainId, rail.settlement.address, auth.walletId ? params.swapper : params.swapper)
+    const run = await executeNativeSwap({ chainId: params.chainId, amountRaw: params.amountRaw, auth })
+    if (!run.ok) return run
+    const after = await readErc20Balance(params.chainId, rail.settlement.address, params.swapper)
+    const gained = before !== null && after !== null && after > before ? after - before : 0n
+    if (gained <= 0n) {
+      return {
+        ok: false,
+        code: 'no_stablecoin_received',
+        message: `The native swap ${run.actionId} settled but no ${rail.settlement.symbol} arrived in the wallet yet`,
+      }
+    }
+    return {
+      ok: true,
+      outAmount: gained,
+      outToken: rail.settlement.address,
+      creditMicros: netCreditMicros(toMicros(gained, rail.settlement.decimals), policy),
+      impactBps: 0,
+      pool: 'privy-swap',
+    }
+  }
 
   if (params.chainId !== 8453) {
     return { ok: false, code: 'swap_unavailable', message: `Auto-convert execution is implemented for Base only right now (chain ${params.chainId})` }
