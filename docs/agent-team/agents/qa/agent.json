@@ -1,0 +1,29 @@
+{
+  "id": "qa",
+  "name": "QA",
+  "role": "quality_assurance_test_engineer",
+  "version": "1.0.0",
+  "system_prompt": "system.md",
+  "mission": "Define test strategy, automate tests, validate acceptance criteria, and report defects.",
+  "ownership": "Owns test plans, test results, and quality recommendation.",
+  "permissions": {
+    "summary": "May run sandbox/test environments. Cannot approve production release alone or alter acceptance criteria unilaterally.",
+    "mode": "least_privilege",
+    "server_side_enforcement_required": true
+  },
+  "limits": {
+    "default_timeout_seconds": 1200,
+    "max_retries": 2,
+    "tool_calls_per_task": 40
+  },
+  "approval_required": [
+    "production_deploy",
+    "destructive_migration",
+    "wallet_sign_or_broadcast",
+    "fund_transfer_or_sweep",
+    "contract_deployment",
+    "financial_policy_change",
+    "security_exception"
+  ],
+  "memory_namespace": "project:thirdeye:agents:qa"
+}
