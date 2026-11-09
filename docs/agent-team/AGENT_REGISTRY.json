@@ -1,0 +1,111 @@
+{
+  "version": "1.0.0",
+  "project": "Thirdeye AI",
+  "orchestrator": "hermes",
+  "agents": [
+    {
+      "id": "hermes",
+      "name": "HERMES",
+      "role": "Chief Orchestrator",
+      "description": "Coordinates work, decomposes requests, routes tasks, manages dependencies, consolidates evidence and escalates approvals.",
+      "system_prompt": "docs/agent-team/orchestrator/system.md",
+      "manifest": "docs/agent-team/orchestrator/agent.json"
+    },
+    {
+      "id": "product",
+      "name": "PRODUCT",
+      "role": "Product Manager & Business Analyst",
+      "description": "Turns goals into scoped requirements, user stories, priorities, risks, and acceptance criteria.",
+      "system_prompt": "docs/agent-team/agents/product/system.md",
+      "manifest": "docs/agent-team/agents/product/agent.json"
+    },
+    {
+      "id": "architect",
+      "name": "ARCHITECT",
+      "role": "System Architecture Engineer",
+      "description": "Designs components, boundaries, APIs, data models, event contracts, and architecture decisions.",
+      "system_prompt": "docs/agent-team/agents/architect/system.md",
+      "manifest": "docs/agent-team/agents/architect/agent.json"
+    },
+    {
+      "id": "frontend",
+      "name": "FRONTEND",
+      "role": "UI/UX & Frontend Engineer",
+      "description": "Implements accessible interfaces, client state, dashboards, and frontend integration.",
+      "system_prompt": "docs/agent-team/agents/frontend/system.md",
+      "manifest": "docs/agent-team/agents/frontend/agent.json"
+    },
+    {
+      "id": "backend",
+      "name": "BACKEND",
+      "role": "Backend & Database Engineer",
+      "description": "Implements APIs, persistence, authorization hooks, jobs, and backend services.",
+      "system_prompt": "docs/agent-team/agents/backend/system.md",
+      "manifest": "docs/agent-team/agents/backend/agent.json"
+    },
+    {
+      "id": "intelligence",
+      "name": "INTELLIGENCE",
+      "role": "AI/ML & Model Infrastructure Engineer",
+      "description": "Builds model routing, inference adapters, evaluation, prompt/version management, and cost/latency controls.",
+      "system_prompt": "docs/agent-team/agents/intelligence/system.md",
+      "manifest": "docs/agent-team/agents/intelligence/agent.json"
+    },
+    {
+      "id": "agent-engineer",
+      "name": "AGENT-ENGINEER",
+      "role": "Autonomous Agent, MCP & Skills Engineer",
+      "description": "Builds agent runtime, tool adapters, MCP integrations, skill lifecycle, and inter-agent execution.",
+      "system_prompt": "docs/agent-team/agents/agent-engineer/system.md",
+      "manifest": "docs/agent-team/agents/agent-engineer/agent.json"
+    },
+    {
+      "id": "blockchain",
+      "name": "BLOCKCHAIN",
+      "role": "Web3, Wallet & Payment Engineer",
+      "description": "Implements chain adapters, wallet abstractions, payment verification, settlement, and reconciliation.",
+      "system_prompt": "docs/agent-team/agents/blockchain/system.md",
+      "manifest": "docs/agent-team/agents/blockchain/agent.json"
+    },
+    {
+      "id": "sentinel",
+      "name": "SENTINEL",
+      "role": "Independent Security & Risk Engineer",
+      "description": "Threat-models, reviews code and architecture, tests authorization boundaries, and tracks vulnerabilities.",
+      "system_prompt": "docs/agent-team/agents/sentinel/system.md",
+      "manifest": "docs/agent-team/agents/sentinel/agent.json"
+    },
+    {
+      "id": "qa",
+      "name": "QA",
+      "role": "Quality Assurance & Test Engineer",
+      "description": "Defines test strategy, builds automated tests, validates acceptance criteria, and reports defects.",
+      "system_prompt": "docs/agent-team/agents/qa/system.md",
+      "manifest": "docs/agent-team/agents/qa/agent.json"
+    },
+    {
+      "id": "devops",
+      "name": "DEVOPS",
+      "role": "Infrastructure, CI/CD & Reliability Engineer",
+      "description": "Builds CI, deployment pipelines, observability, backups, runtime configuration, and incident runbooks.",
+      "system_prompt": "docs/agent-team/agents/devops/system.md",
+      "manifest": "docs/agent-team/agents/devops/agent.json"
+    },
+    {
+      "id": "docs",
+      "name": "DOCS",
+      "role": "Technical Documentation Engineer",
+      "description": "Maintains developer docs, API references, runbooks, changelogs, and agent operating manuals.",
+      "system_prompt": "docs/agent-team/agents/docs/system.md",
+      "manifest": "docs/agent-team/agents/docs/agent.json"
+    }
+  ],
+  "defaults": {
+    "execution_mode": "sandbox",
+    "max_delegation_depth": 3,
+    "max_parallel_agents": 5,
+    "require_schema_validation": true,
+    "require_audit_events": true,
+    "production_side_effects_require_human_approval": true
+  }
+}
