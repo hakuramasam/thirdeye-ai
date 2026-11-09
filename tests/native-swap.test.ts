@@ -122,3 +122,14 @@ test('a native deposit above the auto-credit ceiling is refused before any swap'
   assert.equal(prepared.ok, false)
   assert.equal((prepared as any).code, 'amount_too_large')
 })
+
+
+test('the executor admits a native BSC deposit that used to be blocked as chain_not_implemented', () => {
+  // Guarded by isNativeAsset rather than by the chain slug, which is what used to stop BNB dead.
+  assert.equal(isNativeAsset(56, '0x0000000000000000000000000000000000000000'), true)
+  assert.equal(nativeRail(56)?.settlement.symbol, 'USDT')
+})
+
+test('native detection is false for the zero address on a chain with no rail', () => {
+  assert.equal(isNativeAsset(4663, '0x0000000000000000000000000000000000000000'), false)
+})

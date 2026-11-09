@@ -64,6 +64,21 @@ export function privyEnvFromEnv(env: NodeJS.ProcessEnv = process.env): PrivyAuth
   }
 }
 
+/** A wallet action carries its hash in a few possible places; take the first real one. */
+function pickHash(payload: any): string | null {
+  if (!payload || typeof payload !== 'object') return null
+  for (const value of [payload.transaction_hash, payload.tx_hash, payload.hash]) {
+    if (typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value)) return value
+  }
+  const steps = Array.isArray(payload.steps) ? payload.steps : []
+  for (const step of steps) {
+    for (const value of [step?.transaction_hash, step?.tx_hash, step?.hash]) {
+      if (typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value)) return value
+    }
+  }
+  return null
+}
+
 export type NativeQuote =
   | { ok: true; estOutAmount: bigint; minimumOutAmount: bigint; gasEstimate: bigint | null }
   | { ok: false; code: string; message: string }
@@ -115,7 +130,7 @@ export async function quoteNativeSwap(params: {
 }
 
 export type NativeExecution =
-  | { ok: true; actionId: string; status: string }
+  | { ok: true; actionId: string; status: string; txHash: string | null }
   | { ok: false; code: string; message: string }
 
 /**
@@ -166,8 +181,9 @@ export async function executeNativeSwap(params: {
   const deadline = Date.now() + (params.timeoutMs ?? 90_000)
   const pollMs = params.pollMs ?? 3_000
   let status = String(json?.status ?? 'pending')
+  let txHash: string | null = pickHash(json)
   while (Date.now() < deadline) {
-    if (status === 'succeeded') return { ok: true, actionId, status }
+    if (status === 'succeeded') return { ok: true, actionId, status, txHash }
     if (status === 'failed' || status === 'rejected') {
       return { ok: false, code: `native_swap_${status}`, message: `Privy reported the native swap as ${status}` }
     }
@@ -181,6 +197,7 @@ export async function executeNativeSwap(params: {
     if (!poll || !poll.ok) continue
     const latest: any = await poll.json().catch(() => null)
     status = String(latest?.status ?? status)
+    txHash = pickHash(latest) ?? txHash
   }
   return { ok: false, code: 'native_swap_timeout', message: `Native swap ${actionId} still ${status} after the wait window` }
 }

@@ -12,6 +12,7 @@
  */
 import { one, query } from '../db/index.js'
 import { CHAINS } from './chains.js'
+import { executeNativeSwap, isNativeAsset, nativeRail, privyEnvFromEnv, readErc20Balance, toMicros } from './nativeSwap.js'
 import { USDC_BASE } from './swap.js'
 import { prepareBaseSwapOnchain, liveV3Reader } from './v3swap.js'
 import { getSigner, type Signer } from './signer.js'
@@ -136,8 +137,11 @@ export async function convertOne(paymentId: string, deps: ConvertDeps = {}): Pro
   const chainSlug = p.chain_slug || 'base'
   const chain = CHAINS.find((c: any) => c.id === chainSlug)
   if (!chain) return { paymentId, status: 'blocked', reason: 'unsupported_chain', detail: `No chain config for ${chainSlug}` }
-  if (chainSlug !== 'base') {
-    return { paymentId, status: 'blocked', reason: 'chain_not_implemented', detail: 'The executor converts on Base only today' }
+  // Native assets go through the Privy swap engine, which covers Base and BSC. ERC-20 conversions
+  // still run through our own v3 router on Base only.
+  const nativeAsset = isNativeAsset(chain.chainId, String(p.token ?? ''))
+  if (chainSlug !== 'base' && !nativeAsset) {
+    return { paymentId, status: 'blocked', reason: 'chain_not_implemented', detail: 'The ERC-20 executor converts on Base only today' }
   }
 
   if (!signerRes.ok) {
@@ -167,6 +171,50 @@ export async function convertOne(paymentId: string, deps: ConvertDeps = {}): Pro
     if (amountRaw <= 0n) {
       await release(paymentId, 'zero amount')
       return { paymentId, status: 'failed', reason: 'zero_amount', detail: 'Nothing to convert' }
+    }
+
+    // Native ETH/BNB: no token contract, no approval, and Privy submits the swap itself.
+    if (nativeAsset) {
+      const rail = nativeRail(chain.chainId)!
+      const privyAuth = privyEnvFromEnv()
+      if (!privyAuth) {
+        await release(paymentId, 'privy not configured for native conversions')
+        return { paymentId, status: 'blocked', reason: 'privy_not_configured', detail: 'Privy credentials are not set for this deployment' }
+      }
+      const beforeNative = await readErc20Balance(chain.chainId, rail.settlement.address, signer.address)
+      const run = await executeNativeSwap({ chainId: chain.chainId, amountRaw, auth: privyAuth })
+      if (!run.ok) {
+        await release(paymentId, run.message)
+        return { paymentId, status: 'blocked', reason: run.code, detail: run.message }
+      }
+      const afterNative = await readErc20Balance(chain.chainId, rail.settlement.address, signer.address)
+      const gained = beforeNative !== null && afterNative !== null && afterNative > beforeNative ? afterNative - beforeNative : 0n
+      if (gained <= 0n) {
+        await release(paymentId, 'native swap produced no stablecoin')
+        return {
+          paymentId,
+          status: 'failed',
+          reason: 'no_stablecoin_received',
+          detail: `Native swap ${run.actionId} settled but no ${rail.settlement.symbol} was measured in the wallet`,
+        }
+      }
+      const realisedUsdMicros = toMicros(gained, rail.settlement.decimals)
+      if (realisedUsdMicros <= 0) {
+        await release(paymentId, 'measured stablecoin rounded to zero')
+        return { paymentId, status: 'failed', reason: 'no_stablecoin_received', detail: 'Measured amount rounded to zero micros' }
+      }
+      const settledNative = await settle(paymentId, { realisedUsdMicros, swapTx: run.txHash ?? run.actionId })
+      if (!settledNative.ok) {
+        await release(paymentId, `settle refused: ${settledNative.detail}`)
+        return { paymentId, status: 'failed', reason: `settle_${settledNative.problem}`, detail: settledNative.detail }
+      }
+      return {
+        paymentId,
+        status: 'credited',
+        swapTx: run.txHash ?? run.actionId,
+        creditedMicros: settledNative.creditedMicros,
+        measuredUsdMicros: realisedUsdMicros,
+      }
     }
 
     const before = await readBalance(USDC_BASE, signer.address)
