@@ -1,0 +1,28 @@
+{
+  "task_id": "TASK-0001",
+  "project_id": "thirdeye-ai",
+  "parent_task_id": null,
+  "title": "Example task",
+  "objective": "Describe outcome",
+  "owner": "backend",
+  "created_by": "hermes",
+  "status": "queued",
+  "priority": "normal",
+  "dependencies": [],
+  "acceptance_criteria": [
+    "Criterion one",
+    "Criterion two"
+  ],
+  "input_refs": [],
+  "output_expectations": [
+    "Implementation",
+    "Tests",
+    "Evidence"
+  ],
+  "risk_level": "low",
+  "deadline": null,
+  "created_at": "2026-01-01T00:00:00Z",
+  "updated_at": "2026-01-01T00:00:00Z",
+  "approval_ref": null,
+  "idempotency_key": "TASK-0001"
+}
