@@ -267,6 +267,21 @@ export function registerCronRoute(app: SessionApp): void {
     if (!env.cronSecret || auth !== `Bearer ${env.cronSecret}`) {
       return c.json({ error: { message: 'Unauthorized', type: 'auth', code: 401 } }, 401)
     }
+    // Ops path: run one named agent with an explicit task. This is how a human or a
+    // scheduler hands real work to the team instead of the generic scheduled message.
+    const body = await c.req.json().catch(() => ({} as any))
+    const opsRun = body?.agent_id ? String(body.agent_id) : null
+    if (opsRun) {
+      const row = await one(`SELECT * FROM agents WHERE id = $1 AND status = 'active'`, [opsRun])
+      if (!row) return c.json({ error: { message: 'Agent not found or not active', type: 'not_found' } }, 404)
+      const user = await one('SELECT * FROM users WHERE id = $1', [(row as any).user_id])
+      if (!user) return c.json({ error: { message: 'Owner not found', type: 'not_found' } }, 404)
+      const input = String(body?.input || '').trim()
+      if (!input) return c.json({ error: { message: 'input is required when agent_id is set', type: 'invalid_request' } }, 400)
+      const r = await runAgent(row as AgentRow, input.slice(0, 4000), user)
+      return c.json({ triggered: [opsRun], results: [{ agent_id: opsRun, ...r }] })
+    }
+
     const res = await query(
       `SELECT * FROM agents WHERE status = 'active' AND cron IS NOT NULL ORDER BY last_run_at ASC NULLS FIRST LIMIT 20`
     )
