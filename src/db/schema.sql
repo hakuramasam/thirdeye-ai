@@ -331,3 +331,13 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS can_delegate boolean NOT NULL DEFAUL
 -- Realised value from a settled swap. Until this is set, a volatile-token deposit earns no credit.
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS realised_usd_micros bigint;
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS settlement_swap_tx text;
+
+-- Executor audit: every claim, release and settle attempt on a pending conversion.
+CREATE TABLE IF NOT EXISTS payment_conversion_audit (
+  id          bigserial PRIMARY KEY,
+  payment_id  text NOT NULL,
+  event       text NOT NULL,
+  detail      text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_pca_payment ON payment_conversion_audit(payment_id, created_at);

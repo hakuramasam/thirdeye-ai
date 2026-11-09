@@ -133,3 +133,64 @@ export async function swapOnRobinhood(params: {
   if (receipt.status !== 'success') return { ok: false, code: 'swap_failed', message: `Swap reverted: ${hash}` }
   return { ok: true, outAmount: amountOutMinimum, outToken, txHash: hash, source: 'uniswap-v3-direct' }
 }
+
+/**
+ * Full Base swap preparation: quote, then the approval payload if the router needs one, then the
+ * swap payload. The caller signs and sends; this function never moves funds itself.
+ */
+export async function prepareBaseSwap(params: {
+  tokenIn: string
+  amountIn: bigint
+  swapper: `0x${string}`
+  slippageBps: number
+}): Promise<
+  | { ok: true; expectedOut: bigint; outToken: string; approval: { to: string; data: string; value: string } | null; swap: { to: string; data: string; value: string } }
+  | { ok: false; code: string; message: string }
+> {
+  const key = process.env.UNISWAP_API_KEY || ''
+  if (!key) return { ok: false, code: 'swap_unavailable', message: 'UNISWAP_API_KEY is not configured' }
+  const headers = { 'content-type': 'application/json', 'x-api-key': key }
+  const quoteBody = {
+    type: 'EXACT_INPUT',
+    tokenInChainId: 8453,
+    tokenOutChainId: 8453,
+    tokenIn: params.tokenIn,
+    tokenOut: USDC_BASE,
+    amount: params.amountIn.toString(),
+    swapper: params.swapper,
+    slippageTolerance: params.slippageBps / 10_000,
+  }
+
+  const quoteRes = await fetch(`${UNISWAP_API}/quote`, { method: 'POST', headers, body: JSON.stringify(quoteBody), signal: AbortSignal.timeout(20000) })
+  const quote: any = await quoteRes.json().catch(() => null)
+  if (!quoteRes.ok || !quote?.quote) {
+    return { ok: false, code: 'no_route', message: `No route: ${quote?.errorCode ?? quoteRes.status}` }
+  }
+  const expectedOut = BigInt(quote.quote.output?.amount ?? '0')
+  if (expectedOut <= 0n) return { ok: false, code: 'no_route', message: 'Quote returned no output amount' }
+
+  // Approval: Uniswap returns the payload when the router is not already approved.
+  let approval: { to: string; data: string; value: string } | null = null
+  try {
+    const approvalRes = await fetch(`${UNISWAP_API}/check_approval`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ walletAddress: params.swapper, chainId: 8453, token: params.tokenIn, amount: params.amountIn.toString() }),
+      signal: AbortSignal.timeout(20000),
+    })
+    const approvalBody: any = await approvalRes.json().catch(() => null)
+    const tx = approvalBody?.approval?.transaction ?? approvalBody?.approval
+    if (approvalRes.ok && tx?.to && tx?.data) approval = { to: tx.to, data: tx.data, value: tx.value ?? '0' }
+  } catch { approval = null }
+
+  const swapRes = await fetch(`${UNISWAP_API}/swap`, {
+    method: 'POST', headers,
+    body: JSON.stringify({ quote }),
+    signal: AbortSignal.timeout(20000),
+  })
+  const swapBody: any = await swapRes.json().catch(() => null)
+  const swap = swapBody?.swap
+  if (!swapRes.ok || !swap?.to || !swap?.data) {
+    return { ok: false, code: 'swap_unavailable', message: `Swap payload unavailable: ${swapBody?.errorCode ?? swapRes.status}` }
+  }
+  return { ok: true, expectedOut, outToken: USDC_BASE, approval, swap: { to: swap.to, data: swap.data, value: swap.value ?? '0' } }
+}

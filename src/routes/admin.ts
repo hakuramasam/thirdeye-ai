@@ -6,10 +6,23 @@ import { summarize, loadRates } from '../lib/reconcile.js'
 import { decideCredit } from '../lib/creditPolicy.js'
 import { creditDeposit } from '../lib/billing.js'
 import { CHAINS } from '../payments/chains.js'
+import { convertPending } from '../payments/convert.js'
+import { settleConversion } from '../lib/settle.js'
 import { query } from '../db/index.js'
 
 /** Ops endpoints gated by MASTER_KEY. Used for manual credits (promos, refunds, testing). */
 export function registerAdminRoutes(app: SessionApp) {
+  /**
+   * POST /api/admin/convert — run one conversion pass over pending volatile-token deposits.
+   * Each deposit is claimed, swapped from a wallet we can sign for, measured, and settled.
+   */
+  app.post('/api/admin/convert', async (c) => {
+    if (c.req.header('x-master-key') !== env.masterKey) return c.json({ error: { message: 'Forbidden', type: 'auth', code: 403 } }, 403)
+    const body = await c.req.json().catch(() => ({}))
+    const result = await convertPending({ limit: Number(body?.limit ?? 5) })
+    return c.json({ ok: true, ...result })
+  })
+
   /**
    * POST /api/admin/payments/:id/settle — record what a swap actually realised for a
    * pending volatile-token deposit, and release credit for that amount only. This is the

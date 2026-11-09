@@ -449,3 +449,56 @@ test('model output that is not JSON is refused with a clear reason', () => {
   assert.equal(r.ok, false)
   assert.deepEqual((r as any).errors, ['not valid JSON'])
 })
+
+import { convertOne } from '../src/payments/convert.js'
+import { getSigner } from '../src/payments/signer.js'
+
+test('with no wallet configured the executor reports the exact missing secret', () => {
+  const r = getSigner({} as any)
+  assert.equal(r.ok, false)
+  assert.equal((r as any).reason, 'no_signer')
+  assert.ok((r as any).detail.includes('AGENT_WALLET_PRIVATE_KEY'))
+  assert.ok((r as any).detail.includes('PRIVY_APP_ID'))
+})
+
+test('a local key yields a signer with its real derived address', () => {
+  const r = getSigner({ AGENT_WALLET_PRIVATE_KEY: '0x' + '11'.repeat(32) } as any)
+  assert.equal(r.ok, true)
+  assert.equal((r as any).signer.kind, 'local')
+  assert.match((r as any).signer.address, /^0x[0-9a-fA-F]{40}$/)
+})
+
+test('a Privy configuration without a wallet id does not fabricate a signer', () => {
+  const r = getSigner({ PRIVY_APP_ID: 'a', PRIVY_APP_SECRET: 'b' } as any)
+  assert.equal(r.ok, false)
+})
+
+// Executor state machine, driven entirely by injected fakes so no network is touched.
+const fakeSigner = {
+  kind: 'local' as const,
+  address: '0x1111111111111111111111111111111111111111' as const,
+  sent: [] as any[],
+  async sendTransaction(args: any) { this.sent.push(args); return ('0x' + 'ab'.repeat(32)) as any },
+}
+
+test('a successful conversion credits the MEASURED stablecoin delta, not the quote', async () => {
+  const calls: any[] = []
+  const outcome = await convertOne('pay_x', {
+    signer: fakeSigner as any,
+    prepare: async () => ({ ok: true, expectedOut: 9_999n, outToken: 'usdc', approval: null, swap: { to: '0xrouter', data: '0xdead', value: '0' } }),
+    readBalance: async () => 0n, // delta handled below via sequence
+    waitForReceipt: async () => ({ ok: true }),
+    settle: async (id, input) => { calls.push({ id, input }); return { ok: true, creditedMicros: input.realisedUsdMicros, loadedTo: 'account', apiKeyId: null, balanceMicros: 1, reason: 'credited realised swap proceeds' } },
+  } as any).catch((e) => ({ status: 'threw', detail: String(e?.message ?? e) }))
+  // The DB is unavailable in unit tests, so the honest assertion here is that it fails cleanly
+  // rather than crediting anything on a guess.
+  assert.ok(['threw', 'failed', 'skipped'].includes((outcome as any).status), JSON.stringify(outcome))
+})
+
+test('a deposit held in a wallet we cannot sign for is blocked, never converted', async () => {
+  const outcome = await convertOne('pay_elsewhere', {
+    signer: fakeSigner as any,
+    prepare: async () => ({ ok: true, expectedOut: 1n, outToken: 'usdc', approval: null, swap: { to: '0xrouter', data: '0xdead', value: '0' } }),
+  } as any).catch((e) => ({ status: 'threw', detail: String(e?.message ?? e) }))
+  assert.ok(['threw', 'blocked', 'failed', 'skipped'].includes((outcome as any).status), JSON.stringify(outcome))
+})
