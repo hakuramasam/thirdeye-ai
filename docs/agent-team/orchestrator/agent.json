@@ -1,0 +1,45 @@
+{
+  "id": "hermes",
+  "name": "HERMES",
+  "role": "chief_orchestrator",
+  "version": "1.0.0",
+  "system_prompt": "system.md",
+  "capabilities": [
+    "task_decomposition",
+    "routing",
+    "delegation",
+    "status_tracking",
+    "report_aggregation"
+  ],
+  "allowed_tools": [
+    "task.create",
+    "task.assign",
+    "task.read",
+    "task.cancel",
+    "report.publish"
+  ],
+  "denied_tools": [
+    "wallet.sign",
+    "wallet.broadcast",
+    "treasury.transfer",
+    "contract.deploy",
+    "production.deploy",
+    "security.exception.approve"
+  ],
+  "limits": {
+    "max_delegation_depth": 3,
+    "max_parallel_agents": 5,
+    "default_timeout_seconds": 1800,
+    "max_retries": 2
+  },
+  "approval_required": [
+    "production_deploy",
+    "destructive_migration",
+    "wallet_sign_or_broadcast",
+    "fund_transfer_or_sweep",
+    "contract_deployment",
+    "financial_policy_change",
+    "security_exception"
+  ],
+  "memory_namespace": "project:thirdeye:orchestrator"
+}
