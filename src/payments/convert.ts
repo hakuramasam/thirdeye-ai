@@ -12,7 +12,8 @@
  */
 import { one, query } from '../db/index.js'
 import { CHAINS } from './chains.js'
-import { prepareBaseSwap, USDC_BASE } from './swap.js'
+import { USDC_BASE } from './swap.js'
+import { prepareBaseSwapOnchain, liveV3Reader } from './v3swap.js'
 import { getSigner, type Signer } from './signer.js'
 import { settleConversion } from '../lib/settle.js'
 
@@ -33,7 +34,7 @@ export type ConvertDeps = {
   signerBlock?: { reason: string; detail: string } | null
   readBalance?: (token: string, owner: string) => Promise<bigint>
   readAllowance?: (token: string, owner: string, spender: string) => Promise<bigint>
-  prepare?: typeof prepareBaseSwap
+  prepare?: typeof defaultPrepare
   approve?: (args: { token: string; spender: string; amount: bigint; signer: Signer }) => Promise<`0x${string}`>
   waitForReceipt?: (hash: string) => Promise<{ ok: boolean; gasUsed?: bigint }>
   settle?: typeof settleConversion
@@ -98,6 +99,21 @@ async function release(paymentId: string, reason: string): Promise<void> {
   ).catch(() => {})
 }
 
+/**
+ * Quotes and assembles the swap straight from chain state, so a conversion never waits on a
+ * vendor key. The prepare dependency stays injectable so tests can pin the route.
+ */
+type PrepareParams = { tokenIn: string; amountIn: bigint; swapper: string; slippageBps: number; tokenOut?: string }
+const defaultPrepare = (params: PrepareParams) =>
+  prepareBaseSwapOnchain({
+    tokenIn: params.tokenIn as `0x${string}`,
+    amountIn: params.amountIn,
+    swapper: params.swapper as `0x${string}`,
+    slippageBps: params.slippageBps,
+    tokenOut: params.tokenOut as `0x${string}` | undefined,
+    reader: liveV3Reader(),
+  })
+
 export async function convertOne(paymentId: string, deps: ConvertDeps = {}): Promise<ConversionOutcome> {
   const signerRes = deps.signer !== undefined
     ? (deps.signer ? { ok: true as const, signer: deps.signer } : { ok: false as const, ...(deps.signerBlock ?? { reason: 'no_signer', detail: 'No signer available' }) })
@@ -105,7 +121,7 @@ export async function convertOne(paymentId: string, deps: ConvertDeps = {}): Pro
   const settle = deps.settle ?? settleConversion
   const readBalance = deps.readBalance ?? defaultReadBalance
   const readAllowance = deps.readAllowance ?? defaultReadAllowance
-  const prepare = deps.prepare ?? prepareBaseSwap
+  const prepare = deps.prepare ?? defaultPrepare
   const waitForReceipt = deps.waitForReceipt ?? defaultWaitForReceipt
 
   const payment = await one('SELECT * FROM payments WHERE id = $1', [paymentId])
