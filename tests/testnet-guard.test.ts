@@ -549,3 +549,47 @@ test('attributes are also emitted under the Langfuse metadata namespace', () => 
   assert.ok(keys.includes('agent.name'), 'plain key kept')
   assert.ok(keys.includes('langfuse.observation.metadata.agent_name'), 'namespaced key present for Langfuse mapping')
 })
+
+import { canonicalJson, loadAuthorizationKey, buildSignaturePayload, signAuthorization } from '../src/payments/privyAuth.js'
+import { generateKeyPairSync, createPublicKey, verify } from 'node:crypto'
+
+test('canonical JSON sorts keys and drops nothing else', () => {
+  assert.equal(canonicalJson({ b: 1, a: 2 }), '{"a":2,"b":1}')
+  assert.equal(canonicalJson({ z: [3, { y: 1, x: 2 }], a: 'q' }), '{"a":"q","z":[3,{"x":2,"y":1}]}')
+  assert.equal(canonicalJson({ a: undefined, b: null }), '{"b":null}', 'undefined keys are omitted, null is kept')
+  assert.equal(canonicalJson({ u: 'é' }), '{"u":"é"}')
+})
+
+test('the payload signed matches what Privy reconstructs from the request', () => {
+  const body = { method: 'eth_sendTransaction', params: { transaction: { to: '0xabc', chain_id: 8453 } } }
+  const p = buildSignaturePayload({ method: 'POST', url: 'https://api.privy.io/v1/wallets/w1/rpc', body, appId: 'app', idempotencyKey: 'k1' })
+  assert.equal(p.version, 1)
+  assert.equal(p.method, 'POST')
+  assert.deepEqual(p.headers, { 'privy-app-id': 'app', 'privy-idempotency-key': 'k1' })
+  assert.equal(p.body, body, 'the same body object is signed, not a copy')
+})
+
+test('the authorization signature is base64 DER over the canonical payload and verifies', () => {
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  const der = privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64')
+  const loaded = loadAuthorizationKey('wallet-auth:' + der)
+  assert.equal(loaded.asymmetricKeyType, 'ec')
+
+  const payload = buildSignaturePayload({ method: 'POST', url: 'https://api.privy.io/v1/wallets/w1/rpc', body: { a: 1, b: 2 }, appId: 'app' })
+  const sig = signAuthorization(payload, loaded)
+  const sigLen = Buffer.from(sig, 'base64').length
+  assert.ok(sigLen > 60 && sigLen < 80, `expected a DER P-256 signature, got ${sigLen} bytes`)
+  assert.ok(
+    verify('sha256', Buffer.from(canonicalJson(payload)), { key: createPublicKey(privateKey), dsaEncoding: 'der' }, Buffer.from(sig, 'base64')),
+    'the signature must verify against the canonical payload'
+  )
+})
+
+test('a key that arrived split by the secret scanner still loads once rejoined', () => {
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  const der = privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64')
+  const rejoined = der.slice(0, 40) + der.slice(40)
+  assert.equal(loadAuthorizationKey(rejoined).asymmetricKeyType, 'ec')
+  assert.throws(() => loadAuthorizationKey('not-a-key'), /truncated|not a valid P-256/)
+  assert.throws(() => loadAuthorizationKey(''), /empty|truncated/)
+})
