@@ -375,3 +375,36 @@ export async function findIncomingTransfer(params: {
     },
   }
 }
+
+/**
+ * Does the wallet that actually sent the transfer belong to the authenticated caller?
+ *
+ * /api/credits/deposit has always passed the session wallet into verifyDeposit, but the newer
+ * /api/credits/payment-review values the transfer, records a payment row and can release
+ * spendable credit without ever comparing the sender to the caller. Because recording is
+ * first-claim-wins, an observer of any inbound transfer to our receivers could claim it as
+ * their own before the real sender did. This is a pure function so the rule can be tested
+ * without a chain or a database.
+ */
+export type SenderOwnershipVerdict =
+  | { ok: true; sender: string }
+  | { ok: false; code: 'sender_not_owner' | 'sender_missing'; message: string }
+
+export function checkSenderOwnership(input: { sender?: string | null; sessionWallet?: string | null }): SenderOwnershipVerdict {
+  const sender = String(input.sender ?? '').trim().toLowerCase()
+  const wallet = String(input.sessionWallet ?? '').trim().toLowerCase()
+  if (!/^0x[0-9a-f]{40}$/.test(sender)) {
+    return { ok: false, code: 'sender_missing', message: 'The transfer has no readable sender address, so ownership cannot be established.' }
+  }
+  if (!/^0x[0-9a-f]{40}$/.test(wallet)) {
+    return { ok: false, code: 'sender_not_owner', message: 'This account has no registered wallet, so a transfer cannot be attributed to it.' }
+  }
+  if (sender !== wallet) {
+    return {
+      ok: false,
+      code: 'sender_not_owner',
+      message: 'The sender of this transfer is not the wallet signed in to this account, so it cannot be claimed here.',
+    }
+  }
+  return { ok: true, sender }
+}

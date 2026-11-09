@@ -8,7 +8,7 @@ import { creditKey } from '../lib/keycredit.js'
 import { decideCredit } from '../lib/creditPolicy.js'
 import { CHAINS } from '../payments/chains.js'
 import { verifyDeposit } from '../payments/verify.js'
-import { findIncomingTransfer } from '../payments/verify.js'
+import { findIncomingTransfer, checkSenderOwnership } from '../payments/verify.js'
 import { prepareAutoConvert, autoConvertPolicyFromEnv } from '../payments/autoConvert.js'
 import { randomBytes } from 'node:crypto'
 import type { IncomingTransfer } from '../payments/verify.js'
@@ -251,6 +251,20 @@ export function registerCreditsRoutes(app: SessionApp): void {
       return c.json({ accepted: false, verification: { ok: false, code: found.code, message: found.message } }, 422)
     }
     const t = found.transfer
+    // Ownership gate. Must run before anything is recorded or credited: the payments table is
+    // first-claim-wins, so without this a third party could claim someone else's inbound
+    // transfer and receive the credit when it settles.
+    const ownership = checkSenderOwnership({ sender: t.from, sessionWallet: c.get('user')!.wallet })
+    if (!ownership.ok) {
+      return c.json(
+        {
+          accepted: false,
+          verification: { ok: false, code: ownership.code, message: ownership.message, sender: t.from },
+          intent: memoOf(intent),
+        },
+        403
+      )
+    }
     const prepared = await prepareAutoConvert({
       chainId,
       tokenAddress: t.token,
