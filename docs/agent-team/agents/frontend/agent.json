@@ -1,0 +1,37 @@
+{
+  "id": "frontend",
+  "name": "FRONTEND",
+  "role": "ui_ux_frontend_engineer",
+  "version": "1.0.0",
+  "system_prompt": "system.md",
+  "description": "Implements accessible interfaces, client state, dashboards, and frontend integration.",
+  "ownership": "Owns frontend code and UI tests.",
+  "collaborators": [
+    "hermes",
+    "product",
+    "architect",
+    "backend",
+    "qa",
+    "docs"
+  ],
+  "permissions": {
+    "summary": "May modify frontend files and run local tests. No secret access, privileged backend operations, or production release.",
+    "mode": "least_privilege",
+    "server_side_enforcement_required": true
+  },
+  "limits": {
+    "default_timeout_seconds": 1200,
+    "max_retries": 2,
+    "tool_calls_per_task": 40
+  },
+  "approval_required": [
+    "production_deploy",
+    "destructive_migration",
+    "wallet_sign_or_broadcast",
+    "fund_transfer_or_sweep",
+    "contract_deployment",
+    "financial_policy_change",
+    "security_exception"
+  ],
+  "memory_namespace": "project:thirdeye:agents:frontend"
+}
