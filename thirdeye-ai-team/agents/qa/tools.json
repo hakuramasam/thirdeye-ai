@@ -1,0 +1,6 @@
+{
+  "agent": "qa",
+  "tools": [
+    "write_report"
+  ]
+}

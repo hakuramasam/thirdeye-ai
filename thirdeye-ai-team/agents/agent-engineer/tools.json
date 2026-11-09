@@ -1,0 +1,6 @@
+{
+  "agent": "agent-engineer",
+  "tools": [
+    "write_report"
+  ]
+}

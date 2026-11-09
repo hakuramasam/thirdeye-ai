@@ -1,0 +1,6 @@
+{
+  "agent": "devops",
+  "tools": [
+    "write_report"
+  ]
+}

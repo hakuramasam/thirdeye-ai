@@ -1,0 +1,31 @@
+{
+  "id": "sentinel",
+  "name": "SENTINEL",
+  "version": "1.0.0",
+  "project": "thirdeye-ai",
+  "tier": "reasoning",
+  "model": "gpt-oss-120b",
+  "model_fallbacks": [
+    "qwen3-32b",
+    "ministral-14b"
+  ],
+  "budget_usd_micros_per_run": 40000,
+  "max_steps": 5,
+  "can_delegate": false,
+  "max_delegation_depth": 0,
+  "memory_namespace": "security",
+  "tools": [
+    "write_report"
+  ],
+  "prohibited": [
+    "fixing the vulnerability it found (report only, so the fix is reviewed separately)",
+    "changing production configuration",
+    "approving its own findings"
+  ],
+  "approval_required_for": [
+    "production deploy",
+    "mainnet transaction",
+    "spending above the per-run budget",
+    "changing another agent"
+  ]
+}

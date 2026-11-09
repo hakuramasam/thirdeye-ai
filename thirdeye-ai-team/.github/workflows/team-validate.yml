@@ -1,0 +1,29 @@
+name: team-package-validate
+
+on:
+  pull_request:
+    paths:
+      - 'thirdeye-ai-team/**'
+  push:
+    branches: [main]
+    paths:
+      - 'thirdeye-ai-team/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Validate agent packages and protocol schemas
+        run: node thirdeye-ai-team/scripts/validate-team.mjs
+      - name: Refuse secrets in the package
+        run: |
+          # Skip this workflow file itself, which necessarily contains the pattern it searches for.
+          if grep -rInE --exclude-dir=.github '(sk-[A-Za-z0-9]{20,}|mbk_[A-Za-z0-9]|eth|PRIVATE KEY)' thirdeye-ai-team/ | grep -vE 'eth-|ethers|method|geteth' ; then
+            echo "A credential-shaped string was found in the team package." >&2
+            exit 1
+          fi
+          echo "no credential-shaped strings found"

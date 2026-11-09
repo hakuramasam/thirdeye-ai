@@ -1,0 +1,159 @@
+{
+  "version": "1.0.0",
+  "project": "thirdeye-ai",
+  "orchestrator": "hermes",
+  "agents": [
+    {
+      "id": "hermes",
+      "name": "HERMES",
+      "tier": "reasoning",
+      "model": "gpt-oss-120b",
+      "budget_usd_micros_per_run": 100000,
+      "max_steps": 6,
+      "can_delegate": true,
+      "memory_namespace": "orchestration",
+      "system_prompt": "orchestrator/system.md",
+      "manifest": "orchestrator/agent.json"
+    },
+    {
+      "id": "agent-engineer",
+      "name": "AGENT-ENGINEER",
+      "tier": "balanced",
+      "model": "gpt-oss-120b",
+      "budget_usd_micros_per_run": 30000,
+      "max_steps": 4,
+      "can_delegate": false,
+      "memory_namespace": "engineering",
+      "system_prompt": "agents/agent-engineer/system.md",
+      "manifest": "agents/agent-engineer/agent.json"
+    },
+    {
+      "id": "architect",
+      "name": "ARCHITECT",
+      "tier": "reasoning",
+      "model": "gpt-oss-120b",
+      "budget_usd_micros_per_run": 40000,
+      "max_steps": 5,
+      "can_delegate": false,
+      "memory_namespace": "architecture",
+      "system_prompt": "agents/architect/system.md",
+      "manifest": "agents/architect/agent.json"
+    },
+    {
+      "id": "backend",
+      "name": "BACKEND",
+      "tier": "balanced",
+      "model": "gpt-oss-120b",
+      "budget_usd_micros_per_run": 30000,
+      "max_steps": 4,
+      "can_delegate": false,
+      "memory_namespace": "engineering",
+      "system_prompt": "agents/backend/system.md",
+      "manifest": "agents/backend/agent.json"
+    },
+    {
+      "id": "blockchain",
+      "name": "BLOCKCHAIN",
+      "tier": "balanced",
+      "model": "gpt-oss-120b",
+      "budget_usd_micros_per_run": 30000,
+      "max_steps": 4,
+      "can_delegate": false,
+      "memory_namespace": "engineering",
+      "system_prompt": "agents/blockchain/system.md",
+      "manifest": "agents/blockchain/agent.json"
+    },
+    {
+      "id": "devops",
+      "name": "DEVOPS",
+      "tier": "balanced",
+      "model": "gpt-oss-120b",
+      "budget_usd_micros_per_run": 30000,
+      "max_steps": 4,
+      "can_delegate": false,
+      "memory_namespace": "operations",
+      "system_prompt": "agents/devops/system.md",
+      "manifest": "agents/devops/agent.json"
+    },
+    {
+      "id": "docs",
+      "name": "DOCS",
+      "tier": "economical",
+      "model": "ministral-3b",
+      "budget_usd_micros_per_run": 15000,
+      "max_steps": 4,
+      "can_delegate": false,
+      "memory_namespace": "project",
+      "system_prompt": "agents/docs/system.md",
+      "manifest": "agents/docs/agent.json"
+    },
+    {
+      "id": "frontend",
+      "name": "FRONTEND",
+      "tier": "balanced",
+      "model": "gpt-oss-120b",
+      "budget_usd_micros_per_run": 30000,
+      "max_steps": 4,
+      "can_delegate": false,
+      "memory_namespace": "engineering",
+      "system_prompt": "agents/frontend/system.md",
+      "manifest": "agents/frontend/agent.json"
+    },
+    {
+      "id": "intelligence",
+      "name": "INTELLIGENCE",
+      "tier": "balanced",
+      "model": "gpt-oss-120b",
+      "budget_usd_micros_per_run": 30000,
+      "max_steps": 4,
+      "can_delegate": false,
+      "memory_namespace": "engineering",
+      "system_prompt": "agents/intelligence/system.md",
+      "manifest": "agents/intelligence/agent.json"
+    },
+    {
+      "id": "product",
+      "name": "PRODUCT",
+      "tier": "economical",
+      "model": "ministral-3b",
+      "budget_usd_micros_per_run": 15000,
+      "max_steps": 4,
+      "can_delegate": false,
+      "memory_namespace": "project",
+      "system_prompt": "agents/product/system.md",
+      "manifest": "agents/product/agent.json"
+    },
+    {
+      "id": "qa",
+      "name": "QA",
+      "tier": "economical",
+      "model": "ministral-3b",
+      "budget_usd_micros_per_run": 15000,
+      "max_steps": 4,
+      "can_delegate": false,
+      "memory_namespace": "testing",
+      "system_prompt": "agents/qa/system.md",
+      "manifest": "agents/qa/agent.json"
+    },
+    {
+      "id": "sentinel",
+      "name": "SENTINEL",
+      "tier": "reasoning",
+      "model": "gpt-oss-120b",
+      "budget_usd_micros_per_run": 40000,
+      "max_steps": 5,
+      "can_delegate": false,
+      "memory_namespace": "security",
+      "system_prompt": "agents/sentinel/system.md",
+      "manifest": "agents/sentinel/agent.json"
+    }
+  ],
+  "defaults": {
+    "execution_mode": "server",
+    "max_delegation_depth": 3,
+    "max_parallel_agents": 5,
+    "require_schema_validation": true,
+    "require_audit_events": true,
+    "production_side_effects_require_human_approval": true
+  }
+}

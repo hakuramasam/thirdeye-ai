@@ -1,0 +1,6 @@
+{
+  "agent": "architect",
+  "tools": [
+    "write_report"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "agent": "docs",
+  "tools": [
+    "write_report"
+  ]
+}

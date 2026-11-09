@@ -1,0 +1,6 @@
+{
+  "agent": "sentinel",
+  "tools": [
+    "write_report"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "agent": "blockchain",
+  "tools": [
+    "write_report"
+  ]
+}

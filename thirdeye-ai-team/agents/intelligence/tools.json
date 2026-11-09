@@ -1,0 +1,6 @@
+{
+  "agent": "intelligence",
+  "tools": [
+    "write_report"
+  ]
+}

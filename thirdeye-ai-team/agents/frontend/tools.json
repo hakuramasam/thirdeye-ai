@@ -1,0 +1,6 @@
+{
+  "agent": "frontend",
+  "tools": [
+    "write_report"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "agent": "product",
+  "tools": [
+    "write_report"
+  ]
+}
