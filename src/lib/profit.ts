@@ -244,7 +244,13 @@ export async function measurePeriod(
       WHERE created_at >= $1 AND created_at < $2 AND spend_usd_micros > 0`,
     [from, to]
   )
-  const liability = await one(`SELECT coalesce(-sum(amount_usd_micros), 0)::bigint AS credit FROM ledger`)
+  // Outstanding credit is the sum of POSITIVE per-user balances. Summing the whole ledger
+  // first would let one overspent account net away another user's prepaid balance.
+  const liability = await one(
+    `SELECT coalesce(sum(bal), 0)::bigint AS credit
+       FROM (SELECT sum(amount_usd_micros) AS bal FROM ledger GROUP BY user_id) t
+      WHERE bal > 0`
+  )
   const keyCredit = await one(`SELECT coalesce(sum(credit_usd_micros), 0)::bigint AS credit FROM api_keys`)
 
   const chatRevenue = Number(chat?.billed ?? 0)
