@@ -16,6 +16,7 @@ import { emitAgentRunSpan, traceIdFrom, spanIdFrom } from '../telemetry/langfuse
 import { paidFetch } from './x402.js'
 import { REPO_TOOL, runRepoTool, hasRepoAccess } from './repo-tools.js'
 import { REPO_WRITE_TOOL, runRepoWrite } from './repo-write.js'
+import { logRunEvent } from './monitor.js'
 import { assertPublicUrl } from '../lib/ssrf.js'
 import { verifyPayment, txHashFrom } from '../lib/partnerVerify.js'
 import type { ModelRow } from '../lib/pricing.js'
@@ -397,6 +398,17 @@ async function runAgentInner(
             result = `Tool error: ${String(e?.message || e).slice(0, 300)}`
           }
           toolCalls++
+          // Per-call history. Best-effort: a logging failure must never fail a run the user paid for.
+          try {
+            await logRunEvent({
+              runId,
+              agentId: agent.id,
+              seq: toolCalls,
+              tool: tc.function.name,
+              argsExcerpt: String(tc.function.arguments ?? ''),
+              resultExcerpt: String(result ?? ''),
+            })
+          } catch {}
           messages.push({ role: 'tool', tool_call_id: tc.id, content: result })
         }
         continue

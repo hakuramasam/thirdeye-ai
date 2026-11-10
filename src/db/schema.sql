@@ -446,3 +446,37 @@ CREATE TABLE IF NOT EXISTS profit_distributions (
   created_at        timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_profit_dist_period ON profit_distributions(period_id, recipient_kind);
+
+
+-- Agent monitoring: every finding the log auditor raises, deduplicated so one bad run cannot
+-- produce the same alert twice, and acknowledging it is an explicit act rather than a delete.
+CREATE TABLE IF NOT EXISTS agent_alerts (
+  id              text PRIMARY KEY,
+  code            text NOT NULL,
+  severity        text NOT NULL,
+  agent_id        text,
+  run_id          text,
+  summary         text NOT NULL,
+  evidence        jsonb NOT NULL DEFAULT '{}',
+  dedupe_key      text NOT NULL UNIQUE,
+  dispatch_run_id text,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  acknowledged_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_agent_alerts_open ON agent_alerts(severity, created_at DESC);
+
+-- Per-tool-call history, the raw material the monitor reads.
+CREATE TABLE IF NOT EXISTS agent_run_events (
+  id         text PRIMARY KEY,
+  run_id     text NOT NULL,
+  agent_id   text NOT NULL,
+  seq        integer NOT NULL,
+  tool       text NOT NULL,
+  ok         boolean NOT NULL DEFAULT true,
+  refused    boolean NOT NULL DEFAULT false,
+  args_excerpt   text,
+  result_excerpt text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_run_events_run ON agent_run_events(run_id, seq);
+CREATE INDEX IF NOT EXISTS idx_agent_run_events_time ON agent_run_events(created_at DESC);

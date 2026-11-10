@@ -121,4 +121,40 @@ export function registerAdminRoutes(app: SessionApp) {
     await adjustCredit(user.id, amount, reason)
     return c.json({ ok: true, wallet, credited_usd_micros: amount, balance_usd_micros: await getBalanceMicros(user.id) })
   })
+
+  /**
+   * POST /api/admin/agents/audit — read the team's recent working log, raise deduplicated alerts,
+   * and optionally hand the worst findings to HERMES as a bounded remediation brief.
+   */
+  app.post('/api/admin/agents/audit', async (c) => {
+    if (c.req.header('x-master-key') !== env.masterKey) return c.json({ error: { message: 'Forbidden', type: 'auth', code: 403 } }, 403)
+    const body = await c.req.json().catch(() => ({}))
+    const { auditAgents } = await import('../agents/monitor.js')
+    const result = await auditAgents({
+      hours: Number(body?.hours ?? 24),
+      dispatch: body?.dispatch === true,
+      hermesId: 'tdt_hermes',
+    })
+    return c.json({ ok: true, ...result })
+  })
+
+  /** GET /api/admin/agents/alerts — the alert history, newest first. */
+  app.get('/api/admin/agents/alerts', async (c) => {
+    if (c.req.header('x-master-key') !== env.masterKey) return c.json({ error: { message: 'Forbidden', type: 'auth', code: 403 } }, 403)
+    const open = c.req.query('open') === '1'
+    const rows = await query(
+      `SELECT id, code, severity, agent_id, run_id, summary, dispatch_run_id, created_at, acknowledged_at
+         FROM agent_alerts ${open ? 'WHERE acknowledged_at IS NULL' : ''}
+        ORDER BY created_at DESC LIMIT 200`
+    )
+    return c.json({ ok: true, alerts: (rows as any).rows ?? [] })
+  })
+
+  /** PATCH /api/admin/agents/alerts/:id — acknowledge, so the same condition stops shouting. */
+  app.patch('/api/admin/agents/alerts/:id', async (c) => {
+    if (c.req.header('x-master-key') !== env.masterKey) return c.json({ error: { message: 'Forbidden', type: 'auth', code: 403 } }, 403)
+    const row = await one(`UPDATE agent_alerts SET acknowledged_at = now() WHERE id = $1 RETURNING id, acknowledged_at`, [c.req.param('id')])
+    if (!row) return c.json({ error: { message: 'Alert not found', type: 'invalid', code: 404 } }, 404)
+    return c.json({ ok: true, ...row })
+  })
 }
