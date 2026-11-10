@@ -49,6 +49,11 @@ export interface Finding {
   evidence: Record<string, unknown>
 }
 
+/** Runs finish with 'success' in production and 'completed' in the schema docs; treat both as done. */
+export function isSuccess(status?: string | null): boolean {
+  return status === 'success' || status === 'completed' || status === 'ok'
+}
+
 /** Words a run uses when it believes it succeeded. */
 const CLAIM = /\b(deployed|shipped|is live|now live|fixed|resolved|passing|verified|completed|done)\b/i
 
@@ -122,7 +127,7 @@ export function detectFindings(
     }
 
     // Money spent, nothing done: usually a model that narrated instead of acting.
-    if ((r.status === 'completed' || r.status === 'ok') && spend > 0 && calls === 0) {
+    if (isSuccess(r.status) && spend > 0 && calls === 0) {
       out.push({
         code: 'silent_spend',
         severity: 'low',
@@ -134,7 +139,7 @@ export function detectFindings(
     }
 
     // The failure mode that matters most: reporting success without proof.
-    if ((r.status === 'completed' || r.status === 'ok') && claimsSuccess(r.output) && !showsEvidence(r.output)) {
+    if (isSuccess(r.status) && claimsSuccess(r.output) && !showsEvidence(r.output)) {
       out.push({
         code: 'unverified_claim',
         severity: 'high',
@@ -176,7 +181,7 @@ export function detectFindings(
     // report that quotes a version, a date or a year.
     const years: string[] = String(r.output ?? "").match(/\b(19|20)\d{2}\b/g) ?? []
     const currentYear = new Date(now).getUTCFullYear()
-    if ((r.status === 'completed' || r.status === 'ok') && years.length > 0 && !years.includes(String(currentYear))) {
+    if (isSuccess(r.status) && years.length > 0 && !years.includes(String(currentYear))) {
       out.push({
         code: 'temporal_mismatch',
         severity: 'medium',

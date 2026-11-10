@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-const { detectFindings, dedupeKey, scrub, claimsSuccess, showsEvidence } = await import('../src/agents/monitor.js')
+const { detectFindings, dedupeKey, scrub, claimsSuccess, showsEvidence, isSuccess } = await import('../src/agents/monitor.js')
 
 const now = Date.parse('2026-11-10T12:00:00Z')
 const run = (over: any = {}) => ({
@@ -79,4 +79,14 @@ test('an output dated in the wrong year is flagged, because a guess that reads l
   assert.ok(codes(bad).includes('temporal_mismatch'))
   const good = detectFindings([run({ output: 'Measured on 2026-11-10: 257/257 tests.' })], [], { now })
   assert.equal(codes(good).includes('temporal_mismatch'), false)
+})
+
+test("a run whose status is 'success' is treated as finished, which is what production actually writes", () => {
+  assert.equal(isSuccess('success'), true)
+  assert.equal(isSuccess('completed'), true)
+  assert.equal(isSuccess('running'), false)
+  const f = detectFindings([run({ status: 'success', output: 'UTC date: 2024-07-18' })], [], { now })
+  assert.ok(codes(f).includes('temporal_mismatch'))
+  const g = detectFindings([run({ status: 'success', output: 'All fixed and deployed.' })], [], { now })
+  assert.ok(codes(g).includes('unverified_claim'))
 })
