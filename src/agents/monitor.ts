@@ -171,6 +171,22 @@ export function detectFindings(
       })
     }
 
+    // A confidently wrong date is a real failure mode: measured live on 2026-11-10 when DOCS
+    // answered "2024-07-18" after a tool call. Cheap to catch, and it protects every future
+    // report that quotes a version, a date or a year.
+    const years: string[] = String(r.output ?? "").match(/\b(19|20)\d{2}\b/g) ?? []
+    const currentYear = new Date(now).getUTCFullYear()
+    if ((r.status === 'completed' || r.status === 'ok') && years.length > 0 && !years.includes(String(currentYear))) {
+      out.push({
+        code: 'temporal_mismatch',
+        severity: 'medium',
+        agent_id: r.agent_id,
+        run_id: r.id,
+        summary: `Output dates itself ${years.slice(0, 3).join(', ')} while the run happened in ${currentYear}.`,
+        evidence: { years: years.slice(0, 5), output: String(r.output ?? '').slice(0, 200) },
+      })
+    }
+
     const budget = budgets[r.agent_id]
     if (budget && spend > budget) {
       out.push({

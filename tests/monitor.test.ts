@@ -73,3 +73,10 @@ test('scrub removes credential shapes before they reach a log row', () => {
   assert.ok(!clean.includes('ghp_abcdefghij'))
   assert.match(clean, /sk-\*\*\*/)
 })
+
+test('an output dated in the wrong year is flagged, because a guess that reads like a fact is the worst kind', () => {
+  const bad = detectFindings([run({ output: 'UTC date (as of this tool call): 2024-07-18' })], [], { now })
+  assert.ok(codes(bad).includes('temporal_mismatch'))
+  const good = detectFindings([run({ output: 'Measured on 2026-11-10: 257/257 tests.' })], [], { now })
+  assert.equal(codes(good).includes('temporal_mismatch'), false)
+})
