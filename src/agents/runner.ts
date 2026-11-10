@@ -15,6 +15,7 @@ import { validateTask } from '../team/validate.js'
 import { emitAgentRunSpan, traceIdFrom, spanIdFrom } from '../telemetry/langfuse.js'
 import { paidFetch } from './x402.js'
 import { REPO_TOOL, runRepoTool, hasRepoAccess } from './repo-tools.js'
+import { REPO_WRITE_TOOL, runRepoWrite } from './repo-write.js'
 import { assertPublicUrl } from '../lib/ssrf.js'
 import { verifyPayment, txHashFrom } from '../lib/partnerVerify.js'
 import type { ModelRow } from '../lib/pricing.js'
@@ -59,6 +60,8 @@ export type RunnerDeps = {
   runId?: string
   /** Depth of the current delegation chain, so a team cannot recurse forever. */
   delegationDepth?: number
+  /** Set by a write-enabled orchestrator to grant this run repo_write for one task. */
+  allowWrite?: boolean
   /** Comma-separated teammate names, shown to the model when a delegation target is wrong. */
   roster?: string
   /** Injectable for tests; default resolves via the provider layer. */
@@ -97,6 +100,11 @@ const DELEGATE_TOOL = {
       properties: {
         agent: { type: 'string', description: 'Teammate name exactly as listed in your roster, e.g. QA' },
         task: { type: 'string', description: 'A self-contained instruction. The teammate cannot see this conversation.' },
+        allow_write: {
+          type: 'boolean',
+          description:
+            'Grant the teammate repo_write for this one task: it may open a pull request, never commit to main. Only a write-enabled orchestrator can grant this, and the grant is recorded in the report. Leave false unless the task is a code change that should be proposed for review.',
+        },
       },
       required: ['agent', 'task'],
     },
@@ -240,7 +248,11 @@ async function runAgentInner(
   const tools = [...(mcpTools?.tools ?? [])]
   if ((agent as any).can_delegate) tools.push(DELEGATE_TOOL)
   if (agent.x402_enabled) tools.push(HTTP_FETCH_TOOL)
+  // Write is granted per run, not per agent row: an orchestrator may hand one task write
+  // authority and withhold it from the next, so the grant travels with the run.
+  const canWrite = deps.allowWrite ?? ((agent as any).repo_access === 'write')
   if (hasRepoAccess((agent as any).repo_access)) tools.push(REPO_TOOL)
+  if (canWrite) tools.push(REPO_WRITE_TOOL)
 
   try {
     const messages: any[] = [
@@ -285,7 +297,9 @@ async function runAgentInner(
           let result = 'Tool unavailable'
           try {
             const args = JSON.parse(tc.function.arguments || '{}')
-            if (tc.function.name === 'repo_read' && hasRepoAccess((agent as any).repo_access)) {
+            if (tc.function.name === 'repo_write' && canWrite) {
+              result = await runRepoWrite(args)
+            } else if (tc.function.name === 'repo_read' && hasRepoAccess((agent as any).repo_access)) {
               result = await runRepoTool(args)
             } else if (tc.function.name === 'http_fetch' && agent.x402_enabled) {
               const sellers = typeof agent.x402_allowed_sellers === 'string'
@@ -357,16 +371,20 @@ async function runAgentInner(
                   if (!taskCheck.ok) {
                     result = `Delegation refused: the task did not validate against task.schema.json (${taskCheck.errors.join('; ')}). Rewrite it as one bounded instruction.`
                   } else {
+                  // A grant is only real if the parent holds write itself and the child is a
+                  // member of the repo-access roster; a model cannot widen its own authority.
+                  const granted = Boolean(args.allow_write) && canWrite && hasRepoAccess((child as any).repo_access)
                   const childRun = await runAgent(
                     child as AgentRow,
                     `[delegated by ${agent.name}] ${String(args.task || '').slice(0, 4000)}`,
                     user,
-                    { delegationDepth: depth + 1 }
+                    { delegationDepth: depth + 1, allowWrite: granted }
                   )
                   result = `REPORT from ${child.name} (status ${childRun.status})` +
                     (childRun.output ? `: ${String(childRun.output).slice(0, MAX_TOOL_RESULT_CHARS)}` : '') +
                     (childRun.error ? ` error: ${String(childRun.error).slice(0, 400)}` : '') +
-                    ` [spend ${childRun.spend_usd_micros ?? 0} micros]`
+                    ` [spend ${childRun.spend_usd_micros ?? 0} micros]` +
+                    (granted ? ' [write granted for this task]' : ' [write withheld]')
                   }
                 }
               }
