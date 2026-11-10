@@ -315,7 +315,7 @@ function Byok({ onChanged }: { onChanged: () => void }) {
 
 /* ---------------- credits ---------------- */
 function Credits({ onChanged }: { onChanged: () => void }) {
-  const [info, setInfo] = useState<{ receiver_address: string; configured: boolean; chains: ChainInfo[] } | null>(null)
+  const [info, setInfo] = useState<{ receiver_address: string; deposit_address?: string; configured: boolean; chains: ChainInfo[] } | null>(null)
   const [credits, setCredits] = useState<{ balance_usd_micros: number; ledger: any[] } | null>(null)
   const [chain, setChain] = useState('base')
   const [txHash, setTxHash] = useState('')
@@ -398,8 +398,8 @@ function Credits({ onChanged }: { onChanged: () => void }) {
           <>
             <p className="muted small">Send USDC (Base) or USDG (Robinhood Chain) from a wallet registered to your account, then submit the transaction hash below. Verification is automatic and idempotent.</p>
             <div className="copyable" style={{ margin: '12px 0' }}>
-              <span className="val">{info.receiver_address}</span>
-              <button className="ghost small-btn" onClick={() => { navigator.clipboard.writeText(info.receiver_address); toast('Address copied') }}>Copy</button>
+              <span className="val">{info.deposit_address || info.receiver_address}</span>
+              <button className="ghost small-btn" onClick={() => { const a = info.deposit_address || info.receiver_address; navigator.clipboard.writeText(a); toast('Address copied') }}>Copy</button>
             </div>
             <table style={{ marginBottom: 14 }}>
               <thead><tr><th>Chain</th><th>Token</th></tr></thead>

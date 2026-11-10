@@ -1,5 +1,5 @@
 import { createPublicClient, http, parseAbi } from 'viem'
-import { env } from '../lib/env.js'
+import { env, platformReceivers } from '../lib/env.js'
 import { getTokenPriceUsd } from './oracle.js'
 import { getChain, CHAINS, ChainConfig } from './chains.js'
 
@@ -51,7 +51,7 @@ function parseDataValue(data: any): bigint {
 export function parseTransferLogs(
   receipt: any,
   chainConfig: ChainConfig,
-  receiverAddress: string,
+  receiverAddress: string | string[],
   fromWallet: string
 ): VerifyResult {
   if (!receipt) {
@@ -95,13 +95,19 @@ export function parseTransferLogs(
     return { ok: false, code: 'not_found', message: 'No ERC-20 Transfer log found in transaction' }
   }
 
-  const receiverLower = (receiverAddress || '').toLowerCase()
+  // A deposit is ours whichever of our receiving wallets it lands in, so the caller may pass
+  // one address or the whole set. Empty entries are dropped rather than matched.
+  const receivers = new Set(
+    (Array.isArray(receiverAddress) ? receiverAddress : [receiverAddress])
+      .map((a) => String(a || '').toLowerCase())
+      .filter(Boolean)
+  )
   const fromLower = (fromWallet || '').toLowerCase()
 
   // Look for exact match
   const validLog = transferLogs.find((l) => {
     const tokenConfig = chainConfig.tokens.find((t) => t.address.toLowerCase() === l.address)
-    return tokenConfig && l.to === receiverLower && l.from === fromLower && l.value > 0n
+    return tokenConfig && receivers.has(l.to) && l.from === fromLower && l.value > 0n
   })
 
   if (validLog) {
@@ -130,7 +136,7 @@ export function parseTransferLogs(
   // Reason for non-match
   const zeroLog = transferLogs.find((l) => {
     const tokenConfig = chainConfig.tokens.find((t) => t.address.toLowerCase() === l.address)
-    return tokenConfig && l.to === receiverLower && l.from === fromLower && l.value === 0n
+    return tokenConfig && receivers.has(l.to) && l.from === fromLower && l.value === 0n
   })
   if (zeroLog) {
     return { ok: false, code: 'zero_amount', message: 'Deposit transfer amount is zero' }
@@ -138,7 +144,7 @@ export function parseTransferLogs(
 
   const wrongSenderLog = transferLogs.find((l) => {
     const tokenConfig = chainConfig.tokens.find((t) => t.address.toLowerCase() === l.address)
-    return tokenConfig && l.to === receiverLower && l.from !== fromLower
+    return tokenConfig && receivers.has(l.to) && l.from !== fromLower
   })
   if (wrongSenderLog) {
     return { ok: false, code: 'wrong_sender', message: 'Sender address does not match registered wallet' }
@@ -146,7 +152,7 @@ export function parseTransferLogs(
 
   const wrongRecipientLog = transferLogs.find((l) => {
     const tokenConfig = chainConfig.tokens.find((t) => t.address.toLowerCase() === l.address)
-    return tokenConfig && l.to !== receiverLower
+    return tokenConfig && !receivers.has(l.to)
   })
   if (wrongRecipientLog) {
     return { ok: false, code: 'wrong_recipient', message: 'Recipient address does not match platform receiver' }
@@ -188,7 +194,7 @@ export async function verifyDeposit({
       return { ok: false, code: 'not_found', message: 'Transaction receipt not found' }
     }
 
-    const parsed = parseTransferLogs(receipt, chainConfig, env.platformReceiverAddress, fromWallet)
+    const parsed = parseTransferLogs(receipt, chainConfig, platformReceivers(), fromWallet)
     if (!parsed.ok) return parsed
 
     const tokenConfig = chainConfig.tokens.find(

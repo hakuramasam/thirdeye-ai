@@ -20,6 +20,12 @@ export const env = {
   platformAgentReceiver: (process.env.PLATFORM_AGENT_RECEIVER || '').toLowerCase(),
   /** Splits automation account: converts incoming tokens and forwards to the vault. */
   platformAutomationReceiver: (process.env.PLATFORM_AUTOMATION_RECEIVER || '').toLowerCase(),
+  /**
+   * Default deposit address shown to users (Alchemy agent wallet). Kept separate from
+   * platformAgentReceiver on purpose: that one doubles as the Privy signer identity, so
+   * pointing it at a wallet this server cannot sign for would mislabel every conversion.
+   */
+  platformSponsorReceiver: (process.env.PLATFORM_SPONSORED_RECEIVER || '').toLowerCase(),
   platformMarginPct: num(process.env.PLATFORM_MARGIN_PCT, 10),
 
   /** Platform token (THIRDEYE). Set once the token exists; deposits accept it automatically. */
@@ -60,6 +66,24 @@ export const env = {
   githubToken: process.env.GITHUB_TOKEN || '',
   githubRepo: process.env.GITHUB_REPO || 'hakuramasam/thirdeye-ai',
   githubRef: process.env.GITHUB_REPO_REF || 'main',
+}
+
+/**
+ * Every wallet that is ours, in one place. Verification must accept a deposit to any of them,
+ * otherwise an address we advertise is an address we refuse to credit.
+ */
+export function platformReceivers(): string[] {
+  return [
+    env.platformReceiverAddress,
+    env.platformAgentReceiver,
+    env.platformAutomationReceiver,
+    env.platformSponsorReceiver,
+  ].filter(Boolean)
+}
+
+/** Where users are told to send funds: the sponsored wallet when one is configured, else the vault. */
+export function depositAddress(): string {
+  return env.platformSponsorReceiver || env.platformReceiverAddress
 }
 
 export const newId = (): string => randomBytes(12).toString('hex')

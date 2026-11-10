@@ -1,6 +1,6 @@
 import type { SessionApp } from '../lib/session.js'
 import { requireUser } from '../lib/session.js'
-import { env } from '../lib/env.js'
+import { env, depositAddress, platformReceivers } from '../lib/env.js'
 import { query } from '../db/index.js'
 import { getBalanceMicros, creditDeposit } from '../lib/billing.js'
 import { one } from '../db/index.js'
@@ -127,15 +127,19 @@ export function registerCreditsRoutes(app: SessionApp): void {
   // GET /api/credits/deposit-info
   app.get('/api/credits/deposit-info', requireUser, async (c) => {
     const receiver_address = env.platformReceiverAddress || ''
-    const configured = Boolean(receiver_address)
     const agent_receiver = env.platformAgentReceiver || ''
     const automation_receiver = env.platformAutomationReceiver || ''
+    const sponsor_receiver = env.platformSponsorReceiver || ''
+    const receivers = platformReceivers()
     return c.json({
       receiver_address,
       agent_receiver,
       automation_receiver,
-      configured: Boolean(receiver_address || agent_receiver || automation_receiver),
-      receivers: [receiver_address, agent_receiver, automation_receiver].filter(Boolean),
+      sponsor_receiver,
+      // What users should actually send to. The sponsored wallet when configured, else the vault.
+      deposit_address: depositAddress(),
+      configured: receivers.length > 0,
+      receivers,
       chains: CHAINS,
     })
   })
@@ -188,7 +192,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       // How to attach this payment to the memo.
       how_to_pay: {
         claim: 'Call POST /api/credits/payment-review with intent_id and the tx_hash after sending.',
-        receivers: [env.platformReceiverAddress, env.platformAgentReceiver, env.platformAutomationReceiver].filter(Boolean),
+        receivers: platformReceivers(),
         expires_in_minutes: ttlMinutes,
       },
     })
@@ -245,7 +249,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       intent = rows[0] ?? null
       if (!intent) return c.json({ error: { message: 'intent not found for this account', type: 'not_found' } }, 404)
     }
-    const receivers = [env.platformReceiverAddress, env.platformAgentReceiver, env.platformAutomationReceiver].filter(Boolean) as string[]
+    const receivers = platformReceivers()
     const found = await findIncomingTransfer({ chainId, txHash, receivers })
     if (!found.ok) {
       return c.json({ accepted: false, verification: { ok: false, code: found.code, message: found.message } }, 422)
@@ -276,7 +280,9 @@ export function registerCreditsRoutes(app: SessionApp): void {
         ? 'treasury_vault'
         : t.to === String(env.platformAutomationReceiver || '').toLowerCase()
           ? 'automation_account'
-          : 'agent_wallet'
+          : t.to === String(env.platformSponsorReceiver || '').toLowerCase()
+            ? 'sponsored_wallet'
+            : 'agent_wallet'
     if (!prepared.ok) {
       await recordPayment({
         intent, userId: c.get('user')!.id, transfer: t, receivedAt: received_at,
@@ -402,8 +408,9 @@ export function registerCreditsRoutes(app: SessionApp): void {
 
   // POST /api/credits/deposit
   app.post('/api/credits/deposit', requireUser, async (c) => {
-    const receiver_address = env.platformReceiverAddress || ''
-    if (!receiver_address) {
+    // Any wallet we control is a valid place to receive a deposit, so this refuses only when
+    // none is configured at all rather than when the vault specifically is absent.
+    if (platformReceivers().length === 0) {
       return c.json(
         {
           error: {
