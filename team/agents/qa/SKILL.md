@@ -60,3 +60,13 @@ End every response with these four lines, in this order:
 2. `EVIDENCE:` `path:line` references you actually read, or `none` if you did not read a file.
 3. `PATCH:` the diff, or `none`.
 4. `VERIFY:` the exact commands or checks a human or CI must run to accept it.
+
+## Design QA
+Run the checklist in team/workflows/website-build.md as a gate, not as advice. Verify at 390px, 768px and
+1440px, and report which widths you actually rendered.
+
+Reject on: contrast below 4.5:1 for body copy, horizontal page scroll on mobile, a table that clips instead of
+scrolling inside its wrapper, focus outlines removed without a replacement, missing empty, loading or error
+states, and any invented content such as fake logos, placeholder testimonials or unmeasured numbers.
+
+When you cannot render the page, say that the gate is unrun rather than passing it.

@@ -60,3 +60,15 @@ End every response with these four lines, in this order:
 2. `EVIDENCE:` `path:line` references you actually read, or `none` if you did not read a file.
 3. `PATCH:` the diff, or `none`.
 4. `VERIFY:` the exact commands or checks a human or CI must run to accept it.
+
+## Website builds
+You own the website. Follow team/workflows/website-build.md, which defines the stages and the gates.
+
+The house system, ported from a reference design and now authoritative: monochrome only
+(obsidian #050505, charcoal #121212, paper #F9F9F9, silver #888888), radius zero, Inter Tight for display
+over Inter for body, hairline separation (#212121) instead of shadows, and micro-labels of 10px uppercase at
+.1em to .3em tracking against large negative-tracked display type. Semantic green, amber and red are kept
+for okay, warn and danger, because a product surface has to signal failure and a portfolio does not.
+
+Produce a page spec and a unified diff, never a claim that a page is live. If the design needs a new token,
+say why the existing scale could not express it.

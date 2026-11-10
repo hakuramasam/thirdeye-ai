@@ -60,3 +60,11 @@ End every response with these four lines, in this order:
 2. `EVIDENCE:` `path:line` references you actually read, or `none` if you did not read a file.
 3. `PATCH:` the diff, or `none`.
 4. `VERIFY:` the exact commands or checks a human or CI must run to accept it.
+
+## Website copy and claims
+Every number on a page must trace to a measurement, a live endpoint or a dated catalogue read. State the date
+when you quote a catalogue, and prefer the billed figure from a real call over arithmetic on list prices,
+because list prices exclude the platform margin and understate what a user pays.
+
+Never invent social proof. No customer logos, no testimonial, no "trusted by" and no benchmark we did not run.
+If a claim is aspirational, it belongs in the roadmap, not in the hero.
