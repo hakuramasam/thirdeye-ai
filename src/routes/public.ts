@@ -26,9 +26,9 @@ const NAV: [string, string][] = [
 ]
 
 const CSS = `
-:root{--bg:#0a0b0d;--panel:#12151a;--line:#222831;--ink:#e8ecf1;--muted:#8d97a5;--accent:#4ade80;--warn:#fbbf24}
+:root{--bg:#050505;--panel:#121212;--line:#212121;--ink:#F9F9F9;--muted:#888888;--accent:#F9F9F9;--warn:#fbbf24}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 header{border-bottom:1px solid var(--line);background:#0d0f12}
 .wrap{max-width:940px;margin:0 auto;padding:0 20px}
@@ -66,7 +66,7 @@ function layout(title: string, active: string, body: string): string {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} · Thirdeye AI</title>
 <meta name="description" content="Thirdeye AI Platform: pay-per-call AI inference for users and agents.">
-<style>${CSS}</style></head><body>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"><style>${CSS}</style></head><body>
 <header><div class="wrap"><div class="brand">Thirdeye AI <span>pay-per-call inference</span></div><nav>${links}<a href="/">App</a></nav></div></header>
 <main><div class="wrap">${body}</div></main>
 <footer><div class="wrap">Public pages show what we choose to publish. Account balances, keys, partner terms and security findings are private and never rendered here.</div></footer>
