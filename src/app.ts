@@ -8,6 +8,7 @@ import { registerV1Routes } from './routes/v1.js'
 import { registerAuthRoutes } from './routes/auth.js'
 import { registerKeysRoutes } from './routes/keys.js'
 import { registerCreditsRoutes } from './routes/credits.js'
+import { registerRedeemRoutes } from './routes/redeem.js'
 import { registerAdminRoutes } from './routes/admin.js'
 import { registerInngestRoutes } from './routes/inngest.js'
 import { registerTelegramRoutes } from './routes/telegram.js'
@@ -51,6 +52,7 @@ app.get('/api/healthz', (c) => c.json({ ok: true, mode: dbMode(), time: new Date
 registerAuthRoutes(app)
 registerKeysRoutes(app)
 registerCreditsRoutes(app)
+registerRedeemRoutes(app)
 registerAdminRoutes(app)
 registerParagraphRoutes(app)
 registerTelegramRoutes(app)
