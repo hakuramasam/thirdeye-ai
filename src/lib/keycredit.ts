@@ -19,6 +19,20 @@ export function splitKeyCredit(keyCreditMicros: number, costMicros: number): { f
   return { fromKey, fromAccount: cost - fromKey }
 }
 
+/**
+ * Split an overcharge refund between the key and the account, mirroring splitKeyCredit.
+ *
+ * A stream reserves an estimate, then trues up to the real cost. When the estimate was high the
+ * difference must go back to whoever paid it: refunding the whole thing to the account credits
+ * money the account never spent, while the key stays overcharged. Key-credit refunds used to be
+ * lost this way, one micro at a time.
+ */
+export function refundSplit(overMicros: number, chargedFromKeyMicros: number): { toKey: number; toAccount: number } {
+  const over = Math.max(0, Math.floor(Number(overMicros) || 0))
+  const fromKey = Math.max(0, Math.min(Math.floor(Number(chargedFromKeyMicros) || 0), over))
+  return { toKey: fromKey, toAccount: over - fromKey }
+}
+
 export async function getKeyCreditMicros(keyId: string): Promise<number> {
   const r = await one('SELECT credit_usd_micros FROM api_keys WHERE id = $1', [keyId])
   return Number(r?.credit_usd_micros ?? 0)

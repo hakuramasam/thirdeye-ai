@@ -7,7 +7,7 @@ import { env, newId } from '../lib/env.js'
 import { apiKeyAuth } from '../lib/keys.js'
 import { computeCostMicros } from '../lib/pricing.js'
 import { chargeKeyBudget, checkKeyBudget } from '../lib/keybudget.js'
-import { chargeCall, getKeyCreditMicros } from '../lib/keycredit.js'
+import { chargeCall, creditKey, getKeyCreditMicros, refundSplit, splitKeyCredit } from '../lib/keycredit.js'
 import { adjustCredit } from '../lib/billing.js'
 import { checkAndConsume, refundSlot } from '../lib/ratelimit.js'
 import type { AppEnv } from '../lib/types.js'
@@ -160,6 +160,7 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
         }
 
         let reservedMicros = 0
+        let reservedFromKey = 0
 
         const [stream1, stream2] = upstreamRes.body.tee()
 
@@ -216,7 +217,11 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
                 allowNegative: await isCovered(user.wallet),
               })
             } else if (deltaMicros < 0) {
-              await adjustCredit(user.id, -deltaMicros, 'stream-trueup-refund')
+              // Refund along the same split the reserve used, or the key stays overcharged while
+              // the account is credited money it never spent.
+              const refund = refundSplit(-deltaMicros, reservedFromKey)
+              if (refund.toKey > 0) await creditKey(apiKey.id, refund.toKey)
+              if (refund.toAccount > 0) await adjustCredit(user.id, refund.toAccount, 'stream-trueup-refund')
             }
             if (costMicros > 0) await chargeKeyBudget(apiKey, costMicros)
             await recordUsage({
@@ -254,6 +259,8 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
         if (!providerCall.byok) {
           const est = normalizeUsage(null, { prompt: estTokens, completion: Number(body.max_tokens) || 120 })
           reservedMicros = computeCostMicrosDetailed(modelRow, est, env.platformMarginPct, false)
+          const keyCreditBeforeReserve = await getKeyCreditMicros(apiKey.id)
+          reservedFromKey = splitKeyCredit(keyCreditBeforeReserve, reservedMicros).fromKey
           if (reservedMicros > 0) {
             const res1 = await chargeCall(apiKey.id, user.id, reservedMicros, 'stream-reserve:' + newId(), {
               allowNegative: await isCovered(user.wallet),
