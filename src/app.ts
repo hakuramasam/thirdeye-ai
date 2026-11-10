@@ -20,6 +20,7 @@ import { registerFeedbackRoutes } from './routes/feedback.js'
 import { registerPublicRoutes } from './routes/public.js'
 import { registerAgentApiRoutes } from './routes/agentApi.js'
 import { registerPlaygroundRoutes } from './routes/playground.js'
+import { registerParagraphRoutes } from './routes/paragraph.js'
 
 const app = new Hono<AppEnv>()
 
@@ -51,6 +52,7 @@ registerAuthRoutes(app)
 registerKeysRoutes(app)
 registerCreditsRoutes(app)
 registerAdminRoutes(app)
+registerParagraphRoutes(app)
 registerTelegramRoutes(app)
 registerStatsRoutes(app)
 registerPartnerRoutes(app)
