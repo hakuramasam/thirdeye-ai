@@ -186,9 +186,9 @@ describe('PH2-001 audit log', () => {
   })
 
   it('keeps every declared event type reachable through the taxonomy', () => {
-    assert.equal(AUDIT_EVENT_TYPES.length, 22)
-    assert.equal(new Set(AUDIT_EVENT_TYPES).size, 22)
-    for (const t of ['run.created', 'run.cancelled', 'task.accepted', 'artifact.read', 'permission.changed', 'approval.rejected']) {
+    assert.equal(AUDIT_EVENT_TYPES.length, 23)
+    assert.equal(new Set(AUDIT_EVENT_TYPES).size, 23)
+    for (const t of ['run.created', 'run.cancelled', 'task.accepted', 'artifact.read', 'permission.changed', 'approval.rejected', 'stage.failed']) {
       assert.ok(AUDIT_EVENT_TYPES.includes(t as any), `${t} missing`)
     }
   })

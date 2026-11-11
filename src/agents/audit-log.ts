@@ -43,6 +43,7 @@ export type AuditEventType =
   | 'task.rejected'
   | 'stage.started'
   | 'stage.completed'
+  | 'stage.failed'
   | 'stage.skipped'
   | 'artifact.created'
   | 'artifact.updated'
@@ -67,6 +68,7 @@ export const AUDIT_EVENT_TYPES: AuditEventType[] = [
   'task.rejected',
   'stage.started',
   'stage.completed',
+  'stage.failed',
   'stage.skipped',
   'artifact.created',
   'artifact.updated',
@@ -368,15 +370,48 @@ export function recordTaskOutcome(
 
 export function recordStageTransition(
   ctx: AuditContext,
-  extra: { stageId: string; eventType: 'stage.started' | 'stage.completed' | 'stage.skipped'; reason?: string | null; metadata?: Record<string, unknown> }
+  extra: {
+    stageId: string
+    eventType: 'stage.started' | 'stage.completed' | 'stage.failed' | 'stage.skipped'
+    reason?: string | null
+    metadata?: Record<string, unknown>
+  }
 ): Promise<string | null> {
+  const status: AuditStatus =
+    extra.eventType === 'stage.started'
+      ? 'started'
+      : extra.eventType === 'stage.skipped'
+        ? 'skipped'
+        : extra.eventType === 'stage.failed'
+          ? 'failed'
+          : 'succeeded'
   return createAuditEvent({
     ...ctx,
     stageId: extra.stageId,
     eventType: extra.eventType,
-    status: extra.eventType === 'stage.started' ? 'started' : extra.eventType === 'stage.skipped' ? 'skipped' : 'succeeded',
+    status,
     metadata: { reason: extra.reason ?? null, ...(extra.metadata ?? {}) },
   })
+}
+
+/**
+ * The stage history of one correlation id, folded into counts.
+ *
+ * Read from the trail rather than stored in a cursor table: the append-only log is already the
+ * truth about what ran, so a second source of ordering could disagree with it. Deliberately
+ * narrow — stage events for this correlation only, no run or tool rows.
+ */
+export async function readStageLedger(correlationId: string): Promise<import('./pipeline.js').StageLedger> {
+  const { ledgerFrom } = await import('./pipeline.js')
+  const res = await query(
+    `SELECT stage_id, event_type FROM agent_audit_events
+      WHERE correlation_id = $1 AND stage_id IS NOT NULL
+        AND event_type IN ('stage.started','stage.completed','stage.failed','stage.skipped')
+      ORDER BY insert_seq ASC
+      LIMIT 1000`,
+    [correlationId]
+  )
+  return ledgerFrom(res.rows as any[])
 }
 
 export function recordToolInvocation(
