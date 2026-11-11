@@ -102,7 +102,15 @@ export type RunnerDeps = {
   /** Injectable for tests; default resolves via the provider layer. */
   llm?: { call(params: Record<string, any>): Promise<LlmResult> }
   mcpTools?: McpTools
+  /**
+   * Internal: counters handed in by `runAgent` so the crash path can still write what the run
+   * actually did. Set by the caller of `runAgent`, never by a feature.
+   */
+  progress?: RunProgress
 }
+
+/** Live per-run counters, shared between the body and the crash path. */
+export type RunProgress = { toolCalls: number; spendUsdMicros: number }
 
 export type RunResult = {
   runId: string
@@ -205,14 +213,22 @@ export async function runAgent(
 ): Promise<RunResult> {
   const runId = deps.runId || randomUUID()
   const correlationId = deps.correlationId || newCorrelationId()
+  /**
+   * The run's own counters, owned here rather than inside the body: a throw skips `finish()`,
+   * and that used to close the run as error with spend and tool_calls still at zero even though
+   * the steps had already been paid for out of the agent's pot. The two numbers are the only
+   * record of what a crashed run cost, so they have to survive the throw.
+   */
+  const progress: RunProgress = { toolCalls: 0, spendUsdMicros: 0 }
   try {
-    return await runAgentInner(agent, input, user, { ...deps, runId, correlationId })
+    return await runAgentInner(agent, input, user, { ...deps, runId, correlationId, progress })
   } catch (e: any) {
     const message = String(e?.message || e).slice(0, 500)
     try {
       await query(
-        `UPDATE agent_runs SET status='error', error=$1 WHERE id=$2 AND status='running'`,
-        [`uncaught: ${message}`, runId]
+        `UPDATE agent_runs SET status='error', error=$1, tool_calls=$2, spend_usd_micros=$3
+          WHERE id=$4 AND status='running'`,
+        [`uncaught: ${message}`, progress.toolCalls, progress.spendUsdMicros, runId]
       )
       await query(`UPDATE agents SET last_run_at = now() WHERE id = $1`, [agent.id])
     } catch {
@@ -235,7 +251,14 @@ export async function runAgent(
     } catch {
       /* an audit note is best effort on the crash path too: the caller still gets the error */
     }
-    return { runId, status: 'error', output: null, tool_calls: 0, spend_usd_micros: 0, error: `uncaught: ${message}` }
+    return {
+      runId,
+      status: 'error',
+      output: null,
+      tool_calls: progress.toolCalls,
+      spend_usd_micros: progress.spendUsdMicros,
+      error: `uncaught: ${message}`,
+    }
   }
 }
 
@@ -368,11 +391,18 @@ async function runAgentInner(
     return { runId, status, output, tool_calls: toolCalls, spend_usd_micros: spend, error, ...(artifact ? { artifact } : {}) }
   }
 
-  // Resolve model + LLM.
+  // Resolve model + LLM. The catalogue row is resolved even when a model is injected, because it
+  // is what prices each step: without it the run cannot record what it spent, which is exactly the
+  // hole the crash path below was fixed to close. An injected model whose id is not in the
+  // catalogue still prices at zero, so nothing changes for the existing tests.
   let modelRow: ModelRow | null = null
   let llm = deps.llm
-  if (!llm) {
+  try {
     modelRow = await getModelRow(agent.model)
+  } catch {
+    modelRow = null
+  }
+  if (!llm) {
     if (!modelRow) return finish('error', null, 0, 0, `Model '${agent.model}' not found in catalog`)
     const { resolveProvider } = await import('../providers/index.js')
     const provider = await resolveProvider(user, modelRow)
@@ -405,6 +435,7 @@ async function runAgentInner(
       { role: 'user', content: input },
     ]
     const useTools = tools.length > 0
+    const progress: RunProgress = deps.progress ?? { toolCalls: 0, spendUsdMicros: 0 }
     let spend = 0
     let toolCalls = 0
     let byok = false
@@ -435,6 +466,7 @@ async function runAgentInner(
           return await finish('error', null, toolCalls, spend, 'Insufficient credits. Top up with USDC (Base) or USDG (Robinhood Chain) on the Deposit page.')
         }
         spend += cost
+        progress.spendUsdMicros = spend
         if (spend > budget) {
           return await finish('error', null, toolCalls, spend, 'Budget exceeded')
         }
@@ -490,6 +522,7 @@ async function runAgentInner(
                 }
                 if (r.spentUsdMicros > 0) {
                   spend += r.spentUsdMicros
+                  progress.spendUsdMicros = spend
                   if (spend > budget) {
                     return await finish('error', null, toolCalls, spend, 'Budget exceeded (x402 payments counted)')
                   }
@@ -678,6 +711,13 @@ async function runAgentInner(
             result = `Tool error: ${String(e?.message || e).slice(0, 300)}`
           }
           toolCalls++
+          progress.toolCalls = toolCalls
+          // One verdict per call, used by both the run history and the audit trail. It is stated
+          // here rather than guessed from the result text downstream: a successful delegation
+          // carries the note "[write withheld]" when no write authority was granted, and the
+          // text heuristic in logRunEvent read that as a refused call.
+          const callRefused = Boolean(denied)
+          const callOk = !callRefused && !/^(Tool error|Unknown tool|Tool unavailable)/.test(String(result ?? ''))
           // Per-call history. Best-effort: a logging failure must never fail a run the user paid for.
           try {
             await logRunEvent({
@@ -685,6 +725,8 @@ async function runAgentInner(
               agentId: agent.id,
               seq: toolCalls,
               tool: tc.function.name,
+              ok: callOk,
+              refused: callRefused,
               argsExcerpt: String(tc.function.arguments ?? ''),
               resultExcerpt: String(result ?? ''),
             })
@@ -692,8 +734,8 @@ async function runAgentInner(
           try {
             await recordToolInvocation(audit, {
               tool: tc.function.name,
-              ok: !denied && !/^(Tool error|Unknown tool|Tool unavailable)/.test(String(result ?? '')),
-              refused: Boolean(denied),
+              ok: callOk,
+              refused: callRefused,
               argsExcerpt: String(tc.function.arguments ?? ''),
               resultExcerpt: String(result ?? ''),
               metadata: { seq: toolCalls, ...(denied ? { denial_reason: denied } : {}) },
