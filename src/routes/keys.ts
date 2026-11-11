@@ -10,7 +10,7 @@ export function registerKeysRoutes(app: SessionApp): void {
   app.get('/api/keys', requireUser, async (c) => {
     const user = c.get('user')!
     const res = await query(
-      `SELECT id, name, key_prefix AS prefix, key_prefix, rpm, tpm, created_at, revoked_at, credit_usd_micros,
+      `SELECT id, name, key_prefix AS prefix, key_prefix, rpm, tpm, scope, created_at, revoked_at, credit_usd_micros,
               budget_usd_micros, period_start, period_spent_usd_micros
        FROM api_keys
        WHERE user_id = $1
@@ -24,6 +24,7 @@ export function registerKeysRoutes(app: SessionApp): void {
       key_prefix: r.key_prefix,
       rpm: Number(r.rpm),
       tpm: Number(r.tpm),
+      scope: r.scope ?? 'api',
       budget_usd_micros: r.budget_usd_micros == null ? null : Number(r.budget_usd_micros),
       period_start: r.period_start,
       period_spent_usd_micros: Number(r.period_spent_usd_micros ?? 0),
@@ -56,6 +57,10 @@ export function registerKeysRoutes(app: SessionApp): void {
         400
       )
     }
+
+    // 'antseed' keys are the marketplace relay: they only work on /api/antseed/* and never on the
+    // general gateway. Default is the normal gateway key.
+    const scope = body?.scope === 'antseed' ? 'antseed' : 'api'
 
     const rpm = body?.rpm !== undefined ? Number(body.rpm) : 60
     const tpm = body?.tpm !== undefined ? Number(body.tpm) : 250000
@@ -124,7 +129,7 @@ export function registerKeysRoutes(app: SessionApp): void {
       )
     }
 
-    const { secret, row } = await createApiKey(user.id, name, rpm, tpm, budgetUsdMicros)
+    const { secret, row } = await createApiKey(user.id, name, rpm, tpm, budgetUsdMicros, scope)
     const formattedRow = {
       id: row.id,
       name: row.name,
@@ -132,6 +137,7 @@ export function registerKeysRoutes(app: SessionApp): void {
       key_prefix: row.key_prefix,
       rpm: Number(row.rpm),
       tpm: Number(row.tpm),
+      scope: row.scope ?? 'api',
       budget_usd_micros: row.budget_usd_micros == null ? null : Number(row.budget_usd_micros),
       period_start: row.period_start,
       period_spent_usd_micros: Number(row.period_spent_usd_micros ?? 0),
