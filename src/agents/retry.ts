@@ -52,9 +52,13 @@ export async function callWithRateLimitRetry<T>(fn: () => Promise<T>, opts: Retr
       const wait = retryDelayMs(message) ?? 5_000
       const budgetLeft = totalWaitMs - waited
       const deadlineLeft = opts.deadlineMs == null ? Infinity : opts.deadlineMs - Date.now()
-      if (wait > Math.min(budgetLeft, deadlineLeft)) throw e
+      // Written as "not provably inside" rather than "outside" so a NaN budget or deadline
+      // refuses the wait instead of disabling both caps silently.
+      if (!(wait <= Math.min(budgetLeft, deadlineLeft))) throw e
       waited += wait
       await sleep(wait)
+      // A sleep can resolve late. Never issue another provider call on a deadline already spent.
+      if (!(Date.now() < (opts.deadlineMs ?? Infinity))) throw e
     }
   }
 }

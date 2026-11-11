@@ -23,7 +23,7 @@ export class UpstreamError extends Error {
 export type ProviderCall = {
   model: ModelRow
   byok: boolean
-  call(params: Record<string, any>): Promise<{
+  call(params: Record<string, any>, opts?: { timeoutMs?: number }): Promise<{
     content: string
     prompt_tokens: number
     completion_tokens: number
@@ -124,7 +124,7 @@ export async function resolveProvider(user: UserRow, model: ModelRow): Promise<P
   return {
     model,
     byok,
-    async call(params: Record<string, any>) {
+    async call(params: Record<string, any>, opts?: { timeoutMs?: number }) {
       const p = { ...params, model: model.upstream_model }
       if (model.provider === 'mock') {
         return callMockChat(p)
@@ -132,7 +132,7 @@ export async function resolveProvider(user: UserRow, model: ModelRow): Promise<P
       if (model.provider === 'anthropic') {
         return callAnthropicChat({ apiKey, params: p })
       }
-      return callOpenAIChat({ baseUrl: model.base_url, apiKey, params: p })
+      return callOpenAIChat({ baseUrl: model.base_url, apiKey, params: p, timeoutMs: opts?.timeoutMs })
     },
     async stream(params: Record<string, any>) {
       const p = { ...params, model: model.upstream_model }
