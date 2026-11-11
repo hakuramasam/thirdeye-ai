@@ -19,6 +19,7 @@ import { REPO_WRITE_TOOL, runRepoWrite } from './repo-write.js'
 import { logRunEvent } from './monitor.js'
 import {
   newCorrelationId,
+  createAuditEvent,
   recordRunEvent,
   recordRunCompleted,
   recordRunFailed,
@@ -30,6 +31,14 @@ import {
   type AuditContext,
 } from './audit-log.js'
 import { planForPipeline } from './pipeline.js'
+import {
+  storeArtifact,
+  describeArtifact,
+  kindForStage,
+  readArtifactWindow,
+  MAX_ARTIFACT_READ_CHARS,
+  type StoredArtifact,
+} from './artifacts.js'
 import { assertPublicUrl } from '../lib/ssrf.js'
 import { verifyPayment, txHashFrom } from '../lib/partnerVerify.js'
 import type { ModelRow } from '../lib/pricing.js'
@@ -102,6 +111,11 @@ export type RunResult = {
   error: string | null
   /** True when this call did not run anything because the run id was already used. */
   replayed?: boolean
+  /**
+   * Address of this run's output in the artifact registry (PH2-003). Present on a successful run
+   * that produced text, so a caller hands on an address instead of a truncated copy.
+   */
+  artifact?: StoredArtifact
 }
 
 const MAX_DELEGATION_DEPTH = 3
@@ -131,6 +145,29 @@ const DELEGATE_TOOL = {
         },
       },
       required: ['agent', 'task'],
+    },
+  },
+}
+
+/**
+ * Reading a handoff by address. Available to every agent, because a handoff arrives from a
+ * teammate and the whole point of the registry is that the reader can fetch the bytes itself
+ * instead of trusting a summary. No spend, so it is not gated on x402 or repo authority.
+ */
+const READ_ARTIFACT_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'read_artifact',
+    description:
+      'Read an artifact a teammate stored, by address (art_...). Use it when a report tells you the full document lives at an address. Returns the text from offset, up to the character cap, and tells you the next offset when there is more.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Artifact address, e.g. art_3f9c1a2b4d5e6f7a8b9c' },
+        offset: { type: 'number', description: 'Character offset to start from. Default 0.' },
+        limit: { type: 'number', description: `How many characters to return. Default and maximum ${MAX_ARTIFACT_READ_CHARS}.` },
+      },
+      required: ['id'],
     },
   },
 }
@@ -259,6 +296,40 @@ async function runAgentInner(
       `UPDATE agent_runs SET status=$1, output=$2, tool_calls=$3, spend_usd_micros=$4, error=$5 WHERE id=$6`,
       [status, output, toolCalls, spend, error, runId]
     )
+    /**
+     * Address the output before anything hands it on (PH2-003). A store failure must not turn a
+     * finished run into a failed one, and it must not be silent either: the run record keeps the
+     * text, and the audit trail gets a row saying the registry refused it.
+     */
+    let artifact: StoredArtifact | undefined
+    if (status === 'success' && output && output.trim()) {
+      try {
+        artifact = await storeArtifact(
+          {
+            userId: user.id,
+            kind: kindForStage(deps.pipelineId, deps.stageId),
+            content: output,
+            title: `${agent.name}: ${kindForStage(deps.pipelineId, deps.stageId)}${deps.stageId ? ` (${deps.stageId})` : ''}`,
+            correlationId,
+            runId,
+            parentRunId: deps.parentRunId ?? null,
+            taskId: deps.taskId ?? null,
+            pipelineId: deps.pipelineId ?? null,
+            stageId: deps.stageId ?? null,
+            createdBy: agent.name,
+            metadata: { steps: toolCalls, model: agent.model },
+          },
+          audit
+        )
+      } catch (e: any) {
+        await createAuditEvent({
+          ...audit,
+          eventType: 'run.completed',
+          status: 'succeeded',
+          metadata: { artifact_store_failed: true, reason: String(e?.message ?? e).slice(0, 300) },
+        }).catch(() => null)
+      }
+    }
     await query(`UPDATE agents SET last_run_at = now() WHERE id = $1`, [agent.id])
     // Bounded await, not fire-and-forget. A serverless function stops the moment the response
     // is returned, so an un-awaited export never leaves the process. The race keeps the run
@@ -292,7 +363,7 @@ async function runAgentInner(
         spendMicros: spend,
       })
     }
-    return { runId, status, output, tool_calls: toolCalls, spend_usd_micros: spend, error }
+    return { runId, status, output, tool_calls: toolCalls, spend_usd_micros: spend, error, ...(artifact ? { artifact } : {}) }
   }
 
   // Resolve model + LLM.
@@ -316,6 +387,8 @@ async function runAgentInner(
   }
 
   const tools = [...(mcpTools?.tools ?? [])]
+  // Every agent may read an artifact handed to it, including one delegated to by an orchestrator.
+  tools.push(READ_ARTIFACT_TOOL)
   if ((agent as any).can_delegate) tools.push(DELEGATE_TOOL)
   if (agent.x402_enabled) tools.push(HTTP_FETCH_TOOL)
   // Write is granted per run, not per agent row: an orchestrator may hand one task write
@@ -541,8 +614,16 @@ async function runAgentInner(
                       childRun.status === 'success' ? 'task.completed' : 'task.rejected',
                       { taskId: taskDoc.task_id, metadata: { child_run_id: childRun.runId, write_granted: granted } }
                     )
+                    /** Inline head stays short; the rest is addressable, so nothing is lost. */
+                    const HANDOFF_HEAD = 1200
                     result = `REPORT from ${child.name} (status ${childRun.status})` +
-                      (childRun.output ? `: ${String(childRun.output).slice(0, MAX_TOOL_RESULT_CHARS)}` : '') +
+                      (childRun.artifact
+                        ? ` [artifact ${describeArtifact(childRun.artifact)}: full text at that address, read it with read_artifact if you need more than this head]`
+                        : '') +
+                      (childRun.output
+                        ? `: ${String(childRun.output).slice(0, childRun.artifact ? HANDOFF_HEAD : MAX_TOOL_RESULT_CHARS)}` +
+                          (childRun.artifact && String(childRun.output).length > HANDOFF_HEAD ? ' …' : '')
+                        : '') +
                       (childRun.error ? ` error: ${String(childRun.error).slice(0, 400)}` : '') +
                       ` [spend ${childRun.spend_usd_micros ?? 0} micros]` +
                       (granted ? ' [write granted for this task]' : ' [write withheld]')

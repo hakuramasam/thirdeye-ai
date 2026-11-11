@@ -526,6 +526,35 @@ CREATE INDEX IF NOT EXISTS idx_audit_run ON agent_audit_events(run_id, created_a
 CREATE INDEX IF NOT EXISTS idx_audit_parent_run ON agent_audit_events(parent_run_id);
 CREATE INDEX IF NOT EXISTS idx_audit_task ON agent_audit_events(task_id);
 CREATE INDEX IF NOT EXISTS idx_audit_type_time ON agent_audit_events(event_type, created_at DESC);
+
+-- Addressable artifacts (PH2-003). A handoff used to be prose inside a report, so it lost
+-- fidelity at every hop; now the producer stores the document once and the handoff carries an
+-- address. Content is hashed so an identical retry of the same stage stores nothing new.
+CREATE TABLE IF NOT EXISTS agent_artifacts (
+  id             text PRIMARY KEY,                       -- art_<20 hex>; appears in prompts and trails
+  user_id        text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  correlation_id text NOT NULL,                          -- the chain that produced it
+  run_id         text,                                   -- the run that wrote this version
+  parent_run_id  text,
+  task_id        text,
+  pipeline_id    text,
+  stage_id       text,
+  kind           text NOT NULL,                          -- stage.produces, or 'report' when free-form
+  title          text NOT NULL DEFAULT '',
+  content        text NOT NULL,
+  content_sha256 text NOT NULL,
+  version        integer NOT NULL DEFAULT 1,
+  bytes          integer NOT NULL DEFAULT 0,
+  created_by     text,                                   -- agent name
+  metadata       jsonb NOT NULL DEFAULT '{}',
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_artifacts_correlation ON agent_artifacts(correlation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_artifacts_task ON agent_artifacts(task_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_owner_kind ON agent_artifacts(user_id, kind, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_sha_unique
+  ON agent_artifacts(user_id, correlation_id, kind, COALESCE(stage_id, ''), content_sha256);
+
 ALTER TABLE agent_audit_events ADD COLUMN IF NOT EXISTS insert_seq bigserial;
 
 CREATE OR REPLACE FUNCTION agent_audit_events_append_only() RETURNS trigger AS $$
