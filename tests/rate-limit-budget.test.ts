@@ -151,3 +151,95 @@ describe('a run that hits the meter', () => {
     assert.equal(errorCodeFrom(row.error), 'rate_limited')
   })
 })
+
+describe('the invocation ceiling, not just the wait', () => {
+  it('a NaN budget refuses the wait instead of disabling both caps', async () => {
+    let calls = 0
+    await assert.rejects(
+      () =>
+        callWithRateLimitRetry(
+          async () => {
+            calls++
+            throw new Error(GROQ_FREE_TIER)
+          },
+          { totalWaitMs: Number.NaN, sleep: async () => {} }
+        ),
+      /Rate limit/
+    )
+    assert.equal(calls, 1, 'an unusable budget must not turn into an unlimited one')
+  })
+
+  it('a sleep that resolves past the deadline does not issue another call', async () => {
+    let calls = 0
+    await assert.rejects(
+      () =>
+        callWithRateLimitRetry(
+          async () => {
+            calls++
+            throw new Error('Rate limit reached. Please try again in 0.01s.')
+          },
+          {
+            attempts: 5,
+            totalWaitMs: 60_000,
+            deadlineMs: Date.now() + 400,
+            sleep: () => new Promise<void>((r) => setTimeout(r, 450)),
+          }
+        ),
+      /Rate limit/
+    )
+    assert.equal(calls, 1, 'the wait overshot the deadline, so the retry must not happen')
+  })
+
+  it('a run with no time left records deadline_exceeded instead of calling the model', async () => {
+    const { runAgent } = await import('../src/agents/runner.js')
+    const { query } = await import('../src/db/index.js')
+    const { randomUUID } = await import('node:crypto')
+    const { migrate, one } = await import('../src/db/index.js')
+    await migrate()
+    const wallet = `0x${randomUUID().replace(/-/g, '').padEnd(40, 'b').slice(0, 40)}`
+    const userId = randomUUID()
+    await query(`INSERT INTO users (id, wallet, role) VALUES ($1, $2, 'user')`, [userId, wallet])
+    const agent = await one(
+      `INSERT INTO agents (id, user_id, name, system_prompt, model, can_delegate, repo_access, budget_usd_micros, max_steps)
+       VALUES ($1, $2, 'HERMES', 'coordinate', 'stub-model', false, 'none', 100000, 2) RETURNING *`,
+      [`tdt_dl_${randomUUID().slice(0, 6)}`, userId]
+    )
+    const user = { id: userId, wallet, role: 'user', created_at: new Date().toISOString() }
+    let called = 0
+    const res = await runAgent(agent, 'do the day', user as any, {
+      llm: { call: async () => { called++; return { content: 'x', prompt_tokens: 1, completion_tokens: 1 } } },
+      deadlineMs: Date.now() - 1,
+    })
+    assert.equal(called, 0, 'a call with no time left must not be started')
+    assert.equal(res.status, 'error')
+    assert.match(String(res.error), /^deadline_exceeded:/)
+    assert.equal(errorCodeFrom(res.error), 'deadline_exceeded')
+  })
+
+  it('a refused run is audited with its own error code', async () => {
+    const { runAgent } = await import('../src/agents/runner.js')
+    const { migrate, one, query } = await import('../src/db/index.js')
+    const { randomUUID } = await import('node:crypto')
+    await migrate()
+    const wallet = `0x${randomUUID().replace(/-/g, '').padEnd(40, 'c').slice(0, 40)}`
+    const userId = randomUUID()
+    await query(`INSERT INTO users (id, wallet, role) VALUES ($1, $2, 'user')`, [userId, wallet])
+    const agent = await one(
+      `INSERT INTO agents (id, user_id, name, system_prompt, model, can_delegate, repo_access, budget_usd_micros, max_steps)
+       VALUES ($1, $2, 'HERMES', 'coordinate', 'stub-model', false, 'none', 100000, 2) RETURNING *`,
+      [`tdt_audit_${randomUUID().slice(0, 6)}`, userId]
+    )
+    const user = { id: userId, wallet, role: 'user', created_at: new Date().toISOString() }
+    const res = await runAgent(agent, 'do the day', user as any, {
+      llm: { call: async () => { throw new Error(GROQ_FREE_TIER) } },
+      retryWaitMs: 1_000,
+    })
+    assert.equal(res.rateLimited, true)
+    const events = await query(
+      `SELECT event_type, status, error_code FROM agent_audit_events WHERE run_id = $1 ORDER BY insert_seq`,
+      [res.runId]
+    )
+    const codes = events.rows.map((r: any) => r.error_code).filter(Boolean)
+    assert.ok(codes.includes('rate_limited'), `expected a rate_limited audit event, got ${JSON.stringify(codes)}`)
+  })
+})

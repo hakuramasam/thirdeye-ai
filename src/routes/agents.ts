@@ -334,6 +334,9 @@ export function registerCronRoute(app: SessionApp): void {
     const results: any[] = []
     const skipped: any[] = []
     const now = new Date()
+    // Every agent in this tick shares one invocation ceiling: several runs in sequence must not
+    // each claim the whole function lifetime, or the last one is killed before it can record.
+    const tickDeadline = Date.now() + env.agentRunCeilingMs
     const slot = cronSlotKey(now)
     for (const row of res.rows as AgentRow[]) {
       let due = false
@@ -365,7 +368,7 @@ export function registerCronRoute(app: SessionApp): void {
           results.push({ agent_id: row.id, status: 'error', error: 'owner not found' })
           continue
         }
-        const r = await runAgent(row, scheduledBrief(now), user, { runId: lock.runId })
+        const r = await runAgent(row, scheduledBrief(now), user, { runId: lock.runId, deadlineMs: tickDeadline })
         await finishScheduleLock(lock.id, lock.runId, r.status === 'success' ? 'COMPLETED' : 'FAILED', {
           spend_usd_micros: r.spend_usd_micros,
         })

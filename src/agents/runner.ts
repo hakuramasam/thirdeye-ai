@@ -100,11 +100,24 @@ export type RunnerDeps = {
   pipelineId?: string
   stageId?: string
   /** Injectable for tests; default resolves via the provider layer. */
-  llm?: { call(params: Record<string, any>): Promise<LlmResult> }
+  llm?: { call(params: Record<string, any>, opts?: { timeoutMs?: number }): Promise<LlmResult> }
   /** Override the rate-limit wait budget (tests use a few milliseconds instead of 50s). */
   retryWaitMs?: number
+  /**
+   * Hard ceiling for the whole invocation (epoch ms), shared by everything a cron tick runs.
+   * Several agents run in sequence inside one 60s function, so a per-run window alone can push
+   * the tick past the platform limit.
+   */
+  deadlineMs?: number
   mcpTools?: McpTools
 }
+
+/**
+ * Time kept back from the invocation ceiling to write the run row, the audit event and the
+ * response. Without it a run that spends every second on waiting has nothing left to record
+ * anything, and the platform kills it mid-answer.
+ */
+export const FINALIZE_RESERVE_MS = 5_000
 
 export type RunResult = {
   runId: string
@@ -219,7 +232,12 @@ export async function runAgent(
     // A provider meter refusal is not a defect in our code: it means the work is owed, not done.
     // Naming it separately keeps the run row honest and tells the cron caller the slot must retry.
     const rateLimited = isRateLimitError(message)
-    const stored = rateLimited ? `rate_limited: ${message}` : `uncaught: ${message}`
+    const timedOut = /timed out after|^deadline_exceeded/i.test(message)
+    const stored = rateLimited
+      ? `rate_limited: ${message}`
+      : timedOut
+        ? `deadline_exceeded: ${message.replace(/^deadline_exceeded:\s*/, '')}`
+        : `uncaught: ${message}`
     try {
       await query(
         `UPDATE agent_runs SET status='error', error=$1 WHERE id=$2 AND status='running'`,
@@ -241,7 +259,10 @@ export async function runAgent(
           pipelineId: deps.pipelineId ?? null,
           stageId: deps.stageId ?? null,
         },
-        { errorCode: rateLimited ? 'rate_limited' : 'uncaught_exception', errorSummary: message }
+        {
+          errorCode: rateLimited ? 'rate_limited' : timedOut ? 'deadline_exceeded' : 'uncaught_exception',
+          errorSummary: message,
+        }
       )
     } catch {
       /* an audit note is best effort on the crash path too: the caller still gets the error */
@@ -434,16 +455,27 @@ async function runAgentInner(
 
     // One budget for the whole run, not one per step: a router that waits 50s on step one and
     // 50s again on step two would be killed by the platform mid-answer and record nothing.
+    // The ceiling is anchored at the run's start (model resolution and MCP setup are charged to
+    // it) and shrunk by the finalization reserve, so a wait followed by a slow answer still leaves
+    // time to write the run row and the audit event.
     const retryWaitMs = deps.retryWaitMs ?? env.agentRetryWaitMs
-    const retryDeadline = Date.now() + retryWaitMs
+    const hardCeiling = Math.min(startedAt + env.agentRunCeilingMs, deps.deadlineMs ?? Infinity)
+    const lastUsefulMoment = hardCeiling - FINALIZE_RESERVE_MS
+    const retryDeadline = Math.min(startedAt + retryWaitMs, lastUsefulMoment)
 
     for (let step = 0; step < maxSteps; step++) {
       // A free-tier meter can refuse a step that would have succeeded seconds later, and a
       // scheduled run has nobody to retry it. Wait out only what the provider told us to.
-      const res = await callWithRateLimitRetry(() => llm!.call(useTools ? { messages, tools } : { messages }), {
-        totalWaitMs: retryWaitMs,
-        deadlineMs: retryDeadline,
-      })
+      // The call itself is bounded too, because a deadline that only limits sleeps still lets a
+      // slow provider response run past the platform's kill.
+      const callMs = lastUsefulMoment - Date.now()
+      if (!(callMs > 0)) {
+        throw new Error('deadline_exceeded: no time left in this invocation to call the model')
+      }
+      const res = await callWithRateLimitRetry(
+        () => llm!.call(useTools ? { messages, tools } : { messages }, { timeoutMs: callMs }),
+        { totalWaitMs: retryWaitMs, deadlineMs: retryDeadline }
+      )
       const cost =
         modelRow != null
           ? computeCostMicros(modelRow, res.prompt_tokens, res.completion_tokens, env.platformMarginPct, byok)
@@ -744,6 +776,7 @@ async function runAgentInner(
 export function errorCodeFrom(message?: string | null): string {
   const m = String(message ?? '')
   if (/rate_limited:|rate limit|\b429\b|too many requests/i.test(m)) return 'rate_limited'
+  if (/deadline_exceeded|timed out after/i.test(m)) return 'deadline_exceeded'
   if (/insufficient credits/i.test(m)) return 'insufficient_credits'
   if (/budget exceeded/i.test(m)) return 'budget_exceeded'
   if (/max steps/i.test(m)) return 'max_steps'

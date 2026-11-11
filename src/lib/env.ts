@@ -4,6 +4,17 @@ import { validateSecrets, type SecretProblem } from './security.js'
 /** Central typed config. Everything optional for dev/demo; set in production. */
 const num = (v: string | undefined, d: number) => (v == null || v === '' ? d : Number(v))
 
+/**
+ * A millisecond setting that must stay usable. NaN and negative values would otherwise reach the
+ * retry guards, where "wait > NaN" is false and the caps quietly stop working, so an unusable
+ * value falls back to the default instead of disabling a guard.
+ */
+export const msSetting = (v: string | undefined, d: number): number => {
+  if (v == null || v === '') return d
+  const n = Number(v)
+  return Number.isFinite(n) && n >= 0 ? n : d
+}
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   port: num(process.env.PORT, 8787),
@@ -67,7 +78,13 @@ export const env = {
    * How long one agent run may spend waiting out provider rate limits, in total across its steps.
    * The function ceiling is 60s, so the default leaves room to record the run and respond.
    */
-  agentRetryWaitMs: num(process.env.AGENT_RETRY_WAIT_MS, 50_000),
+  agentRetryWaitMs: msSetting(process.env.AGENT_RETRY_WAIT_MS, 50_000),
+
+  /**
+   * The invocation ceiling a run plans against. The platform kills the function at 60s, so work
+   * (including provider calls) must be finished with time left to record the run and audit it.
+   */
+  agentRunCeilingMs: msSetting(process.env.AGENT_RUN_CEILING_MS, 60_000),
 
   /** Hosts allowed to be private for MCP/HTTP egress (comma separated). Empty by default. */
   mcpAllowedHosts: (process.env.MCP_ALLOWED_HOSTS || '')
