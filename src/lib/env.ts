@@ -9,7 +9,14 @@ export const env = {
   port: num(process.env.PORT, 8787),
   isServerless: !!process.env.VERCEL,
 
-  databaseUrl: process.env.DATABASE_URL || '',
+  /**
+   * PREVIEW_DATABASE_URL exists because DATABASE_URL could not be split per target:
+   * a preview-scoped DATABASE_URL is set in the Vercel project and still does not reach
+   * the preview runtime, which keeps booting against the production database. A separate
+   * name is honoured, so a preview that sets it talks to a Neon branch and can never
+   * write live rows. Unset in production, so production behaviour is unchanged.
+   */
+  databaseUrl: process.env.PREVIEW_DATABASE_URL || process.env.DATABASE_URL || '',
   pgliteDir: process.env.PGLITE_DIR ?? (process.env.VERCEL ? 'memory://' : '.data/thirdeye'),
 
   sessionSecret: process.env.SESSION_SECRET || 'thirdeye-dev-session-secret',
