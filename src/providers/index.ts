@@ -20,6 +20,25 @@ export class UpstreamError extends Error {
   }
 }
 
+/**
+ * A timeout for one upstream request. AbortSignal.timeout needs a positive integer, and a
+ * fractional or tiny value would throw a RangeError before the request is even sent, which would
+ * be recorded as a crash instead of a deadline.
+ */
+export function requestSignal(timeoutMs?: number): AbortSignal | undefined {
+  if (!timeoutMs || !Number.isFinite(timeoutMs)) return undefined
+  return AbortSignal.timeout(Math.max(1, Math.floor(timeoutMs)))
+}
+
+/** Map an aborted request to a named 504 so the run records "timed out" and not a mystery. */
+export function mapTimeoutError(e: any, timeoutMs?: number): never {
+  if (e?.name === 'TimeoutError' || e?.name === 'AbortError') {
+    const message = `provider call timed out after ${Math.floor(Number(timeoutMs) || 0)}ms`
+    throw new UpstreamError(message, 504, { error: { message, type: 'timeout', code: 504 } })
+  }
+  throw e
+}
+
 export type ProviderCall = {
   model: ModelRow
   byok: boolean
@@ -130,7 +149,7 @@ export async function resolveProvider(user: UserRow, model: ModelRow): Promise<P
         return callMockChat(p)
       }
       if (model.provider === 'anthropic') {
-        return callAnthropicChat({ apiKey, params: p })
+        return callAnthropicChat({ apiKey, params: p, timeoutMs: opts?.timeoutMs })
       }
       return callOpenAIChat({ baseUrl: model.base_url, apiKey, params: p, timeoutMs: opts?.timeoutMs })
     },

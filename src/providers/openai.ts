@@ -1,4 +1,4 @@
-import { UpstreamError } from './index.js'
+import { UpstreamError, mapTimeoutError, requestSignal } from './index.js'
 
 function buildEndpoint(baseUrl?: string | null): string {
   const base = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
@@ -36,17 +36,12 @@ export async function callOpenAIChat({
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({ ...params, stream: false }),
-      ...(timeoutMs && timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+      ...(requestSignal(timeoutMs) ? { signal: requestSignal(timeoutMs)! } : {}),
     })
   } catch (e: any) {
     // An aborted call is our own deadline, not an upstream verdict: name it so the run records
     // "timed out" rather than an empty network error nobody can diagnose.
-    if (e?.name === 'TimeoutError' || e?.name === 'AbortError') {
-      throw new UpstreamError(`provider call timed out after ${timeoutMs}ms`, 504, {
-        error: { message: `provider call timed out after ${timeoutMs}ms`, type: 'timeout', code: 504 },
-      })
-    }
-    throw e
+    mapTimeoutError(e, timeoutMs)
   }
 
   if (!res.ok) {
@@ -55,7 +50,14 @@ export async function callOpenAIChat({
     throw new UpstreamError(msg, res.status, errBody || { error: { message: msg, type: 'upstream', code: res.status } })
   }
 
-  const data: any = await res.json()
+  // The body read can abort after the headers arrived, so it needs the same mapping as the fetch:
+  // otherwise a deadline lands as `uncaught_exception` instead of `deadline_exceeded`.
+  let data: any
+  try {
+    data = await res.json()
+  } catch (e: any) {
+    mapTimeoutError(e, timeoutMs)
+  }
   const choice = data.choices?.[0]
   const message = choice?.message ?? {}
   const content = message.content ?? ''
