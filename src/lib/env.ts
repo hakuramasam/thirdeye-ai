@@ -1,5 +1,5 @@
 import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'node:crypto'
-import { validateSecrets } from './security.js'
+import { validateSecrets, type SecretProblem } from './security.js'
 
 /** Central typed config. Everything optional for dev/demo; set in production. */
 const num = (v: string | undefined, d: number) => (v == null || v === '' ? d : Number(v))
@@ -177,16 +177,16 @@ export function reencryptSecret(payload: string): { plain: string; ciphertext: s
 }
 
 
-// Fail closed: a production boot with a development or short secret is refused outright
-// rather than serving forgeable sessions.
-const secretProblems = validateSecrets({
+// Fail closed, but legibly: a production boot with a development or short secret still refuses
+// to serve anything, it just says so now. The refusal used to be a module-scope throw, which
+// surfaced as a bare 500 on every route including the health endpoint. The problems are exported
+// instead and config-guard.ts turns them into a 503 that names the variable, so the fix is one
+// environment change rather than a hunt. No handler can run while this list is non-empty.
+export const secretProblems: SecretProblem[] = validateSecrets({
   sessionSecret: process.env.SESSION_SECRET,
   masterKey: process.env.MASTER_KEY,
   nodeEnv: process.env.NODE_ENV,
 })
-if (secretProblems.length > 0) {
-  throw new Error(
-    'Refusing to start in production with unsafe secrets: ' +
-      secretProblems.map((p) => `${p.name} is ${p.problem}`).join('; ')
-  )
-}
+
+/** True when this process may serve requests: its signing secrets passed validation. */
+export const configOk = secretProblems.length === 0
