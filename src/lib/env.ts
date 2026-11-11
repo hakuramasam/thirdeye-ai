@@ -63,6 +63,12 @@ export const env = {
   telegramBotId: process.env.TELEGRAM_BOT_ID || '',
   cronSecret: process.env.CRON_SECRET || '',
 
+  /**
+   * How long one agent run may spend waiting out provider rate limits, in total across its steps.
+   * The function ceiling is 60s, so the default leaves room to record the run and respond.
+   */
+  agentRetryWaitMs: num(process.env.AGENT_RETRY_WAIT_MS, 50_000),
+
   /** Hosts allowed to be private for MCP/HTTP egress (comma separated). Empty by default. */
   mcpAllowedHosts: (process.env.MCP_ALLOWED_HOSTS || '')
     .split(',')

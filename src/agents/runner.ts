@@ -8,7 +8,7 @@ import { query, one } from '../db/index.js'
 import { env } from '../lib/env.js'
 import { debitForUsage } from '../lib/billing.js'
 import { payForStep } from './credit.js'
-import { callWithRateLimitRetry } from './retry.js'
+import { callWithRateLimitRetry, isRateLimitError } from './retry.js'
 import { isCovered } from '../lib/allowance.js'
 import { computeCostMicros } from '../lib/pricing.js'
 import { getModelRow, type ProviderCall } from '../providers/index.js'
@@ -101,6 +101,8 @@ export type RunnerDeps = {
   stageId?: string
   /** Injectable for tests; default resolves via the provider layer. */
   llm?: { call(params: Record<string, any>): Promise<LlmResult> }
+  /** Override the rate-limit wait budget (tests use a few milliseconds instead of 50s). */
+  retryWaitMs?: number
   mcpTools?: McpTools
 }
 
@@ -113,6 +115,11 @@ export type RunResult = {
   error: string | null
   /** True when this call did not run anything because the run id was already used. */
   replayed?: boolean
+  /**
+   * True when the run ended because the provider's meter refused it. The work is not done, so a
+   * scheduled slot stays owed and the next tick retries instead of counting this as the day's run.
+   */
+  rateLimited?: boolean
   /**
    * Address of this run's output in the artifact registry (PH2-003). Present on a successful run
    * that produced text, so a caller hands on an address instead of a truncated copy.
@@ -209,10 +216,14 @@ export async function runAgent(
     return await runAgentInner(agent, input, user, { ...deps, runId, correlationId })
   } catch (e: any) {
     const message = String(e?.message || e).slice(0, 500)
+    // A provider meter refusal is not a defect in our code: it means the work is owed, not done.
+    // Naming it separately keeps the run row honest and tells the cron caller the slot must retry.
+    const rateLimited = isRateLimitError(message)
+    const stored = rateLimited ? `rate_limited: ${message}` : `uncaught: ${message}`
     try {
       await query(
         `UPDATE agent_runs SET status='error', error=$1 WHERE id=$2 AND status='running'`,
-        [`uncaught: ${message}`, runId]
+        [stored, runId]
       )
       await query(`UPDATE agents SET last_run_at = now() WHERE id = $1`, [agent.id])
     } catch {
@@ -230,12 +241,20 @@ export async function runAgent(
           pipelineId: deps.pipelineId ?? null,
           stageId: deps.stageId ?? null,
         },
-        { errorCode: 'uncaught_exception', errorSummary: message }
+        { errorCode: rateLimited ? 'rate_limited' : 'uncaught_exception', errorSummary: message }
       )
     } catch {
       /* an audit note is best effort on the crash path too: the caller still gets the error */
     }
-    return { runId, status: 'error', output: null, tool_calls: 0, spend_usd_micros: 0, error: `uncaught: ${message}` }
+    return {
+      runId,
+      status: 'error',
+      output: null,
+      tool_calls: 0,
+      spend_usd_micros: 0,
+      error: stored,
+      ...(rateLimited ? { rateLimited: true } : {}),
+    }
   }
 }
 
@@ -413,10 +432,18 @@ async function runAgentInner(
       byok = modelRow ? (await resolveProvider(user, modelRow)).byok : false
     } catch { byok = false }
 
+    // One budget for the whole run, not one per step: a router that waits 50s on step one and
+    // 50s again on step two would be killed by the platform mid-answer and record nothing.
+    const retryWaitMs = deps.retryWaitMs ?? env.agentRetryWaitMs
+    const retryDeadline = Date.now() + retryWaitMs
+
     for (let step = 0; step < maxSteps; step++) {
       // A free-tier meter can refuse a step that would have succeeded seconds later, and a
       // scheduled run has nobody to retry it. Wait out only what the provider told us to.
-      const res = await callWithRateLimitRetry(() => llm!.call(useTools ? { messages, tools } : { messages }))
+      const res = await callWithRateLimitRetry(() => llm!.call(useTools ? { messages, tools } : { messages }), {
+        totalWaitMs: retryWaitMs,
+        deadlineMs: retryDeadline,
+      })
       const cost =
         modelRow != null
           ? computeCostMicros(modelRow, res.prompt_tokens, res.completion_tokens, env.platformMarginPct, byok)
@@ -716,6 +743,7 @@ async function runAgentInner(
 /** A stable code for the audit row, so failures can be counted without parsing prose. */
 export function errorCodeFrom(message?: string | null): string {
   const m = String(message ?? '')
+  if (/rate_limited:|rate limit|\b429\b|too many requests/i.test(m)) return 'rate_limited'
   if (/insufficient credits/i.test(m)) return 'insufficient_credits'
   if (/budget exceeded/i.test(m)) return 'budget_exceeded'
   if (/max steps/i.test(m)) return 'max_steps'
