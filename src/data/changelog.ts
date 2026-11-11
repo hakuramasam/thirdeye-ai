@@ -5,6 +5,7 @@
 export type ChangelogEntry = { sha: string; date: string; summary: string }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  { sha: "pending", date: "2026-11-11", summary: "Give every agent handoff an address: artifacts are stored once and read by id" },
   { sha: "b81bcba", date: "2026-11-09", summary: "Add feedback intake, and finish SEC-006 auth abuse protection" },
   { sha: "dbb2e31", date: "2026-11-09", summary: "Give every agent a capability pack it can read at runtime" },
   { sha: "2fa2c02", date: "2026-11-09", summary: "Add the 2026-11-09 development assessment" },

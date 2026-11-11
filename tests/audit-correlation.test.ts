@@ -68,8 +68,15 @@ describe('PH2-001 correlation across executions', () => {
     assert.match(correlation, /^corr_[0-9a-f-]{36}$/)
     assert.deepEqual(
       events.map((e) => e.event_type),
-      ['run.created', 'run.started', 'run.completed']
+      // PH2-003: the run's output is addressed before the run is reported complete, so the
+      // artifact event sits between start and completion rather than after it.
+      ['run.created', 'run.started', 'artifact.created', 'run.completed']
     )
+    const artifactEvent = events.find((e) => e.event_type === 'artifact.created')
+    assert.ok(artifactEvent, 'a successful run with output must address it')
+    const artifactIds = (artifactEvent as any).artifact_ids
+    assert.equal(Array.isArray(artifactIds) ? artifactIds.length : 0, 1)
+    assert.match(String(artifactIds[0]), /^art_[0-9a-f]{20}$/)
     assert.equal(events.every((e) => e.run_id === res.runId), true)
     assert.equal(events[0].agent_role, parent.name)
   })
