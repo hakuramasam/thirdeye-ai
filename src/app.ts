@@ -25,6 +25,7 @@ import { registerAgentApiRoutes } from './routes/agentApi.js'
 import { registerPlaygroundRoutes } from './routes/playground.js'
 import { registerParagraphRoutes } from './routes/paragraph.js'
 import { registerArtifactsRoutes } from './routes/artifacts.js'
+import { registerAntseedRoutes } from './routes/antseed.js'
 
 const app = new Hono<AppEnv>()
 
@@ -63,6 +64,7 @@ registerRedeemRoutes(app)
 registerAdminRoutes(app)
 registerParagraphRoutes(app)
 registerArtifactsRoutes(app)
+registerAntseedRoutes(app)
 registerTelegramRoutes(app)
 registerStatsRoutes(app)
 registerPartnerRoutes(app)

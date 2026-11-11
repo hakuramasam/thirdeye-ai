@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   key_prefix  text NOT NULL,                 -- e.g. sk-thirdeye-Ab12 (for display)
   rpm         integer NOT NULL DEFAULT 60,
   tpm         integer NOT NULL DEFAULT 250000,
+  scope       text NOT NULL DEFAULT 'api',        -- api = general gateway, antseed = marketplace relay
   budget_usd_micros bigint,                       -- null = unlimited; monthly cap
   period_start      timestamptz,                  -- start of current monthly budget period
   period_spent_usd_micros bigint NOT NULL DEFAULT 0,
@@ -24,6 +25,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 -- additive migrations for existing databases
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'api';
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS budget_usd_micros bigint;
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS period_start timestamptz;
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS period_spent_usd_micros bigint NOT NULL DEFAULT 0;
