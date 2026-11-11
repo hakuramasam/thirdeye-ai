@@ -412,6 +412,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_schedule_status ON agent_schedule_lock(stat
 
 -- none | read | write. Only 'read' and 'write' receive the repo_read tool today.
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS repo_access text NOT NULL DEFAULT 'none';
+-- Per-agent inference credit: spent before the owner's ledger, so a team can be funded
+-- member by member instead of sharing one balance. Zero means the agent draws on the owner.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS credit_usd_micros bigint NOT NULL DEFAULT 0;
 
 -- Profit accounting (docs/profit-split.md). A period records what was measured, so a
 -- distribution can be recomputed and audited later instead of living in a spreadsheet.

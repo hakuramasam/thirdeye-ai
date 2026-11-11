@@ -9,9 +9,40 @@ import { CHAINS } from '../payments/chains.js'
 import { convertPending } from '../payments/convert.js'
 import { settleConversion } from '../lib/settle.js'
 import { query } from '../db/index.js'
+import { fundAgentCredit } from '../agents/credit.js'
 
 /** Ops endpoints gated by MASTER_KEY. Used for manual credits (promos, refunds, testing). */
 export function registerAdminRoutes(app: SessionApp) {
+  /**
+   * GET /api/admin/agents/credit — every agent's own inference pot, so a team can be
+   * funded and audited member by member instead of through one shared balance.
+   */
+  app.get('/api/admin/agents/credit', async (c) => {
+    if (c.req.header('x-master-key') !== env.masterKey) return c.json({ error: { message: 'Forbidden', type: 'auth', code: 403 } }, 403)
+    const r = await query(
+      `SELECT id, name, status, credit_usd_micros, budget_usd_micros FROM agents ORDER BY id`
+    )
+    const total = r.rows.reduce((n: number, x: any) => n + Number(x.credit_usd_micros ?? 0), 0)
+    return c.json({ agents: r.rows, total_usd_micros: total })
+  })
+
+  /**
+   * POST /api/admin/agents/:id/credit — add to (default) or set one agent's pot.
+   * Body: { usd_micros, mode?: 'add' | 'set' }.
+   */
+  app.post('/api/admin/agents/:id/credit', async (c) => {
+    if (c.req.header('x-master-key') !== env.masterKey) return c.json({ error: { message: 'Forbidden', type: 'auth', code: 403 } }, 403)
+    const body = await c.req.json().catch(() => ({} as any))
+    const amount = Number(body?.usd_micros)
+    const mode = body?.mode === 'set' ? 'set' : 'add'
+    if (!Number.isFinite(amount) || amount < 0) {
+      return c.json({ error: { message: 'usd_micros must be a non-negative integer', type: 'invalid_request', code: 400 } }, 400)
+    }
+    const after = await fundAgentCredit(c.req.param('id'), Math.trunc(amount), mode)
+    if (after == null) return c.json({ error: { message: 'Agent not found', type: 'not_found', code: 404 } }, 404)
+    return c.json({ ok: true, id: c.req.param('id'), mode, credit_usd_micros: after })
+  })
+
   /**
    * POST /api/admin/convert — run one conversion pass over pending volatile-token deposits.
    * Each deposit is claimed, swapped from a wallet we can sign for, measured, and settled.

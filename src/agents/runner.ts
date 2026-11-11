@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { query, one } from '../db/index.js'
 import { env } from '../lib/env.js'
 import { debitForUsage } from '../lib/billing.js'
+import { payForStep } from './credit.js'
 import { isCovered } from '../lib/allowance.js'
 import { computeCostMicros } from '../lib/pricing.js'
 import { getModelRow, type ProviderCall } from '../providers/index.js'
@@ -418,10 +419,16 @@ async function runAgentInner(
           ? computeCostMicros(modelRow, res.prompt_tokens, res.completion_tokens, env.platformMarginPct, byok)
           : 0
       if (cost > 0) {
-        const debit = await debitForUsage(user.id, cost, `agent:${runId}`, {
-          allowNegative: await isCovered(user.wallet),
+        // The agent's own pot pays first, the owner's ledger covers the rest. A step that
+        // neither can settle in full is refused rather than half-charged.
+        const paid = await payForStep({
+          agentId: agent.id,
+          userId: user.id,
+          wallet: user.wallet,
+          runId,
+          costMicros: cost,
         })
-        if (!debit.ok) {
+        if (!paid.ok) {
           return await finish('error', null, toolCalls, spend, 'Insufficient credits. Top up with USDC (Base) or USDG (Robinhood Chain) on the Deposit page.')
         }
         spend += cost
