@@ -480,3 +480,61 @@ CREATE TABLE IF NOT EXISTS agent_run_events (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_run_events_run ON agent_run_events(run_id, seq);
 CREATE INDEX IF NOT EXISTS idx_agent_run_events_time ON agent_run_events(created_at DESC);
+
+-- ---------------------------------------------------------------------------------------------
+-- Phase 2, PH2-001: append-only execution audit.
+--
+-- agent_run_events answers "what did this one run do". This table answers "what happened to this
+-- piece of work, in order, across every agent that touched it": one correlation id per root
+-- execution, inherited by every delegated run, with the parent link, task, pipeline and stage.
+--
+-- run_id is deliberately NOT a foreign key to agent_runs. An audit row must be writable when the
+-- thing being audited is exactly the case where no run row exists (a permission change, a refused
+-- handoff, a scheduler decision), and losing that row would be the worst outcome.
+--
+-- Append-only is enforced twice: the application never issues an UPDATE or DELETE, and the trigger
+-- below refuses both at the database level, so a bug or an agent cannot rewrite history.
+CREATE TABLE IF NOT EXISTS agent_audit_events (
+  id                    text PRIMARY KEY,
+  -- Monotonic insertion order. created_at alone is not a total order: two events written in the
+  -- same millisecond would reconstruct in an arbitrary sequence, which is not good enough for an
+  -- append-only trail a human has to read back.
+  insert_seq            bigserial NOT NULL,
+  event_id              text NOT NULL UNIQUE,
+  correlation_id        text NOT NULL,
+  trace_id              text,
+  run_id                text,
+  parent_run_id         text,
+  task_id               text,
+  agent_id              text,
+  agent_role            text,
+  pipeline_id           text,
+  stage_id              text,
+  event_type            text NOT NULL,
+  actor_type            text NOT NULL DEFAULT 'agent',        -- agent | system | owner | scheduler
+  authorization_context jsonb NOT NULL DEFAULT '{}',
+  tool_name             text,
+  artifact_ids          jsonb NOT NULL DEFAULT '[]',
+  status                text,                                  -- started | succeeded | failed | denied | skipped
+  error_code            text,
+  error_summary         text,
+  metadata              jsonb NOT NULL DEFAULT '{}',
+  created_at            timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_correlation ON agent_audit_events(correlation_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_run ON agent_audit_events(run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_parent_run ON agent_audit_events(parent_run_id);
+CREATE INDEX IF NOT EXISTS idx_audit_task ON agent_audit_events(task_id);
+CREATE INDEX IF NOT EXISTS idx_audit_type_time ON agent_audit_events(event_type, created_at DESC);
+ALTER TABLE agent_audit_events ADD COLUMN IF NOT EXISTS insert_seq bigserial;
+
+CREATE OR REPLACE FUNCTION agent_audit_events_append_only() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'agent_audit_events is append-only (%; write a new event instead)', TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS agent_audit_events_no_rewrite ON agent_audit_events;
+CREATE TRIGGER agent_audit_events_no_rewrite
+  BEFORE UPDATE OR DELETE ON agent_audit_events
+  FOR EACH ROW EXECUTE FUNCTION agent_audit_events_append_only();

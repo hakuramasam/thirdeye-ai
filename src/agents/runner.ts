@@ -17,6 +17,16 @@ import { paidFetch } from './x402.js'
 import { REPO_TOOL, runRepoTool, hasRepoAccess } from './repo-tools.js'
 import { REPO_WRITE_TOOL, runRepoWrite } from './repo-write.js'
 import { logRunEvent } from './monitor.js'
+import {
+  newCorrelationId,
+  recordRunEvent,
+  recordRunCompleted,
+  recordRunFailed,
+  recordTaskDelegated,
+  recordTaskOutcome,
+  recordToolInvocation,
+  type AuditContext,
+} from './audit-log.js'
 import { assertPublicUrl } from '../lib/ssrf.js'
 import { verifyPayment, txHashFrom } from '../lib/partnerVerify.js'
 import type { ModelRow } from '../lib/pricing.js'
@@ -65,6 +75,16 @@ export type RunnerDeps = {
   allowWrite?: boolean
   /** Comma-separated teammate names, shown to the model when a delegation target is wrong. */
   roster?: string
+  /**
+   * Execution audit (PH2-001). A root execution gets a fresh correlation id; every delegated run
+   * inherits it, so one id reconstructs the whole chain. `parentRunId` is the run that delegated,
+   * and task/pipeline/stage travel with the work rather than being guessed from timing later.
+   */
+  correlationId?: string
+  parentRunId?: string
+  taskId?: string
+  pipelineId?: string
+  stageId?: string
   /** Injectable for tests; default resolves via the provider layer. */
   llm?: { call(params: Record<string, any>): Promise<LlmResult> }
   mcpTools?: McpTools
@@ -142,8 +162,9 @@ export async function runAgent(
   deps: RunnerDeps = {}
 ): Promise<RunResult> {
   const runId = deps.runId || randomUUID()
+  const correlationId = deps.correlationId || newCorrelationId()
   try {
-    return await runAgentInner(agent, input, user, { ...deps, runId })
+    return await runAgentInner(agent, input, user, { ...deps, runId, correlationId })
   } catch (e: any) {
     const message = String(e?.message || e).slice(0, 500)
     try {
@@ -154,6 +175,23 @@ export async function runAgent(
       await query(`UPDATE agents SET last_run_at = now() WHERE id = $1`, [agent.id])
     } catch {
       /* the run row is best-effort here; the caller still gets the error */
+    }
+    try {
+      await recordRunFailed(
+        {
+          correlationId,
+          runId,
+          parentRunId: deps.parentRunId ?? null,
+          taskId: deps.taskId ?? null,
+          agentId: agent.id,
+          agentRole: agent.name,
+          pipelineId: deps.pipelineId ?? null,
+          stageId: deps.stageId ?? null,
+        },
+        { errorCode: 'uncaught_exception', errorSummary: message }
+      )
+    } catch {
+      /* an audit note is best effort on the crash path too: the caller still gets the error */
     }
     return { runId, status: 'error', output: null, tool_calls: 0, spend_usd_micros: 0, error: `uncaught: ${message}` }
   }
@@ -166,6 +204,18 @@ async function runAgentInner(
   deps: RunnerDeps = {}
 ): Promise<RunResult> {
   const runId = deps.runId || randomUUID()
+  const correlationId = deps.correlationId || newCorrelationId()
+  /** Every audit event of this execution carries the same correlation and parent link. */
+  const audit: AuditContext = {
+    correlationId,
+    runId,
+    parentRunId: deps.parentRunId ?? null,
+    taskId: deps.taskId ?? null,
+    agentId: agent.id,
+    agentRole: agent.name,
+    pipelineId: deps.pipelineId ?? null,
+    stageId: deps.stageId ?? null,
+  }
   const startedAt = Date.now()
   const budget = Number(agent.budget_usd_micros)
   const maxSteps = Math.min(Math.max(agent.max_steps || 8, 1), 20)
@@ -189,6 +239,11 @@ async function runAgentInner(
       replayed: true,
     }
   }
+
+  // The run row exists, so the execution is real: make that visible in the audit trail before any
+  // work is done. A replay returned above and deliberately writes nothing.
+  await recordRunEvent(audit, 'run.created', { metadata: { model: agent.model, max_steps: maxSteps } })
+  await recordRunEvent(audit, 'run.started')
 
   const finish = async (
     status: 'success' | 'error',
@@ -223,6 +278,17 @@ async function runAgentInner(
       },
     })
     await Promise.race([spanExport, new Promise((resolve) => setTimeout(resolve, 1200))])
+    // Audit last, so the record describes the state the run actually reached.
+    if (status === 'success') {
+      await recordRunCompleted(audit, { toolCalls, spendMicros: spend })
+    } else {
+      await recordRunFailed(audit, {
+        errorCode: errorCodeFrom(error),
+        errorSummary: error,
+        toolCalls,
+        spendMicros: spend,
+      })
+    }
     return { runId, status, output, tool_calls: toolCalls, spend_usd_micros: spend, error }
   }
 
@@ -296,6 +362,9 @@ async function runAgentInner(
         })
         for (const tc of res.tool_calls) {
           let result = 'Tool unavailable'
+          // Set when a tool was refused rather than unknown: that is an authorization decision and
+          // belongs in the audit trail as `tool.denied`, not as a broken call.
+          let denied: string | null = null
           try {
             const args = JSON.parse(tc.function.arguments || '{}')
             if (tc.function.name === 'repo_write' && canWrite) {
@@ -343,6 +412,7 @@ async function runAgentInner(
             } else if (tc.function.name === 'delegate_to_agent' && (agent as any).can_delegate) {
               const depth = Number((deps as any).delegationDepth ?? 0)
               if (depth >= MAX_DELEGATION_DEPTH) {
+                denied = `delegation depth limit ${MAX_DELEGATION_DEPTH} reached`
                 result = `Delegation refused: depth limit ${MAX_DELEGATION_DEPTH} reached. Do the work yourself or report the blocker.`
               } else {
                 const wanted = String(args.agent || '').trim()
@@ -351,6 +421,7 @@ async function runAgentInner(
                   [user.id, wanted, agent.id]
                 )
                 if (!child) {
+                  denied = `no active teammate named "${wanted}"`
                   result = `No active teammate named "${wanted}". Your roster: ${(deps as any).roster ?? 'unavailable'}.`
 
                 } else {
@@ -370,25 +441,71 @@ async function runAgentInner(
                   }
                   const taskCheck = validateTask(taskDoc)
                   if (!taskCheck.ok) {
+                    denied = 'task did not validate against task.schema.json'
                     result = `Delegation refused: the task did not validate against task.schema.json (${taskCheck.errors.join('; ')}). Rewrite it as one bounded instruction.`
                   } else {
                   // A grant is only real if the parent holds write itself and the child is a
                   // member of the repo-access roster; a model cannot widen its own authority.
                   const granted = Boolean(args.allow_write) && canWrite && hasRepoAccess((child as any).repo_access)
-                  const childRun = await runAgent(
-                    child as AgentRow,
-                    `[delegated by ${agent.name}] ${String(args.task || '').slice(0, 4000)}`,
-                    user,
-                    { delegationDepth: depth + 1, allowWrite: granted }
-                  )
-                  result = `REPORT from ${child.name} (status ${childRun.status})` +
-                    (childRun.output ? `: ${String(childRun.output).slice(0, MAX_TOOL_RESULT_CHARS)}` : '') +
-                    (childRun.error ? ` error: ${String(childRun.error).slice(0, 400)}` : '') +
-                    ` [spend ${childRun.spend_usd_micros ?? 0} micros]` +
-                    (granted ? ' [write granted for this task]' : ' [write withheld]')
+                  // Fail closed on the handoff. Authority is about to travel to another agent, so
+                  // the grant must be reconstructable later; if that record cannot be written, the
+                  // handoff does not happen. Everything else in this loop stays best effort.
+                  let handoffRecorded = false
+                  try {
+                    await recordTaskDelegated(audit, {
+                      taskId: taskDoc.task_id,
+                      toAgentId: (child as any).id,
+                      metadata: { to_agent: String((child as any).name ?? wanted), allow_write: granted, depth: depth + 1 },
+                    })
+                    handoffRecorded = true
+                  } catch (e: any) {
+                    denied = 'audit log unavailable for the handoff'
+                    result = `Delegation refused: the audit log could not record this handoff, so no authority was passed (${String(e?.message ?? e).slice(0, 200)}). Do the work yourself or report the blocker.`
+                  }
+                  if (handoffRecorded) {
+                    const childRun = await runAgent(
+                      child as AgentRow,
+                      `[delegated by ${agent.name}] ${String(args.task || '').slice(0, 4000)}`,
+                      user,
+                      {
+                        delegationDepth: depth + 1,
+                        allowWrite: granted,
+                        // The child inherits the chain: same correlation, this run as its parent, and
+                        // the task id, so one id traces the whole delegated action.
+                        correlationId,
+                        parentRunId: runId,
+                        taskId: taskDoc.task_id,
+                        pipelineId: deps.pipelineId,
+                        stageId: deps.stageId,
+                        // Only ever present when a caller injected one (tests); in production this is
+                        // undefined and the provider is resolved per agent.
+                        llm: deps.llm,
+                        roster: deps.roster,
+                      }
+                    )
+                    await recordTaskOutcome(
+                      { ...audit, agentId: (child as any).id, agentRole: (child as any).name },
+                      childRun.status === 'success' ? 'task.completed' : 'task.rejected',
+                      { taskId: taskDoc.task_id, metadata: { child_run_id: childRun.runId, write_granted: granted } }
+                    )
+                    result = `REPORT from ${child.name} (status ${childRun.status})` +
+                      (childRun.output ? `: ${String(childRun.output).slice(0, MAX_TOOL_RESULT_CHARS)}` : '') +
+                      (childRun.error ? ` error: ${String(childRun.error).slice(0, 400)}` : '') +
+                      ` [spend ${childRun.spend_usd_micros ?? 0} micros]` +
+                      (granted ? ' [write granted for this task]' : ' [write withheld]')
+                  }
                   }
                 }
               }
+            } else if (tc.function.name === 'repo_write') {
+              denied = 'repo_write requires write authority, which this run does not hold'
+              result = `Refused: repo_write needs write authority for this run. Put the proposed change in your report instead.`
+            } else if (tc.function.name === 'repo_read') {
+              denied = 'repo_read requires repo access on this agent'
+              result = `Refused: this agent has no repo access.`
+            } else if (tc.function.name === 'http_fetch') {
+              denied = 'http_fetch requires x402 to be enabled'
+              result = `Refused: http_fetch is disabled for this agent.`
             } else if (mcpTools) {
               result = (await mcpTools.call(tc.function.name, args)).slice(0, MAX_TOOL_RESULT_CHARS)
             } else {
@@ -409,6 +526,16 @@ async function runAgentInner(
               resultExcerpt: String(result ?? ''),
             })
           } catch {}
+          try {
+            await recordToolInvocation(audit, {
+              tool: tc.function.name,
+              ok: !denied && !/^(Tool error|Unknown tool|Tool unavailable)/.test(String(result ?? '')),
+              refused: Boolean(denied),
+              argsExcerpt: String(tc.function.arguments ?? ''),
+              resultExcerpt: String(result ?? ''),
+              metadata: { seq: toolCalls, ...(denied ? { denial_reason: denied } : {}) },
+            })
+          } catch {}
           messages.push({ role: 'tool', tool_call_id: tc.id, content: result })
         }
         continue
@@ -421,6 +548,18 @@ async function runAgentInner(
   } finally {
     if (ownedMcp && mcpTools) await mcpTools.close().catch(() => {})
   }
+}
+
+/** A stable code for the audit row, so failures can be counted without parsing prose. */
+export function errorCodeFrom(message?: string | null): string {
+  const m = String(message ?? '')
+  if (/insufficient credits/i.test(m)) return 'insufficient_credits'
+  if (/budget exceeded/i.test(m)) return 'budget_exceeded'
+  if (/max steps/i.test(m)) return 'max_steps'
+  if (/model '.*' not found/i.test(m)) return 'model_not_found'
+  if (/audit log unavailable/i.test(m)) return 'audit_unavailable'
+  if (/uncaught:/i.test(m)) return 'uncaught_exception'
+  return 'run_failed'
 }
 
 export async function getAgent(id: string, userId: string): Promise<AgentRow | null> {
