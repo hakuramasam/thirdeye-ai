@@ -538,3 +538,32 @@ DROP TRIGGER IF EXISTS agent_audit_events_no_rewrite ON agent_audit_events;
 CREATE TRIGGER agent_audit_events_no_rewrite
   BEFORE UPDATE OR DELETE ON agent_audit_events
   FOR EACH ROW EXECUTE FUNCTION agent_audit_events_append_only();
+-- Outbound conversion. A quote is a priced promise; only a verified payout transfer settles it.
+-- amount_usd_micros is what the ledger is debited on settlement, and status never moves backwards
+-- out of settled: a paid redemption is a fact, not a state.
+CREATE TABLE IF NOT EXISTS redemptions (
+  id                text PRIMARY KEY,
+  user_id           text NOT NULL REFERENCES users(id),
+  chain_id          integer NOT NULL,
+  token             text NOT NULL,                    -- lowercase 0x token address
+  symbol            text,
+  decimals          integer NOT NULL,
+  amount_usd_micros bigint NOT NULL,
+  expected_out_raw  numeric(78,0) NOT NULL,
+  min_out_raw       numeric(78,0) NOT NULL,           -- floor a payout must clear
+  price_usd         numeric(38,18),
+  pool              text,
+  status            text NOT NULL DEFAULT 'quoted',   -- quoted | settled | cancelled
+  payout_tx_hash    text,
+  idempotency_key   text,
+  expires_at        timestamptz NOT NULL,
+  settled_at        timestamptz,
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+-- A retried quote with the same key returns the first one instead of pricing twice.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_redemptions_idem
+  ON redemptions(user_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+-- One payout settles one redemption: the replay guard for real money.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_redemptions_payout
+  ON redemptions(payout_tx_hash) WHERE payout_tx_hash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_redemptions_user_time ON redemptions(user_id, created_at);
