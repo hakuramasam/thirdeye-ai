@@ -25,8 +25,11 @@ import {
   recordTaskDelegated,
   recordTaskOutcome,
   recordToolInvocation,
+  recordStageTransition,
+  readStageLedger,
   type AuditContext,
 } from './audit-log.js'
+import { planForPipeline } from './pipeline.js'
 import { assertPublicUrl } from '../lib/ssrf.js'
 import { verifyPayment, txHashFrom } from '../lib/partnerVerify.js'
 import type { ModelRow } from '../lib/pricing.js'
@@ -444,6 +447,32 @@ async function runAgentInner(
                     denied = 'task did not validate against task.schema.json'
                     result = `Delegation refused: the task did not validate against task.schema.json (${taskCheck.errors.join('; ')}). Rewrite it as one bounded instruction.`
                   } else {
+                  // Deterministic order (PH2-002). Active only when a caller declared a pipeline,
+                  // so free-form delegation is untouched. With one declared, the pipeline's next
+                  // stage is the only permitted move, so order no longer depends on which tool
+                  // call the model happened to make first.
+                  const pinnedStage = deps.stageId ?? null
+                  // Order enforcement is for delegations the model chooses. When the caller pins
+                  // a stage, the caller is the driver following its own plan, so the pipeline
+                  // does not second-guess the choice; the stage is still recorded, which makes
+                  // the trail read as a sequence instead of a list.
+                  const enforcePipeline = Boolean(deps.pipelineId) && !pinnedStage
+                  const stagePlan = enforcePipeline
+                    ? planForPipeline(deps.pipelineId, await readStageLedger(correlationId))
+                    : ({ ok: true as const, stage: null, index: -1, attempt: 1 })
+                  const stageOwner = stagePlan.ok ? stagePlan.stage?.owner ?? null : null
+                  // Pipelines name stages by agent id (tdt_architect); a run knows the child's id
+                  // and its display name, so either is accepted rather than silently mismatching.
+                  const ownerKeys = [String((child as any).id ?? ''), String((child as any).name ?? '')]
+                    .map((v) => v.toLowerCase())
+                  const wrongOwner = Boolean(stageOwner) && !ownerKeys.includes(String(stageOwner).toLowerCase())
+                  if (!stagePlan.ok) {
+                    denied = stagePlan.code
+                    result = `Delegation refused: ${stagePlan.message}. Do the work this pipeline allows, or report the blocker.`
+                  } else if (wrongOwner) {
+                    denied = 'stage_owner_mismatch'
+                    result = `Delegation refused: pipeline ${deps.pipelineId} expects stage "${stagePlan.stage!.id}" from ${stageOwner}, not ${String((child as any).name ?? wanted)}. Delegate to ${stageOwner}, or report the blocker.`
+                  } else {
                   // A grant is only real if the parent holds write itself and the child is a
                   // member of the repo-access roster; a model cannot widen its own authority.
                   const granted = Boolean(args.allow_write) && canWrite && hasRepoAccess((child as any).repo_access)
@@ -463,6 +492,30 @@ async function runAgentInner(
                     result = `Delegation refused: the audit log could not record this handoff, so no authority was passed (${String(e?.message ?? e).slice(0, 200)}). Do the work yourself or report the blocker.`
                   }
                   if (handoffRecorded) {
+                    // Claim the stage in the trail before any work starts, so a second delegation
+                    // in the same correlation sees it in flight instead of running it twice. Fail
+                    // closed like the handoff: an unrecorded stage claim means no stage at all.
+                    const stageId = pinnedStage ?? (stagePlan.ok ? stagePlan.stage?.id : null) ?? deps.stageId
+                    const inPipeline = Boolean(stageId && deps.pipelineId)
+                    let stageClaimed = true
+                    if (inPipeline) {
+                      try {
+                        await recordStageTransition(audit, {
+                          stageId: String(stageId),
+                          eventType: 'stage.started',
+                          metadata: {
+                            pipeline: deps.pipelineId,
+                            owner: stageOwner,
+                            attempt: stagePlan.ok ? stagePlan.attempt : 1,
+                          },
+                        })
+                      } catch (e: any) {
+                        stageClaimed = false
+                        denied = 'audit log unavailable for the stage claim'
+                        result = `Delegation refused: the stage could not be recorded as started, so it was not started (${String(e?.message ?? e).slice(0, 200)}). Do the work yourself or report the blocker.`
+                      }
+                    }
+                    if (stageClaimed) {
                     const childRun = await runAgent(
                       child as AgentRow,
                       `[delegated by ${agent.name}] ${String(args.task || '').slice(0, 4000)}`,
@@ -476,7 +529,7 @@ async function runAgentInner(
                         parentRunId: runId,
                         taskId: taskDoc.task_id,
                         pipelineId: deps.pipelineId,
-                        stageId: deps.stageId,
+                        stageId: stageId ?? deps.stageId,
                         // Only ever present when a caller injected one (tests); in production this is
                         // undefined and the provider is resolved per agent.
                         llm: deps.llm,
@@ -493,6 +546,25 @@ async function runAgentInner(
                       (childRun.error ? ` error: ${String(childRun.error).slice(0, 400)}` : '') +
                       ` [spend ${childRun.spend_usd_micros ?? 0} micros]` +
                       (granted ? ' [write granted for this task]' : ' [write withheld]')
+                    if (inPipeline) {
+                      // Best effort: the child's own run.created/run.completed events already carry
+                      // its outcome, so a failed stage note degrades the story without hiding the
+                      // work. Ordering stays conservative: an unwritten completion is not a
+                      // settled stage, so the pipeline will not advance past it by accident.
+                      await recordStageTransition(audit, {
+                        stageId: String(stageId),
+                        eventType: childRun.status === 'success' ? 'stage.completed' : 'stage.failed',
+                        metadata: {
+                          pipeline: deps.pipelineId,
+                          owner: stageOwner,
+                          child_run_id: childRun.runId,
+                          write_granted: granted,
+                          ...(childRun.status === 'success' ? {} : { error: String(childRun.error ?? '').slice(0, 300) }),
+                        },
+                      }).catch(() => null)
+                    }
+                    }
+                  }
                   }
                   }
                 }
