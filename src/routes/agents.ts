@@ -320,8 +320,15 @@ export function registerCronRoute(app: SessionApp): void {
       return c.json({ triggered: [opsRun], results: [{ agent_id: opsRun, ...r }] })
     }
 
+    // Due-ness is measured against the last SUCCESSFUL run, not the last attempt. A scheduled
+    // run that failed has not done its day's work, so its slot stays owed and the next tick
+    // retries it; otherwise one provider hiccup costs the team a whole cycle. The retry is
+    // bounded in practice because the pinger fires once a day and the lookback is 26 hours.
     const res = await query(
-      `SELECT * FROM agents WHERE status = 'active' AND cron IS NOT NULL ORDER BY last_run_at ASC NULLS FIRST LIMIT 20`
+      `SELECT a.*, (SELECT max(r.created_at) FROM agent_runs r
+                     WHERE r.agent_id = a.id AND r.status = 'success') AS last_success_at
+         FROM agents a WHERE a.status = 'active' AND a.cron IS NOT NULL
+        ORDER BY a.last_run_at ASC NULLS FIRST LIMIT 20`
     )
     const triggered: string[] = []
     const results: any[] = []
@@ -332,7 +339,8 @@ export function registerCronRoute(app: SessionApp): void {
       let due = false
       // The pinger is external and its timing is not ours to guarantee, so a slot that
       // passed while nothing was invoking this route still runs late instead of being lost.
-      try { due = isCronDue(row.cron!, now, row.last_run_at ? new Date(row.last_run_at) : null, { lookbackMinutes: SCHEDULE_LOOKBACK_MINUTES }) } catch { due = false }
+      const lastSuccess = (row as any).last_success_at
+      try { due = isCronDue(row.cron!, now, lastSuccess ? new Date(lastSuccess) : null, { lookbackMinutes: SCHEDULE_LOOKBACK_MINUTES }) } catch { due = false }
       if (!due) continue
 
       // One owner per (agent, slot). A second overlapping tick gets null, records a skip and
