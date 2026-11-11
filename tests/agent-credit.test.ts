@@ -129,3 +129,55 @@ describe('a missed schedule slot runs late instead of being lost', () => {
     assert.equal(lastScheduledInstant(spec, new Date('2026-11-10T18:30:00Z'), 0), null)
   })
 })
+
+describe('a rate-limited step waits instead of failing the run', () => {
+  it("reads the wait the provider asked for", async () => {
+    const { retryDelayMs, isRateLimitError } = await import('../src/agents/retry.js')
+    assert.equal(retryDelayMs('Rate limit reached ... Please try again in 12s.'), 12_250)
+    assert.equal(retryDelayMs('Please try again in 0.5s'), 750)
+    assert.equal(retryDelayMs('retry-after: 3'), 3_250)
+    assert.equal(retryDelayMs('no idea'), null)
+    assert.equal(isRateLimitError('Rate limit reached for model'), true)
+    assert.equal(isRateLimitError('429 Too Many Requests'), true)
+    assert.equal(isRateLimitError('model not found'), false)
+  })
+
+  it('retries a rate limit and returns the successful attempt', async () => {
+    const { callWithRateLimitRetry } = await import('../src/agents/retry.js')
+    const slept: number[] = []
+    let calls = 0
+    const result = await callWithRateLimitRetry(
+      async () => {
+        calls++
+        if (calls === 1) throw new Error('Rate limit reached. Please try again in 12s.')
+        return 'ok'
+      },
+      { sleep: async (ms) => { slept.push(ms) } }
+    )
+    assert.equal(result, 'ok')
+    assert.equal(calls, 2)
+    assert.deepEqual(slept, [12_250])
+  })
+
+  it('gives up rather than queueing past the function lifetime', async () => {
+    const { callWithRateLimitRetry } = await import('../src/agents/retry.js')
+    let calls = 0
+    await assert.rejects(
+      () => callWithRateLimitRetry(async () => { calls++; throw new Error('Rate limit reached. Please try again in 20s.') },
+        { sleep: async () => {} }),
+      /Rate limit/
+    )
+    assert.equal(calls, 2, 'two 20s waits exceed the 25s budget, so it stops there')
+  })
+
+  it('does not retry a failure that is not a rate limit', async () => {
+    const { callWithRateLimitRetry } = await import('../src/agents/retry.js')
+    let calls = 0
+    await assert.rejects(
+      () => callWithRateLimitRetry(async () => { calls++; throw new Error('model gpt-5 is not in the catalog') },
+        { sleep: async () => {} }),
+      /not in the catalog/
+    )
+    assert.equal(calls, 1)
+  })
+})

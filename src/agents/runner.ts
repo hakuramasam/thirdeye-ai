@@ -8,6 +8,7 @@ import { query, one } from '../db/index.js'
 import { env } from '../lib/env.js'
 import { debitForUsage } from '../lib/billing.js'
 import { payForStep } from './credit.js'
+import { callWithRateLimitRetry } from './retry.js'
 import { isCovered } from '../lib/allowance.js'
 import { computeCostMicros } from '../lib/pricing.js'
 import { getModelRow, type ProviderCall } from '../providers/index.js'
@@ -413,7 +414,9 @@ async function runAgentInner(
     } catch { byok = false }
 
     for (let step = 0; step < maxSteps; step++) {
-      const res = await llm!.call(useTools ? { messages, tools } : { messages })
+      // A free-tier meter can refuse a step that would have succeeded seconds later, and a
+      // scheduled run has nobody to retry it. Wait out only what the provider told us to.
+      const res = await callWithRateLimitRetry(() => llm!.call(useTools ? { messages, tools } : { messages }))
       const cost =
         modelRow != null
           ? computeCostMicros(modelRow, res.prompt_tokens, res.completion_tokens, env.platformMarginPct, byok)
