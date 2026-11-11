@@ -258,6 +258,30 @@ export function registerAgentsRoutes(app: SessionApp): void {
 }
 
 /**
+ * How late a missed schedule slot may still be picked up. One daily cron tick drifting by an
+ * hour, or a tick that never fired because nothing invoked the route, must not cost the team
+ * its whole day: 26 hours covers a full daily cycle plus slack, and the per-slot lock still
+ * makes a second invocation inside the same slot a no-op.
+ */
+const SCHEDULE_LOOKBACK_MINUTES = 26 * 60
+
+/**
+ * The input a scheduled run receives. It states the situation rather than asking an open
+ * question: the earlier generic message made the orchestrator request clarification instead
+ * of acting, because a bare timestamp carries no objective.
+ */
+function scheduledBrief(now: Date): string {
+  return [
+    `Scheduled tick at ${now.toISOString()} (UTC). No human is present in this run.`,
+    'Read your skill pack, then the open alerts and the last few run reports, and pick the single',
+    'highest-value task you can actually complete with the tools you hold. Do the work, then report:',
+    'what you chose and why, the evidence for it (path:line, test or command output), what you could',
+    'not do, and what needs the owner. Do not ask clarifying questions in this run; if nothing is',
+    'justifiable, say so in one line and stop.',
+  ].join(' ')
+}
+
+/**
  * POST /api/cron/agents — Vercel cron / external pinger entry.
  * No session: guarded by Bearer CRON_SECRET. Runs every active, cron-set agent
  * that is due, sequentially, capped at 20 per invocation.
@@ -306,7 +330,9 @@ export function registerCronRoute(app: SessionApp): void {
     const slot = cronSlotKey(now)
     for (const row of res.rows as AgentRow[]) {
       let due = false
-      try { due = isCronDue(row.cron!, now, row.last_run_at ? new Date(row.last_run_at) : null) } catch { due = false }
+      // The pinger is external and its timing is not ours to guarantee, so a slot that
+      // passed while nothing was invoking this route still runs late instead of being lost.
+      try { due = isCronDue(row.cron!, now, row.last_run_at ? new Date(row.last_run_at) : null, { lookbackMinutes: SCHEDULE_LOOKBACK_MINUTES }) } catch { due = false }
       if (!due) continue
 
       // One owner per (agent, slot). A second overlapping tick gets null, records a skip and
@@ -331,7 +357,7 @@ export function registerCronRoute(app: SessionApp): void {
           results.push({ agent_id: row.id, status: 'error', error: 'owner not found' })
           continue
         }
-        const r = await runAgent(row, `Scheduled run at ${now.toISOString()}`, user, { runId: lock.runId })
+        const r = await runAgent(row, scheduledBrief(now), user, { runId: lock.runId })
         await finishScheduleLock(lock.id, lock.runId, r.status === 'success' ? 'COMPLETED' : 'FAILED', {
           spend_usd_micros: r.spend_usd_micros,
         })

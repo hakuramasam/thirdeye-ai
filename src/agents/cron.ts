@@ -56,36 +56,60 @@ export function parseCron(cron: string): CronSpec {
   }
 }
 
-/**
- * Whether `cron` is due at `now`, given the agent's previous run time.
- * A run is due when the minute of `now` matches AND the agent has not already
- * run during this matching minute (or later, since its last run).
- */
-export function isCronDue(cron: string, now: Date, lastRunAt: Date | null): boolean {
-  const spec = parseCron(cron)
-  const m = now.getMinutes()
-  const h = now.getHours()
-  const dom = now.getDate()
-  const mon = now.getMonth() + 1
-  const dow = now.getDay()
-
-  if (!spec.minutes.has(m) || !spec.hours.has(h) || !spec.months.has(mon)) return false
-
+/** True when the wall-clock minute `t` matches the spec. Pure. */
+function matches(spec: CronSpec, t: Date): boolean {
+  const dom = t.getDate()
+  const dow = t.getDay()
+  if (!spec.minutes.has(t.getMinutes())) return false
+  if (!spec.hours.has(t.getHours())) return false
+  if (!spec.months.has(t.getMonth() + 1)) return false
   // Standard cron semantics for the day fields: if both are restricted, match either.
   const domOk = spec.doms.has(dom)
   const dowOk = spec.dows.has(dow)
-  const dayOk = spec.domRestricted && spec.dowRestricted ? (domOk || dowOk)
+  return spec.domRestricted && spec.dowRestricted ? (domOk || dowOk)
     : spec.domRestricted ? domOk
     : spec.dowRestricted ? dowOk
     : true
-  if (!dayOk) return false
+}
 
-  // Already ran during or after this matching minute -> not due again.
+/**
+ * The most recent instant at or before `now` that the cron selects, looking back at most
+ * `lookbackMinutes`. Zero lookback means "only if this exact minute matches".
+ */
+export function lastScheduledInstant(spec: CronSpec, now: Date, lookbackMinutes = 0): Date | null {
+  const start = new Date(now)
+  start.setSeconds(0, 0)
+  start.setMilliseconds(0)
+  const span = Math.max(0, Math.trunc(lookbackMinutes))
+  for (let i = 0; i <= span; i++) {
+    const t = new Date(start.getTime() - i * 60_000)
+    if (matches(spec, t)) return t
+  }
+  return null
+}
+
+export type DueOptions = {
+  /**
+   * How late a missed slot may still be picked up. The scheduler is invoked by an external
+   * pinger whose timing we do not control, so a slot that passed while nothing was invoking
+   * the route must still run rather than be lost. Zero keeps strict minute matching.
+   */
+  lookbackMinutes?: number
+}
+
+/**
+ * Whether `cron` is due at `now`, given the agent's previous run time.
+ *
+ * Due means: the cron selects some instant that has already arrived, and the agent has not
+ * run at or after that instant. With the default zero lookback this is exact-minute matching.
+ */
+export function isCronDue(cron: string, now: Date, lastRunAt: Date | null, opts: DueOptions = {}): boolean {
+  const spec = parseCron(cron)
+  const anchor = lastScheduledInstant(spec, now, opts.lookbackMinutes ?? 0)
+  if (!anchor) return false
   if (lastRunAt) {
     const last = new Date(lastRunAt)
-    const nowMinute = new Date(now)
-    nowMinute.setSeconds(0, 0)
-    if (last.getTime() >= nowMinute.getTime()) return false
+    if (last.getTime() >= anchor.getTime()) return false
   }
   return true
 }
