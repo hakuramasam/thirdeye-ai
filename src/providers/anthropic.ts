@@ -1,5 +1,5 @@
 import { newId } from '../lib/env.js'
-import { UpstreamError } from './index.js'
+import { UpstreamError, mapTimeoutError, requestSignal } from './index.js'
 
 export function convertOpenAIToAnthropicParams(params: Record<string, any>): Record<string, any> {
   const systemMsgs: string[] = []
@@ -95,9 +95,12 @@ export function convertOpenAIToAnthropicParams(params: Record<string, any>): Rec
 export async function callAnthropicChat({
   apiKey,
   params,
+  timeoutMs,
 }: {
   apiKey: string
   params: Record<string, any>
+  /** Abort after this long, the same budget an OpenAI-compatible call gets. */
+  timeoutMs?: number
 }): Promise<{
   content: string
   prompt_tokens: number
@@ -106,15 +109,21 @@ export async function callAnthropicChat({
   raw?: any
 }> {
   const payload = convertOpenAIToAnthropicParams(params)
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  })
+  let res: Response
+  try {
+    res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      ...(requestSignal(timeoutMs) ? { signal: requestSignal(timeoutMs)! } : {}),
+    })
+  } catch (e: any) {
+    mapTimeoutError(e, timeoutMs)
+  }
 
   if (!res.ok) {
     const errBody = await res.json().catch(() => null)
@@ -122,7 +131,12 @@ export async function callAnthropicChat({
     throw new UpstreamError(msg, res.status, errBody || { error: { message: msg, type: 'upstream', code: res.status } })
   }
 
-  const data: any = await res.json()
+  let data: any
+  try {
+    data = await res.json()
+  } catch (e: any) {
+    mapTimeoutError(e, timeoutMs)
+  }
   let contentText = ''
   let toolCalls: any[] | undefined
 

@@ -500,6 +500,11 @@ async function runAgentInner(
       }
 
       if (res.tool_calls && res.tool_calls.length > 0) {
+        // Tool work (MCP, x402, a delegated child) is not bounded by the model-call timeout, so a
+        // spent invocation budget must stop it here rather than let it eat the finalization reserve.
+        if (!(lastUsefulMoment - Date.now() > 0)) {
+          throw new Error('deadline_exceeded: no time left in this invocation to run the tool work')
+        }
         messages.push({
           role: 'assistant',
           content: res.content || '',
@@ -676,6 +681,9 @@ async function runAgentInner(
                         // undefined and the provider is resolved per agent.
                         llm: deps.llm,
                         roster: deps.roster,
+                        // The child runs inside this invocation, so it must not claim a fresh
+                        // lifetime of its own: it is clamped to the parent's ceiling.
+                        deadlineMs: hardCeiling,
                       }
                     )
                     await recordTaskOutcome(

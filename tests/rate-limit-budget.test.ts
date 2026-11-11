@@ -243,3 +243,49 @@ describe('the invocation ceiling, not just the wait', () => {
     assert.ok(codes.includes('rate_limited'), `expected a rate_limited audit event, got ${JSON.stringify(codes)}`)
   })
 })
+
+describe('the deadline reaches the request itself', () => {
+  it('a fractional or zero budget cannot throw before the request is sent', async () => {
+    const { requestSignal, mapTimeoutError } = await import('../src/providers/index.js')
+    assert.ok(requestSignal(1.5) instanceof AbortSignal, 'a fractional value must be floored, not rejected')
+    assert.ok(requestSignal(1) instanceof AbortSignal)
+    assert.equal(requestSignal(0), undefined, 'no budget means no signal')
+    assert.equal(requestSignal(undefined), undefined)
+    assert.equal(requestSignal(Number.NaN), undefined)
+
+    const err: any = new Error('aborted')
+    err.name = 'TimeoutError'
+    assert.throws(() => mapTimeoutError(err, 250), (e: any) => e.status === 504 && /timed out after 250ms/.test(e.message))
+  })
+
+  it('the ceiling setting is clamped to a range where it still means something', async () => {
+    const { msSettingBetween } = await import('../src/lib/env.js')
+    assert.equal(msSettingBetween('0', 60_000, 20_000, 60_000), 60_000, '0 would fail every run before its first call')
+    assert.equal(msSettingBetween('5000', 60_000, 20_000, 60_000), 60_000, 'the reserve alone is not a ceiling')
+    assert.equal(msSettingBetween('90000', 60_000, 20_000, 60_000), 60_000, 'past the platform kill is not a ceiling')
+    assert.equal(msSettingBetween('45000', 60_000, 20_000, 60_000), 45_000)
+    assert.equal(msSettingBetween('abc', 60_000, 20_000, 60_000), 60_000)
+  })
+
+  it('a slow provider is aborted and mapped, including a body read after the headers', async () => {
+    const http = await import('node:http')
+    const { callOpenAIChat } = await import('../src/providers/openai.js')
+    // Headers arrive, then the body stalls past the deadline: the shape that used to escape the
+    // timeout catch and be recorded as an uncaught crash.
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.write('{"choices":')
+      setTimeout(() => { try { res.end('[]}') } catch { /* already aborted */ } }, 400)
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const port = (server.address() as any).port
+    try {
+      await assert.rejects(
+        () => callOpenAIChat({ baseUrl: `http://127.0.0.1:${port}`, apiKey: 'k', params: { messages: [] }, timeoutMs: 60 }),
+        (e: any) => e.status === 504 && /timed out after 60ms/.test(e.message)
+      )
+    } finally {
+      server.close()
+    }
+  })
+})

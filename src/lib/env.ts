@@ -15,6 +15,13 @@ export const msSetting = (v: string | undefined, d: number): number => {
   return Number.isFinite(n) && n >= 0 ? n : d
 }
 
+/** A millisecond setting that must also stay inside a range where it still means something. */
+export const msSettingBetween = (v: string | undefined, d: number, lo: number, hi: number): number => {
+  const n = msSetting(v, d)
+  if (n < lo || n > hi) return d
+  return n
+}
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   port: num(process.env.PORT, 8787),
@@ -84,7 +91,9 @@ export const env = {
    * The invocation ceiling a run plans against. The platform kills the function at 60s, so work
    * (including provider calls) must be finished with time left to record the run and audit it.
    */
-  agentRunCeilingMs: msSetting(process.env.AGENT_RUN_CEILING_MS, 60_000),
+  // Below 20s there is no room for a call plus the 5s finalization reserve, so every run would
+  // fail before its first model call. Above 60s a run would plan past the platform's kill.
+  agentRunCeilingMs: msSettingBetween(process.env.AGENT_RUN_CEILING_MS, 60_000, 20_000, 60_000),
 
   /** Hosts allowed to be private for MCP/HTTP egress (comma separated). Empty by default. */
   mcpAllowedHosts: (process.env.MCP_ALLOWED_HOSTS || '')
