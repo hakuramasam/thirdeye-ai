@@ -15,6 +15,47 @@ import { CHANGELOG, SUITE } from '../data/changelog.js'
 const esc = (s: unknown): string =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
 
+const SITE = 'https://thirdeye-ai-alpha.vercel.app'
+const OG_DESCRIPTION = 'Pay per call, not per seat. OpenAI-compatible inference, wallet-native accounts, USDC credits.'
+
+/**
+ * Head shared by every public page. The icon set and the social card are real files in
+ * `web/public`, so the markup here points at assets that exist rather than at a CDN.
+ */
+function head(title: string, path: string): string {
+  return `<meta name="application-name" content="Thirdeye AI">
+<meta name="theme-color" content="#0A0C10">
+<meta name="color-scheme" content="dark">
+<link rel="canonical" href="${SITE}${path}">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<link rel="manifest" href="/site.webmanifest">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Thirdeye AI">
+<meta property="og:url" content="${SITE}${path}">
+<meta property="og:title" content="${esc(title)} · Thirdeye AI">
+<meta property="og:description" content="${OG_DESCRIPTION}">
+<meta property="og:image" content="${SITE}/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Thirdeye AI: amber eye mark on ink. Pay per call, not per seat.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@Thirdeye_Infra">
+<meta name="twitter:title" content="${esc(title)} · Thirdeye AI">
+<meta name="twitter:description" content="${OG_DESCRIPTION}">
+<meta name="twitter:image" content="${SITE}/og.png">
+<script type="application/ld+json">${JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: 'Thirdeye AI',
+    url: SITE,
+    logo: `${SITE}/brand/mark.svg`,
+    description: OG_DESCRIPTION,
+  }).replace(/</g, '\\u003c')}</script>`
+}
+
 const NAV: [string, string][] = [
   ['/platform', 'Platform'],
   ['/status', 'Status'],
@@ -33,7 +74,7 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 header{border-bottom:1px solid var(--line);background:#0d0f12}
 .wrap{max-width:940px;margin:0 auto;padding:0 20px}
 .brand{display:flex;align-items:center;gap:10px;padding:18px 0 12px;font-weight:650;letter-spacing:-.01em}
-.brand span{color:var(--muted);font-weight:400;font-size:13px}
+.brand img{width:20px;height:20px;display:block}.brand span{color:var(--muted);font-weight:400;font-size:13px}
 nav{display:flex;flex-wrap:wrap;gap:6px 18px;padding-bottom:14px;font-size:14px}
 nav a{color:var(--muted)}nav a.on{color:var(--ink);font-weight:600}
 main{padding:34px 0 60px}
@@ -60,14 +101,15 @@ footer{border-top:1px solid var(--line);color:var(--muted);font-size:12.5px;padd
 @media(max-width:520px){h1{font-size:24px}nav{gap:4px 14px}}
 `
 
-function layout(title: string, active: string, body: string): string {
+function layout(title: string, active: string, body: string, path = active): string {
   const links = NAV.map(([href, label]) => `<a href="${href}"${href === active ? ' class="on"' : ''}>${label}</a>`).join('')
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} · Thirdeye AI</title>
-<meta name="description" content="Thirdeye AI Platform: pay-per-call AI inference for users and agents.">
+<meta name="description" content="${OG_DESCRIPTION}">
+${head(title, path)}
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"><style>${CSS}</style></head><body>
-<header><div class="wrap"><div class="brand">Thirdeye AI <span>pay-per-call inference</span></div><nav>${links}<a href="/">App</a></nav></div></header>
+<header><div class="wrap"><div class="brand"><img src="/brand/mark-micro.svg" alt="" width="20" height="20">Thirdeye AI <span>pay-per-call inference</span></div><nav>${links}<a href="/">App</a></nav></div></header>
 <main><div class="wrap">${body}</div></main>
 <footer><div class="wrap">Public pages show what we choose to publish. Account balances, keys, partner terms and security findings are private and never rendered here.</div></footer>
 </body></html>`
@@ -259,10 +301,10 @@ const DOCS_AGENTS = `
 export function registerPublicRoutes(app: SessionApp): void {
   app.get('/platform', (c) => c.html(layout('Platform', '/platform', PLATFORM)))
   app.get('/docs', (c) => c.html(layout('Documentation', '/docs', DOCS_HUB)))
-  app.get('/docs/api', (c) => c.html(layout('API guide', '/docs', DOCS_API)))
-  app.get('/docs/mcp', (c) => c.html(layout('MCP guide', '/docs', DOCS_MCP)))
-  app.get('/docs/x402', (c) => c.html(layout('x402 guide', '/docs', DOCS_X402)))
-  app.get('/docs/agents', (c) => c.html(layout('Agent API', '/docs', DOCS_AGENTS)))
+  app.get('/docs/api', (c) => c.html(layout('API guide', '/docs', DOCS_API, '/docs/api')))
+  app.get('/docs/mcp', (c) => c.html(layout('MCP guide', '/docs', DOCS_MCP, '/docs/mcp')))
+  app.get('/docs/x402', (c) => c.html(layout('x402 guide', '/docs', DOCS_X402, '/docs/x402')))
+  app.get('/docs/agents', (c) => c.html(layout('Agent API', '/docs', DOCS_AGENTS, '/docs/agents')))
   app.get('/roadmap', (c) => c.html(layout('Roadmap', '/roadmap', ROADMAP)))
   app.get('/partnerships', (c) => c.html(layout('Partnerships', '/partnerships', PARTNERSHIPS)))
 

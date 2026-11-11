@@ -93,7 +93,7 @@ function App() {
 function TopBar({ user, mode, balance, onLogout, onNeedSwitch }: { user: User | null; mode: string; balance: number | null; onLogout: () => void; onNeedSwitch: () => void }) {
   return (
     <div className="topbar">
-      <div className="brand"><span className="eye" /> Thirdeye AI</div>
+      <div className="brand"><img className="mark" src="/brand/mark-micro.svg" alt="" width={22} height={22} /> Thirdeye AI</div>
       {user && <span className={'badge' + (mode === 'postgres' ? ' live' : '')}>{mode === 'postgres' ? 'LIVE' : 'DEMO'}</span>}
       <span className="spacer" />
       {user && <ChainBadge onNeedSwitch={onNeedSwitch} />}
