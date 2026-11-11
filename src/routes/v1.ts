@@ -12,6 +12,7 @@ import { adjustCredit } from '../lib/billing.js'
 import { checkAndConsume, refundSlot } from '../lib/ratelimit.js'
 import type { AppEnv } from '../lib/types.js'
 import { recordUsage } from '../lib/usage.js'
+import { createStreamAccountant } from '../lib/streamAccounting.js'
 import { normalizeUsage } from '../lib/tokenUsage.js'
 import { computeCostMicrosDetailed } from '../lib/pricing.js'
 
@@ -163,124 +164,51 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
 
   // 5. Execution
   if (body.stream) {
+    // Reserve before the first token leaves, and before the upstream is even called, so the
+    // true-up always compares against a known figure. Under the old order (tee first, reserve
+    // after) a fast provider could settle while reservedMicros was still 0 and bill twice.
+    let reservedMicros = 0
+    let reservedFromKey = 0
+    if (!providerCall.byok) {
+      const est = normalizeUsage(null, { prompt: estTokens, completion: Number(body.max_tokens) || 120 })
+      reservedMicros = computeCostMicrosDetailed(modelRow, est, env.platformMarginPct, false)
+      if (reservedMicros > 0) {
+        const keyCreditBeforeReserve = await getKeyCreditMicros(apiKey.id)
+        reservedFromKey = splitKeyCredit(keyCreditBeforeReserve, reservedMicros).fromKey
+        const reserve = await chargeCall(apiKey.id, user.id, reservedMicros, 'stream-reserve:' + newId(), {
+          allowNegative: await isCovered(user.wallet),
+        })
+        if (!reserve.ok) {
+          await refundSlot(apiKey.id, estTokens)
+          return c.json({ error: { message: 'Insufficient credits. Top up with USDC on Base.', type: 'billing', code: 402 } }, 402)
+        }
+      }
+    }
+
     try {
       const upstreamRes = await providerCall.stream(body)
       if (!upstreamRes.body) {
         throw new UpstreamError('No stream body received from provider stream', 500)
       }
 
-      let reservedMicros = 0
-      let reservedFromKey = 0
-
-      const [stream1, stream2] = upstreamRes.body.tee()
-
-      // Background processing of stream2 to parse usage and charge
-      const streamTask = (async () => {
-        let promptTokens = estTokens
-        let completionTokens = 0
-        let totalChars = 0
-        try {
-          let streamUsage: any = null
-          const reader = stream2.getReader()
-          const decoder = new TextDecoder()
-          let buffer = ''
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split('\n')
-            buffer = lines.pop() ?? ''
-            for (const line of lines) {
-              const trimmed = line.trim()
-              if (trimmed.startsWith('data: ')) {
-                const jsonStr = trimmed.slice(6).trim()
-                if (jsonStr === '[DONE]') continue
-                try {
-                  const parsed = JSON.parse(jsonStr)
-                  if (parsed.usage) {
-                    if (typeof parsed.usage.prompt_tokens === 'number') promptTokens = parsed.usage.prompt_tokens
-                    if (typeof parsed.usage.completion_tokens === 'number') completionTokens = parsed.usage.completion_tokens
-                    // Keep the provider's own usage object so cache and reasoning tokens survive streaming.
-                    streamUsage = parsed.usage
-                  }
-                  if (parsed.choices?.[0]?.delta?.content) {
-                    totalChars += parsed.choices[0].delta.content.length
-                  }
-                } catch (_) {}
-              }
-            }
-          }
-          if (completionTokens === 0 && totalChars > 0) {
-            completionTokens = Math.ceil(totalChars / 4)
-          }
-          const latencyMs = Date.now() - startTime
-          const usage = normalizeUsage(streamUsage, { prompt: promptTokens, completion: completionTokens })
-          const costMicros = computeCostMicrosDetailed(
-            modelRow,
-            usage,
-            env.platformMarginPct,
-            providerCall.byok
-          )
-          const deltaMicros = costMicros - reservedMicros
-          if (deltaMicros > 0) {
-            await chargeCall(apiKey.id, user.id, deltaMicros, 'stream-trueup:' + newId(), {
-              allowNegative: await isCovered(user.wallet),
-            })
-          } else if (deltaMicros < 0) {
-            // Refund along the same split the reserve used, or the key stays overcharged while
-            // the account is credited money it never spent.
-            const refund = refundSplit(-deltaMicros, reservedFromKey)
-            if (refund.toKey > 0) await creditKey(apiKey.id, refund.toKey)
-            if (refund.toAccount > 0) await adjustCredit(user.id, refund.toAccount, 'stream-trueup-refund')
-          }
-          if (costMicros > 0) await chargeKeyBudget(apiKey, costMicros)
-          await recordUsage({
-            user_id: user.id,
-            api_key_id: apiKey.id,
-            model: requestedModel,
-            provider: modelRow.provider,
-            byok: providerCall.byok,
-            prompt_tokens: promptTokens,
-            completion_tokens: completionTokens,
-            input_cached_read: usage.input_cached_read,
-            input_cache_write: usage.input_cache_write,
-            reasoning_tokens: usage.reasoning_tokens,
-            rate_card_version: RATE_CARD_VERSION,
-            cost_usd_micros: costMicros,
-            status: 'stream',
-            latency_ms: latencyMs,
-          })
-        } catch (e) {
-          console.error('Error processing stream tee:', e)
-        }
-      })()
-      // Keep the accounting alive after the response closes. Without this the runtime is
-      // free to freeze the function the moment the stream ends, which silently loses the
-      // true-up; awaiting as a fallback is slower but never wrong.
-      try {
-        c.executionCtx.waitUntil(streamTask)
-      } catch {
-        streamTask.catch(() => {})
-      }
-
-      // Reserve an estimate before the first token leaves: if the accounting task never
-      // finishes (serverless can end a function once the response closes) the call is still
-      // paid for, and the tee trues it up to the real figure.
-      if (!providerCall.byok) {
-        const est = normalizeUsage(null, { prompt: estTokens, completion: Number(body.max_tokens) || 120 })
-        reservedMicros = computeCostMicrosDetailed(modelRow, est, env.platformMarginPct, false)
-        const keyCreditBeforeReserve = await getKeyCreditMicros(apiKey.id)
-        reservedFromKey = splitKeyCredit(keyCreditBeforeReserve, reservedMicros).fromKey
-        if (reservedMicros > 0) {
-          const res1 = await chargeCall(apiKey.id, user.id, reservedMicros, 'stream-reserve:' + newId(), {
-            allowNegative: await isCovered(user.wallet),
-          })
-          if (!res1.ok) {
-            await refundSlot(apiKey.id, estTokens)
-            return c.json({ error: { message: 'Insufficient credits. Top up with USDC on Base.', type: 'billing', code: 402 } }, 402)
-          }
-        }
-      }
+      // The response is the accountant. Settlement runs in the stream's flush, so the runtime
+      // cannot end the invocation before the true-up lands. `c.executionCtx` is never used:
+      // hono/vercel's handle() calls app.fetch(req) with no ExecutionContext, so it throws.
+      const accountant = createStreamAccountant({
+        userId: user.id,
+        wallet: user.wallet,
+        apiKey,
+        modelRow,
+        requestedModel,
+        provider: modelRow.provider,
+        byok: providerCall.byok,
+        marginPct: env.platformMarginPct,
+        estTokens,
+        reservedMicros,
+        reservedFromKey,
+        startedAt: startTime,
+        rateCardVersion: RATE_CARD_VERSION,
+      })
 
       c.header('Content-Type', 'text/event-stream')
       c.header('Cache-Control', 'no-cache')
@@ -288,12 +216,21 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
       c.header('X-Thirdeye-Model', requestedModel)
       c.header('X-Thirdeye-Byok', providerCall.byok ? 'true' : 'false')
       c.header('X-Thirdeye-Cost-Usd', (reservedMicros / 1e6).toFixed(6))
+      // A stream cannot know its final cost before its last token, so say what this number is.
+      c.header('X-Thirdeye-Cost-Basis', 'estimate')
       c.header('X-Thirdeye-Key-Credit-Remaining-Usd', ((await getKeyCreditMicros(apiKey.id)) / 1e6).toFixed(6))
       c.header('X-RateLimit-Remaining-RPM', String(Math.max(0, apiKey.rpm - rl.rpm_used)))
 
-      return c.body(stream1)
+      return c.body(upstreamRes.body.pipeThrough(accountant.transform) as any)
     } catch (err: any) {
       await refundSlot(apiKey.id, estTokens)
+      // Nothing streamed, so the reserve comes back rather than becoming a charge for a call
+      // that never happened.
+      if (reservedMicros > 0) {
+        const refund = refundSplit(reservedMicros, reservedFromKey)
+        if (refund.toKey > 0) await creditKey(apiKey.id, refund.toKey)
+        if (refund.toAccount > 0) await adjustCredit(user.id, refund.toAccount, 'stream-reserve-refund')
+      }
       const status = err instanceof UpstreamError ? err.status : 500
       const payload =
         err instanceof UpstreamError
