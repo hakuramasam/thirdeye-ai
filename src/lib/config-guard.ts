@@ -1,5 +1,6 @@
 /**
- * Legible refusal for a deployment whose signing secrets failed validation.
+ * Legible refusal for a deployment whose configuration failed validation: signing secrets first,
+ * then a serverless runtime with no database, which would otherwise serve an in-memory database.
  *
  * The strictness itself lives in security.ts and env.ts: a production boot with a missing,
  * development, short or duplicated secret is still refused. What this module fixes is the way
@@ -28,7 +29,7 @@ export function misconfiguredBody(problems: SecretProblem[]) {
     error: {
       type: 'misconfigured',
       message:
-        'This deployment refused to start because its signing secrets are unsafe. ' +
+        'This deployment refused to start because its configuration is unsafe. ' +
         'Fix the environment variables named in problems, then redeploy.',
       problems: configStatus(problems).problems,
     },

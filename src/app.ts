@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { logger } from 'hono/logger'
 import type { AppEnv } from './lib/types.js'
 import { migrate, dbMode } from './db/index.js'
-import { secretProblems } from './lib/env.js'
+import { configProblems } from './lib/env.js'
 import { configGuard, healthzBody } from './lib/config-guard.js'
 import { seedDemoData } from './db/seed-demo.js'
 
@@ -32,8 +32,9 @@ const app = new Hono<AppEnv>()
 app.use(logger())
 
 // First, before anything touches the database: refuse the whole API on a deployment whose signing
-// secrets failed validation, naming the variable instead of dying as a bare 500.
-app.use('*', configGuard(secretProblems))
+// secrets or database configuration failed validation, naming the variable instead of dying as a
+// bare 500 or, worse, serving an in-memory database that silently loses every write.
+app.use('*', configGuard(configProblems))
 
 // Ensure schema + (in demo mode) demo data exist before any DB-backed request.
 let bootstrapped: Promise<void> | null = null
@@ -55,7 +56,7 @@ app.use('/api/*', async (_c, next) => {
   await next()
 })
 
-app.get('/api/healthz', (c) => c.json(healthzBody(secretProblems, dbMode())))
+app.get('/api/healthz', (c) => c.json(healthzBody(configProblems, dbMode())))
 
 registerAuthRoutes(app)
 registerKeysRoutes(app)

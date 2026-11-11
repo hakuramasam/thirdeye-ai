@@ -94,3 +94,55 @@ test('the underlying refusal is unchanged: production still rejects dev and shor
   assert.equal(validateSecrets({ sessionSecret: same, masterKey: same, nodeEnv: 'production' }).length, 1)
   assert.deepEqual(validateSecrets({ sessionSecret: 'short', masterKey: 'short', nodeEnv: 'development' }), [])
 })
+
+// ── A deployed runtime with no database ────────────────────────────────────────────────────────
+
+import { validateDatabase } from '../src/lib/security.js'
+
+test('a serverless boot with no connection string is refused, not silently run in memory', () => {
+  const problems = validateDatabase({ databaseUrl: '', isServerless: true })
+  assert.equal(problems.length, 1)
+  assert.equal(problems[0].name, 'DATABASE_URL')
+  assert.match(problems[0].problem, /in-memory/)
+  assert.equal(problems[0].problem.includes('memory://'), false, 'name the consequence, not the URL')
+})
+
+test('a production boot without a connection string is refused even off serverless', () => {
+  assert.equal(validateDatabase({ databaseUrl: '', nodeEnv: 'production' }).length, 1)
+  // Local work and the test suite run the file-backed database on purpose.
+  assert.deepEqual(validateDatabase({ databaseUrl: '', nodeEnv: 'development' }), [])
+  assert.deepEqual(validateDatabase({ databaseUrl: '', isServerless: false }), [])
+})
+
+test('a real connection string passes, and a wrong scheme does not', () => {
+  assert.deepEqual(validateDatabase({ databaseUrl: 'postgresql://u:p@host/db', isServerless: true }), [])
+  assert.deepEqual(validateDatabase({ databaseUrl: '  postgres://u:p@host/db  ', isServerless: true }), [])
+  const wrong = validateDatabase({ databaseUrl: 'mysql://u:p@host/db', isServerless: true })
+  assert.equal(wrong.length, 1)
+  assert.match(wrong[0].problem, /postgres/)
+})
+
+test('the database refusal behaves like a secret refusal: 503 everywhere, health still answers', async () => {
+  const problems = validateDatabase({ databaseUrl: '', isServerless: true })
+  const app = guarded(problems)
+
+  const api = await app.request('/api/v1/models')
+  assert.equal(api.status, 503)
+  const body = (await api.json()) as any
+  assert.equal(body.error.type, 'misconfigured')
+  assert.deepEqual(
+    body.error.problems.map((p: any) => p.name),
+    ['DATABASE_URL']
+  )
+
+  // The health endpoint stays reachable, so the refusal is observable from outside.
+  const healthApp = new Hono()
+  healthApp.use('*', configGuard(problems) as never)
+  healthApp.get(HEALTH_PATH, (c) => c.json(healthzBody(problems, 'pglite', '2026-11-11T00:00:00.000Z')))
+  const health = await healthApp.request(HEALTH_PATH)
+  assert.equal(health.status, 200)
+  const hb = (await health.json()) as any
+  assert.equal(hb.ok, false, 'a monitor fails on the body, not just on the status code')
+  assert.equal(hb.mode, 'pglite', 'the mode shows the in-memory fallback that caused the refusal')
+  assert.equal(hb.config.problems[0].name, 'DATABASE_URL')
+})
