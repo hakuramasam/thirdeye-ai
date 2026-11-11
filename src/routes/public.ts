@@ -79,7 +79,7 @@ const PLATFORM = `
 <p class="lead">Thirdeye routes requests to several model providers behind one OpenAI-compatible API and bills each call at cost plus margin. No subscription, no seat licence, no minimum.</p>
 <div class="grid">
   <div class="card"><h3>One API, several providers</h3><p>Point an existing OpenAI client at our base URL. Model names resolve to a live provider pool, with a fallback chain behind each one.</p></div>
-  <div class="card"><h3>Per-call pricing</h3><p>Every response reports the billed amount in <code>x-thirdeye-cost-usd</code>, measured, not estimated.</p></div>
+  <div class="card"><h3>Per-call pricing</h3><p>Every JSON response reports its billed amount in <code>x-thirdeye-cost-usd</code>, measured. A stream reports the reserved estimate up front, settles to the measured cost as it ends, and says which figure it is sending in <code>x-thirdeye-cost-basis</code>.</p></div>
   <div class="card"><h3>Prepaid credit</h3><p>Fund the account, or fund a specific API key. A key can carry its own balance and its own monthly ceiling.</p></div>
   <div class="card"><h3>Bring your own key</h3><p>Supply a provider key and it is stored encrypted, used only for your calls, and never shown again.</p></div>
   <div class="card"><h3>Agents with budgets</h3><p>Registered agents run with a step cap, a spend cap and an allowlist for outbound paid tool calls.</p></div>
@@ -185,12 +185,12 @@ const ROADMAP = `
 <li>Agents with MCP servers, step and spend caps, and a SSRF-guarded fetch tool.</li>
 <li>Public feedback intake with a triage queue.</li>
 <li>Hardening pass on payment verification, log hygiene and auth abuse limits.</li>
+<li>Streaming settled at measured cost: the reserve is trued up inside the response stream, so the charge no longer depends on the runtime keeping a background task alive.</li>
+<li>Continuous integration: typecheck, the full suite and a credential scan on every pull request.</li>
 </ul>
 <h2>In progress</h2>
 <ul>
 <li><strong>Public pages and agent-facing API</strong>: a documented surface an outside agent can join and use without a human reading the source.</li>
-<li><strong>Continuous integration</strong>: typecheck, the full suite and a secret scan gating every push, before any agent is given a write path.</li>
-<li><strong>Streaming reconciliation</strong>: streams are charged an estimate up front; the true-up to measured cost is not landing yet.</li>
 <li><strong>Finality policy</strong>: a deposit is credited on confirmation depth, and the reorg case needs an explicit rule.</li>
 </ul>
 <h2>Later</h2>

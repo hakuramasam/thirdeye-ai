@@ -84,7 +84,7 @@ Open, ordered by what would hurt most:
 | PGlite silently substitutes for Postgres when `DATABASE_URL` is missing, so a misconfig loses data instead of failing loudly | high | open |
 | Volatile deposits sit `pending_conversion` with no caller for settle: the gas wallet holds 0 ETH, so conversions are safe but frozen | high, business | blocker outside code |
 | Two Accounts are credited in accounting but the settle step cannot sign: deposits land in a passkey-only vault we cannot move | high, business | blocker outside code |
-| Streaming charges the estimate only, roughly 45% undercharge, because the true-up row never lands | medium | open |
+| Streaming charges the estimate only, roughly 45% undercharge, because the true-up row never lands | medium | fixed in d5fb69a, measured |
 | No structured audit log with correlation ids | medium, blocks autonomy | open |
 | WalletConnect dependency cluster, 8 residual Dependabot alerts | low, accepted | documented |
 | SEC-006/007/008 | medium | in progress |
@@ -92,6 +92,13 @@ Open, ordered by what would hurt most:
 Closed today and verified live: sender-ownership credit exploit, x402 probe SSRF, agent run
 crash-safety and locking, MCP/http_fetch SSRF guard, stale running rows, Vite advisory range,
 SIWE log leak, BYOK rotation gap.
+
+Streaming reconciliation, closed 2026-11-11 in `d5fb69a` and measured on production: the cause
+was `hono/vercel`'s `handle()` calling `app.fetch(req)` with no ExecutionContext, so
+`c.executionCtx` threw and the accounting fell back to a promise Vercel froze away with the
+response. Settlement is now a `TransformStream` the response is made of. A streamed call through
+the production relay moved the public totals by exactly one request and 451 measured tokens, and
+six tests assert the true-up row exists by the time the caller has read the last byte.
 
 ## 5. Assessment
 
