@@ -117,11 +117,18 @@ describe('run accounting survives a crash', () => {
     assert.equal(res.status, 'success')
 
     const events = await query(
-      `SELECT tool, ok, refused FROM agent_run_events WHERE run_id = $1 AND tool = 'delegate_to_agent'`,
+      `SELECT tool, ok, refused, result_excerpt FROM agent_run_events WHERE run_id = $1 AND tool = 'delegate_to_agent'`,
       [res.runId]
     )
     assert.equal(events.rows.length, 1, 'one delegation call')
     const call: any = events.rows[0]
+    // Check the premise before the verdict: without the note in the stored excerpt, "not refused"
+    // would pass on a call that never carried the text the old heuristic misread.
+    assert.match(
+      String(call.result_excerpt ?? ''),
+      /\[write withheld\]/,
+      'the handoff result should carry the note that used to read as a refusal'
+    )
     assert.equal(call.refused, false, 'a handoff that produced a report was not refused')
     assert.equal(call.ok, true, 'a handoff that produced a report worked')
 
@@ -132,5 +139,21 @@ describe('run accounting survives a crash', () => {
       [res.runId]
     )
     assert.equal(Number(child.n), 1, 'the delegation must have reached the teammate')
+  })
+
+  it('classifies a refused or failed write from the result text, which is the only place it appears', async () => {
+    const { classifyCallOutcome } = await import('../src/agents/runner.js')
+    // A settled handoff that carries the withheld note is a success, not a refusal.
+    assert.deepEqual(classifyCallOutcome(null, 'Delegated. [write withheld]'), { refused: false, ok: true })
+    // An authorization refusal the runner states itself.
+    assert.deepEqual(classifyCallOutcome('repo_write requires write authority', 'Refused: repo_write needs write authority for this run.'), { refused: true, ok: false })
+    // The two repo writers answer without throwing, so the text is the only evidence they carry.
+    assert.deepEqual(classifyCallOutcome(null, 'repo_write refused: path outside the allowlist'), { refused: true, ok: false })
+    assert.deepEqual(classifyCallOutcome(null, 'repo_write failed: could not resolve the base branch.'), { refused: false, ok: false })
+    // A write that landed is a success.
+    assert.deepEqual(classifyCallOutcome(null, 'repo_write ok: commit abc1234'), { refused: false, ok: true })
+    // Ordinary tool failures stay failures.
+    assert.deepEqual(classifyCallOutcome(null, 'Tool error: boom'), { refused: false, ok: false })
+    assert.deepEqual(classifyCallOutcome(null, 'Unknown tool: nope'), { refused: false, ok: false })
   })
 })

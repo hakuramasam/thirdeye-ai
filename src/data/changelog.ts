@@ -32,4 +32,4 @@ export const CHANGELOG: ChangelogEntry[] = [
 ]
 
 // Build-time constant, updated per release: the runtime cannot count its own suite.
-export const SUITE = { tests: 373, measuredOn: "2026-11-12", command: "npm test (PGlite, DATABASE_URL unset)" }
+export const SUITE = { tests: 376, measuredOn: "2026-11-12", command: "npm test (PGlite, DATABASE_URL unset)" }
