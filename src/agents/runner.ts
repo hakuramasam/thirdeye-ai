@@ -470,7 +470,10 @@ async function runAgentInner(
       // slow provider response run past the platform's kill.
       const callMs = lastUsefulMoment - Date.now()
       if (!(callMs > 0)) {
-        throw new Error('deadline_exceeded: no time left in this invocation to call the model')
+        // finish(), not throw: a throw reaches the outer catch, and this run has already been
+        // charged for the steps behind it. Closing here keeps the run row, its spend and its tool
+        // count in agreement with the ledger.
+        return await finish('error', null, toolCalls, spend, 'deadline_exceeded: no time left in this invocation to call the model')
       }
       const res = await callWithRateLimitRetry(
         () => llm!.call(useTools ? { messages, tools } : { messages }, { timeoutMs: callMs }),
@@ -503,7 +506,9 @@ async function runAgentInner(
         // Tool work (MCP, x402, a delegated child) is not bounded by the model-call timeout, so a
         // spent invocation budget must stop it here rather than let it eat the finalization reserve.
         if (!(lastUsefulMoment - Date.now() > 0)) {
-          throw new Error('deadline_exceeded: no time left in this invocation to run the tool work')
+          // Same reason as the model guard above: this run has paid for the response that asked for
+          // the tool, so it must close with its own counters instead of unwinding into the catch.
+          return await finish('error', null, toolCalls, spend, 'deadline_exceeded: no time left in this invocation to run the tool work')
         }
         messages.push({
           role: 'assistant',

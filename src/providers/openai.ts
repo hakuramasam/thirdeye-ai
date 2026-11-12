@@ -27,6 +27,8 @@ export async function callOpenAIChat({
   raw?: any
 }> {
   const endpoint = buildEndpoint(baseUrl)
+  // One timer per request: computing this twice discarded the first AbortSignal.
+  const signal = requestSignal(timeoutMs)
   let res: Response
   try {
     res = await fetch(endpoint, {
@@ -36,7 +38,7 @@ export async function callOpenAIChat({
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({ ...params, stream: false }),
-      ...(requestSignal(timeoutMs) ? { signal: requestSignal(timeoutMs)! } : {}),
+      ...(signal ? { signal } : {}),
     })
   } catch (e: any) {
     // An aborted call is our own deadline, not an upstream verdict: name it so the run records
@@ -45,7 +47,14 @@ export async function callOpenAIChat({
   }
 
   if (!res.ok) {
-    const errBody = await res.json().catch(() => null)
+    // A refusal body is not a verdict, but an abort while reading it is our own deadline and must
+    // not be swallowed as "no reason given": the caller has to see why nothing came back.
+    let errBody: any = null
+    try {
+      errBody = await res.json()
+    } catch (e: any) {
+      if (e?.name === 'TimeoutError' || e?.name === 'AbortError') mapTimeoutError(e, timeoutMs)
+    }
     const msg = errBody?.error?.message || `Upstream OpenAI error: ${res.statusText || res.status}`
     throw new UpstreamError(msg, res.status, errBody || { error: { message: msg, type: 'upstream', code: res.status } })
   }

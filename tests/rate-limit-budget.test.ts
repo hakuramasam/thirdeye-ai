@@ -5,6 +5,8 @@ import assert from 'node:assert/strict'
 
 const { callWithRateLimitRetry, retryDelayMs } = await import('../src/agents/retry.js')
 const { errorCodeFrom } = await import('../src/agents/runner.js')
+const { callAnthropicChat } = await import('../src/providers/anthropic.js')
+const { callOpenAIChat } = await import('../src/providers/openai.js')
 
 const GROQ_FREE_TIER = 'Rate limit reached for model `openai/gpt-oss-120b` in organization `org_x` on tokens per minute (TPM): Limit 8000, Used 7980. Please try again in 12.5s.'
 
@@ -286,6 +288,58 @@ describe('the deadline reaches the request itself', () => {
       )
     } finally {
       server.close()
+    }
+  })
+})
+
+describe('a dead invocation answers with its reason, not a mystery abort', () => {
+  const timeoutError = () => {
+    const e: any = new Error('The operation was aborted due to timeout')
+    e.name = 'TimeoutError'
+    return e
+  }
+
+  it('an Anthropic call that outlives its timeout becomes a named 504', async () => {
+    const real = globalThis.fetch
+    globalThis.fetch = ((_url: any, init: any) =>
+      new Promise((_resolve, reject) => {
+        const signal = init?.signal
+        if (!signal) return reject(new Error('no signal was passed: the timeout would never fire'))
+        const fail = () => reject(timeoutError())
+        if (signal.aborted) return fail()
+        signal.addEventListener('abort', fail)
+      })) as any
+    try {
+      await assert.rejects(
+        () =>
+          callAnthropicChat({
+            apiKey: 'test',
+            params: { model: 'claude-test', messages: [{ role: 'user', content: 'hi' }] },
+            timeoutMs: 30,
+          }),
+        (e: any) => e.status === 504 && /timed out after \d+ms/.test(e.message)
+      )
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+
+  it('a refusal body aborted by the deadline is reported, not swallowed as "no reason given"', async () => {
+    const real = globalThis.fetch
+    globalThis.fetch = (async () => ({
+      ok: false,
+      status: 429,
+      statusText: 'Too Many Requests',
+      headers: new Headers(),
+      json: async () => { throw timeoutError() },
+    })) as any
+    try {
+      await assert.rejects(
+        () => callOpenAIChat({ apiKey: 'test', baseUrl: 'https://example.test/v1', params: { model: 'm', messages: [] }, timeoutMs: 30 }),
+        (e: any) => e.status === 504 && /timed out after 30ms/.test(e.message)
+      )
+    } finally {
+      globalThis.fetch = real
     }
   })
 })
