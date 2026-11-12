@@ -58,23 +58,28 @@ export type SiweDecision = { ok: boolean; reason?: string; lenient: boolean }
  */
 export function validateDatabase(input: {
   databaseUrl?: string
+  /** The variable the runtime actually read. Previews prefer PREVIEW_DATABASE_URL. */
+  databaseUrlVar?: string
   isServerless?: boolean
   nodeEnv?: string
 }): SecretProblem[] {
   const deployed = Boolean(input.isServerless) || (input.nodeEnv ?? 'development') === 'production'
   if (!deployed) return []
   const problems: SecretProblem[] = []
+  // Name the variable in play, not the conventional one: a preview reads PREVIEW_DATABASE_URL, so
+  // reporting DATABASE_URL would send an operator to a variable that is not being consulted.
+  const name = input.databaseUrlVar || 'DATABASE_URL'
   const url = String(input.databaseUrl ?? '').trim()
   if (!url) {
     problems.push({
-      name: 'DATABASE_URL',
+      name,
       problem:
-        'missing on a deployment, which would fall back to an in-memory database that loses every write on restart',
+        'missing on a deployment, so the app would fall back to its local database (an in-memory one on serverless) and no write would reach production',
     })
     return problems
   }
   if (!/^postgres(ql)?:\/\//i.test(url)) {
-    problems.push({ name: 'DATABASE_URL', problem: 'not a postgres:// connection string' })
+    problems.push({ name, problem: 'not a postgres:// connection string' })
   }
   return problems
 }

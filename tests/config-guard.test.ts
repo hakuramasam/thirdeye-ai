@@ -146,3 +146,53 @@ test('the database refusal behaves like a secret refusal: 503 everywhere, health
   assert.equal(hb.mode, 'pglite', 'the mode shows the in-memory fallback that caused the refusal')
   assert.equal(hb.config.problems[0].name, 'DATABASE_URL')
 })
+
+test('the refusal names the variable a preview actually reads, not the conventional one', () => {
+  // Previews prefer PREVIEW_DATABASE_URL, so an operator told to fix DATABASE_URL would be editing
+  // a variable the runtime never consulted.
+  const preview = validateDatabase({ databaseUrl: '', databaseUrlVar: 'PREVIEW_DATABASE_URL', isServerless: true })
+  assert.deepEqual(preview.map((p) => p.name), ['PREVIEW_DATABASE_URL'])
+  const prod = validateDatabase({ databaseUrl: '', databaseUrlVar: 'DATABASE_URL', isServerless: true })
+  assert.deepEqual(prod.map((p) => p.name), ['DATABASE_URL'])
+})
+
+test('the missing-database reason states the fallback that would run, not just one of its forms', () => {
+  const [problem] = validateDatabase({ databaseUrl: '', isServerless: true })
+  // In-memory is the serverless form; a file-backed local boot is the other. Name the fallback.
+  assert.match(problem.problem, /local database/)
+  assert.match(problem.problem, /in-memory one on serverless/)
+  assert.equal(problem.problem.includes('memory://'), false, 'name the consequence, not the URL')
+})
+
+test('a deployment with a malformed DATABASE_URL still answers health, naming the reason', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const probe = spawnSync(process.execPath, ['--import', 'tsx', 'tests/helpers/app-health-probe.ts'], {
+    env: {
+      ...process.env,
+      DATABASE_URL: 'mysql://u:p@example.invalid/db',
+      PREVIEW_DATABASE_URL: '',
+      NODE_ENV: 'production',
+      VERCEL: '1',
+      PGLITE_DIR: 'memory://',
+      SESSION_SECRET: 's'.repeat(64),
+      MASTER_KEY: 'm'.repeat(64),
+    },
+    encoding: 'utf8',
+    timeout: 180_000,
+  })
+  const line = String(probe.stdout || '').trim().split('\n').filter(Boolean).pop() || '{}'
+  const out = JSON.parse(line) as Record<string, { status: number; body: any }>
+
+  // The whole point: migrate() would throw on this URL, and health has to survive it.
+  assert.equal(out['/api/healthz'].status, 200, `health should answer, got ${JSON.stringify(out)}`)
+  assert.equal(out['/api/healthz'].body.ok, false)
+  assert.deepEqual(
+    out['/api/healthz'].body.config.problems.map((p: any) => p.name),
+    ['DATABASE_URL']
+  )
+  assert.match(out['/api/healthz'].body.config.problems[0].problem, /postgres/)
+
+  // Everything else is refused, so the bad configuration is never served traffic.
+  assert.equal(out['/api/v1/models'].status, 503)
+  assert.equal(out['/api/v1/models'].body.error.type, 'misconfigured')
+})

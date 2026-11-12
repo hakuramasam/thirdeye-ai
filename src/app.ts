@@ -51,12 +51,19 @@ function bootstrap(): Promise<void> {
   return bootstrapped
 }
 
+/**
+ * Health is registered before the database bootstrap on purpose.
+ *
+ * It sat behind the middleware below, which runs migrate() first, so a deployment whose connection
+ * string was missing or malformed answered a generic 500 from migrate instead of naming the
+ * problem. A readiness probe that cannot survive the failure it exists to report is not a probe.
+ */
+app.get('/api/healthz', (c) => c.json(healthzBody(configProblems, dbMode())))
+
 app.use('/api/*', async (_c, next) => {
   await bootstrap()
   await next()
 })
-
-app.get('/api/healthz', (c) => c.json(healthzBody(configProblems, dbMode())))
 
 registerAuthRoutes(app)
 registerKeysRoutes(app)
