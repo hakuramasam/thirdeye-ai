@@ -257,7 +257,19 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
           }
         : null,
       platform_token: env.platformTokenAddress
-        ? { symbol: env.platformTokenSymbol, address: env.platformTokenAddress, live: true }
+        ? {
+            symbol: env.platformTokenSymbol,
+            address: env.platformTokenAddress,
+            decimals: env.platformTokenDecimals,
+            live: true,
+            chain_id: 8453,
+            chain: 'base',
+            // Priced by the published policy rate, not by the pool we run.
+            priced: Number(env.platformTokenUsdRate) > 0,
+            usd_rate: Number(env.platformTokenUsdRate) || 0,
+            bonus_bps: Number(env.platformTokenBonusBps) || 0,
+            max_deposit_usd: Number(env.platformTokenMaxDepositUsd) || 0,
+          }
         : null,
       mode: dbMode(),
     })
