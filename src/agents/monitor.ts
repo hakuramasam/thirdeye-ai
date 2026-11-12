@@ -337,10 +337,18 @@ export async function logRunEvent(e: {
   tool: string
   argsExcerpt?: string
   resultExcerpt?: string
+  /**
+   * Verdict from the caller that made the call, which is the only thing that knows whether the
+   * tool was refused. The text heuristic below is a fallback for callers that pass nothing, and
+   * it is wrong for any successful result that mentions a refusal, such as a delegation whose
+   * note says the write authority was withheld.
+   */
+  ok?: boolean
+  refused?: boolean
 }): Promise<void> {
   const text = String(e.resultExcerpt ?? '')
-  const refused = /\brefused\b|\bnot permitted\b|\bwithheld\b|\bdenied\b/i.test(text)
-  const ok = !refused && !/^Tool error|^repo_write failed/i.test(text.trim())
+  const refused = e.refused ?? /\brefused\b|\bnot permitted\b|\bwithheld\b|\bdenied\b/i.test(text)
+  const ok = e.ok ?? (!refused && !/^Tool error|^repo_write failed/i.test(text.trim()))
   await query(
     `INSERT INTO agent_run_events (id, run_id, agent_id, seq, tool, ok, refused, args_excerpt, result_excerpt)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,

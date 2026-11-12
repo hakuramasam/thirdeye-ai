@@ -38,6 +38,13 @@ export function decideCredit(input: {
   token: string
   oracleMicros: number
   realisedMicros?: number | null
+  /**
+   * True when the token is valued by an ops-published rate rather than a market, i.e. our
+   * own platform token. That is the one case where the platform deliberately issues credit
+   * against an asset it is not going to sell: the token is ours, the rate is ours, and the
+   * per-deposit cap plus the published bonus are the limits on the exposure.
+   */
+  policyPriced?: boolean
 }): CreditDecision {
   const oracle = Math.max(0, Math.floor(Number(input.oracleMicros) || 0))
   const realisedRaw = input.realisedMicros == null ? null : Math.max(0, Math.floor(Number(input.realisedMicros)))
@@ -47,6 +54,16 @@ export function decideCredit(input: {
     if (oracle <= 0) return { creditMicros: 0, status: 'zero_value', reason: 'valued at zero', settlement }
     // Face value is what we hold; still never more than the oracle valuation.
     return { creditMicros: oracle, status: 'credited', reason: 'settlement stablecoin received', settlement }
+  }
+
+  if (input.policyPriced) {
+    if (oracle <= 0) return { creditMicros: 0, status: 'zero_value', reason: 'valued at zero', settlement }
+    return {
+      creditMicros: oracle,
+      status: 'credited',
+      reason: 'platform token received; credited at the published policy rate',
+      settlement,
+    }
   }
 
   if (realisedRaw == null) {

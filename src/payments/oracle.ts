@@ -4,6 +4,8 @@ export type OracleQuote = {
   priceUsd: number
   liquidityUsd: number
   source: string
+  /** True when the price is an ops-published rate, so no market-depth floor applies. */
+  policy?: boolean
 }
 
 /**
@@ -14,7 +16,17 @@ export type OracleQuote = {
 export async function getTokenPriceUsd(token: TokenConfig): Promise<OracleQuote | null> {
   const cfg = token.oracle
   if (!cfg) return null
-  if (cfg.provider !== 'geckoterminal') return null
+
+  // Ops-published rate for our own token. Deliberately not a market read: the token's
+  // only pool is one we run, so pricing credit off it would be circular. The deposit cap
+  // is the guard here, not a liquidity floor.
+  if (cfg.provider === 'policy') {
+    const rate = Number(cfg.usdPerToken)
+    if (!Number.isFinite(rate) || rate <= 0) return null
+    return { priceUsd: rate, liquidityUsd: 0, source: 'policy', policy: true }
+  }
+
+  if (cfg.provider !== 'geckoterminal' || !cfg.network) return null
 
   const url = `https://api.geckoterminal.com/api/v2/networks/${cfg.network}/tokens/${token.address}`
   const res = await fetch(url, {

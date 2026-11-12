@@ -6,7 +6,7 @@ import { getBalanceMicros, creditDeposit } from '../lib/billing.js'
 import { one } from '../db/index.js'
 import { creditKey } from '../lib/keycredit.js'
 import { decideCredit } from '../lib/creditPolicy.js'
-import { CHAINS } from '../payments/chains.js'
+import { CHAINS, isPolicyPricedToken, platformTokenUsdMicros } from '../payments/chains.js'
 import { verifyDeposit } from '../payments/verify.js'
 import { findIncomingTransfer, checkSenderOwnership } from '../payments/verify.js'
 import { prepareAutoConvert, autoConvertPolicyFromEnv } from '../payments/autoConvert.js'
@@ -269,6 +269,69 @@ export function registerCreditsRoutes(app: SessionApp): void {
         403
       )
     }
+    // Platform token: valued by the published policy rate, never by the curve we run.
+    // It also has no tradable market to convert against, so the auto-convert analysis is
+    // skipped on purpose rather than refused.
+    if (isPolicyPricedToken(t.token)) {
+      const usdMicros = platformTokenUsdMicros(BigInt(t.raw_amount), t.decimals)
+      const received_at = t.to === String(env.platformReceiverAddress || '').toLowerCase()
+        ? 'treasury_vault'
+        : t.to === String(env.platformAutomationReceiver || '').toLowerCase()
+          ? 'automation_account'
+          : t.to === String(env.platformSponsorReceiver || '').toLowerCase()
+            ? 'sponsored_wallet'
+            : 'agent_wallet'
+      if (usdMicros == null) {
+        const refused = await recordPayment({
+          intent, userId: c.get('user')!.id, transfer: t, receivedAt: received_at,
+          usdMicros: 0, status: 'refused', refusalCode: 'price_unavailable',
+        })
+        return c.json({
+          accepted: false,
+          received_at,
+          verification: { ok: true, ...t },
+          intent: memoOf(intent),
+          payment_id: refused.paymentId,
+          refusal: {
+            code: 'price_unavailable',
+            message: 'No platform-token rate is published, so this deposit cannot be valued. Nothing was credited.',
+          },
+        }, 422)
+      }
+      const policyChain = chainSlugFor(chainId)
+      const policyDecision = decideCredit({
+        chainSlug: policyChain ?? '',
+        token: t.token,
+        oracleMicros: usdMicros,
+        policyPriced: true,
+      })
+      const policyRecord = await recordPayment({
+        intent, userId: c.get('user')!.id, transfer: t, receivedAt: received_at,
+        usdMicros, status: policyDecision.status === 'credited' ? 'recorded' : 'pending_conversion',
+        refusalCode: policyDecision.status === 'credited' ? null : policyDecision.status,
+      })
+      let policyCredited = false
+      if (
+        policyChain &&
+        policyDecision.status === 'credited' &&
+        shouldCreditPayment({ status: 'recorded', duplicate: policyRecord.duplicate, usdMicros })
+      ) {
+        const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
+        policyCredited = Boolean(dep.credited)
+      }
+      return c.json({
+        accepted: true,
+        received_at,
+        verification: { ok: true, ...t },
+        intent: memoOf(intent),
+        payment_id: policyRecord.paymentId,
+        credited: policyCredited,
+        credit_status: policyDecision.status,
+        credit_reason: policyDecision.reason,
+        oracle_usd: usdMicros / 1_000_000,
+      })
+    }
+
     const prepared = await prepareAutoConvert({
       chainId,
       tokenAddress: t.token,
@@ -463,6 +526,33 @@ export function registerCreditsRoutes(app: SessionApp): void {
           },
         },
         status
+      )
+    }
+
+    // Spendable credit is issued only for money we hold as money: the settlement stablecoin,
+    // or the platform token at its published policy rate. Any other volatile token is an asset
+    // we would have to sell first (see creditPolicy), so it is not credited here.
+    const creditDecision = decideCredit({
+      chainSlug: String(chain),
+      token: verification.token,
+      oracleMicros: verification.amount_usd_micros,
+      policyPriced: isPolicyPricedToken(verification.token),
+    })
+    if (creditDecision.status !== 'credited') {
+      return c.json(
+        {
+          credited: false,
+          credit_status: creditDecision.status,
+          credit_reason: creditDecision.reason,
+          token: verification.token,
+          oracle_usd: verification.amount_usd_micros / 1_000_000,
+          next_step:
+            creditDecision.status === 'pending_conversion'
+              ? 'This token is not a settlement asset, so no spendable credit is issued yet. Once it is converted to ' +
+                'the settlement stablecoin, the realised amount is credited. Claim it with POST /api/credits/payment-review.'
+              : 'The received token valued at zero, so nothing was credited.',
+        },
+        202
       )
     }
 

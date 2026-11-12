@@ -110,7 +110,15 @@ export type RunnerDeps = {
    */
   deadlineMs?: number
   mcpTools?: McpTools
+  /**
+   * Internal: counters handed in by `runAgent` so the crash path can still write what the run
+   * actually did. Set by the caller of `runAgent`, never by a feature.
+   */
+  progress?: RunProgress
 }
+
+/** Live per-run counters, shared between the body and the crash path. */
+export type RunProgress = { toolCalls: number; spendUsdMicros: number }
 
 /**
  * Time kept back from the invocation ceiling to write the run row, the audit event and the
@@ -225,8 +233,15 @@ export async function runAgent(
 ): Promise<RunResult> {
   const runId = deps.runId || randomUUID()
   const correlationId = deps.correlationId || newCorrelationId()
+  /**
+   * The run's own counters, owned here rather than inside the body: a throw skips `finish()`,
+   * and that used to close the run as error with spend and tool_calls still at zero even though
+   * the steps had already been paid for out of the agent's pot. The two numbers are the only
+   * record of what a crashed run cost, so they have to survive the throw.
+   */
+  const progress: RunProgress = { toolCalls: 0, spendUsdMicros: 0 }
   try {
-    return await runAgentInner(agent, input, user, { ...deps, runId, correlationId })
+    return await runAgentInner(agent, input, user, { ...deps, runId, correlationId, progress })
   } catch (e: any) {
     const message = String(e?.message || e).slice(0, 500)
     // A provider meter refusal is not a defect in our code: it means the work is owed, not done.
@@ -240,8 +255,9 @@ export async function runAgent(
         : `uncaught: ${message}`
     try {
       await query(
-        `UPDATE agent_runs SET status='error', error=$1 WHERE id=$2 AND status='running'`,
-        [stored, runId]
+        `UPDATE agent_runs SET status='error', error=$1, tool_calls=$2, spend_usd_micros=$3
+          WHERE id=$4 AND status='running'`,
+        [stored, progress.toolCalls, progress.spendUsdMicros, runId]
       )
       await query(`UPDATE agents SET last_run_at = now() WHERE id = $1`, [agent.id])
     } catch {
@@ -262,6 +278,10 @@ export async function runAgent(
         {
           errorCode: rateLimited ? 'rate_limited' : timedOut ? 'deadline_exceeded' : 'uncaught_exception',
           errorSummary: message,
+          // The run row above now holds the real counters, so the audit event has to agree with
+          // it or the ledger still says a crashed run cost nothing.
+          toolCalls: progress.toolCalls,
+          spendMicros: progress.spendUsdMicros,
         }
       )
     } catch {
@@ -271,12 +291,31 @@ export async function runAgent(
       runId,
       status: 'error',
       output: null,
-      tool_calls: 0,
-      spend_usd_micros: 0,
+      tool_calls: progress.toolCalls,
+      spend_usd_micros: progress.spendUsdMicros,
       error: stored,
+      // The caller needs to know a refused run may simply be retried, rather than reading it as a
+      // defect. The slot stays owed, so the next tick can pick it up.
       ...(rateLimited ? { rateLimited: true } : {}),
     }
   }
+}
+
+/**
+ * One verdict per tool call, used by both the run history and the audit trail.
+ *
+ * It is stated from the call site rather than guessed from the result text, because a successful
+ * handoff carries the note "[write withheld]" when no write authority was granted, and the old
+ * whole-text heuristic read that as a refusal. Two answers are still only visible in the text,
+ * because the repo writers report them without throwing: `repo_write refused: ...` is an
+ * authorization decision, and `repo_write failed: ...` reached GitHub and did not land. Without
+ * these two the working log would call a refused write a success.
+ */
+export function classifyCallOutcome(denied: string | null, result: unknown): { refused: boolean; ok: boolean } {
+  const text = String(result ?? '').trim()
+  const refused = Boolean(denied) || /^repo_write refused\b/i.test(text)
+  const ok = !refused && !/^(?:Tool error|Unknown tool|Tool unavailable|repo_write failed)\b/i.test(text)
+  return { refused, ok }
 }
 
 async function runAgentInner(
@@ -408,11 +447,13 @@ async function runAgentInner(
     return { runId, status, output, tool_calls: toolCalls, spend_usd_micros: spend, error, ...(artifact ? { artifact } : {}) }
   }
 
-  // Resolve model + LLM.
-  let modelRow: ModelRow | null = null
+  // Resolve model + LLM. The catalogue row is resolved even when a model is injected, because it
+  // is what prices each step: without it the run cannot record what it spent, which is exactly the
+  // hole the crash path below was fixed to close. An injected model whose id is not in the
+  // catalogue still prices at zero, so nothing changes for the existing tests.
+  const modelRow: ModelRow | null = await getModelRow(agent.model)
   let llm = deps.llm
   if (!llm) {
-    modelRow = await getModelRow(agent.model)
     if (!modelRow) return finish('error', null, 0, 0, `Model '${agent.model}' not found in catalog`)
     const { resolveProvider } = await import('../providers/index.js')
     const provider = await resolveProvider(user, modelRow)
@@ -445,6 +486,7 @@ async function runAgentInner(
       { role: 'user', content: input },
     ]
     const useTools = tools.length > 0
+    const progress: RunProgress = deps.progress ?? { toolCalls: 0, spendUsdMicros: 0 }
     let spend = 0
     let toolCalls = 0
     let byok = false
@@ -497,6 +539,7 @@ async function runAgentInner(
           return await finish('error', null, toolCalls, spend, 'Insufficient credits. Top up with USDC (Base) or USDG (Robinhood Chain) on the Deposit page.')
         }
         spend += cost
+        progress.spendUsdMicros = spend
         if (spend > budget) {
           return await finish('error', null, toolCalls, spend, 'Budget exceeded')
         }
@@ -541,28 +584,31 @@ async function runAgentInner(
                 maxSpendUsdMicros: Number(agent.x402_max_per_call_usd_micros ?? 20000),
                 allowedSellers: sellers,
               })
+              // The payment is already debited by paidFetch, so it is counted before the body is
+              // read: a body that never arrives must not make a settled payment look free in the
+              // run's accounting. The verification ask needs only the headers, so it moves up too.
+              if (r.paid) {
+                // Never throws: a partner being unreachable must not break a settled payment.
+                void recordAndVerifyPayment({
+                  runId,
+                  url: String(args.url),
+                  header: r.response.headers.get('x-payment-response'),
+                  spentMicros: r.spentUsdMicros,
+                })
+              }
+              if (!r.blocked && r.spentUsdMicros > 0) {
+                spend += r.spentUsdMicros
+                progress.spendUsdMicros = spend
+                if (spend > budget) {
+                  return await finish('error', null, toolCalls, spend, 'Budget exceeded (x402 payments counted)')
+                }
+              }
               const text = await r.response.text()
               if (r.blocked) {
                 // Surface the refusal to the model so it stops retrying this seller.
                 result = `Payment blocked: ${r.blocked.reason}. No payment was made. HTTP ${r.response.status}: ${text.slice(0, 500)}`
               } else {
                 result = `HTTP ${r.response.status}${r.paid ? ' (x402 paid)' : ''}: ${text.slice(0, MAX_TOOL_RESULT_CHARS)}`
-                if (r.paid) {
-                  // Record the payment and ask the seller to verify it. This never
-                  // throws: a partner being unreachable must not break a settled payment.
-                  void recordAndVerifyPayment({
-                    runId,
-                    url: String(args.url),
-                    header: r.response.headers.get('x-payment-response'),
-                    spentMicros: r.spentUsdMicros,
-                  })
-                }
-                if (r.spentUsdMicros > 0) {
-                  spend += r.spentUsdMicros
-                  if (spend > budget) {
-                    return await finish('error', null, toolCalls, spend, 'Budget exceeded (x402 payments counted)')
-                  }
-                }
               }
             } else if (tc.function.name === 'delegate_to_agent' && (agent as any).can_delegate) {
               const depth = Number((deps as any).delegationDepth ?? 0)
@@ -750,6 +796,12 @@ async function runAgentInner(
             result = `Tool error: ${String(e?.message || e).slice(0, 300)}`
           }
           toolCalls++
+          progress.toolCalls = toolCalls
+          // One verdict per call, used by both the run history and the audit trail. It is stated
+          // here rather than guessed from the result text downstream: a successful delegation
+          // carries the note "[write withheld]" when no write authority was granted, and the
+          // text heuristic in logRunEvent read that as a refused call.
+          const { refused: callRefused, ok: callOk } = classifyCallOutcome(denied, result)
           // Per-call history. Best-effort: a logging failure must never fail a run the user paid for.
           try {
             await logRunEvent({
@@ -757,6 +809,8 @@ async function runAgentInner(
               agentId: agent.id,
               seq: toolCalls,
               tool: tc.function.name,
+              ok: callOk,
+              refused: callRefused,
               argsExcerpt: String(tc.function.arguments ?? ''),
               resultExcerpt: String(result ?? ''),
             })
@@ -764,8 +818,8 @@ async function runAgentInner(
           try {
             await recordToolInvocation(audit, {
               tool: tc.function.name,
-              ok: !denied && !/^(Tool error|Unknown tool|Tool unavailable)/.test(String(result ?? '')),
-              refused: Boolean(denied),
+              ok: callOk,
+              refused: callRefused,
               argsExcerpt: String(tc.function.arguments ?? ''),
               resultExcerpt: String(result ?? ''),
               metadata: { seq: toolCalls, ...(denied ? { denial_reason: denied } : {}) },

@@ -25,6 +25,10 @@ export type VerifyResult =
       price_usd?: number
       /** Credit haircut applied, in basis points. */
       haircut_bps?: number
+      /** Credit premium applied, in basis points (platform token perk). */
+      bonus_bps?: number
+      /** Value of the tokens before the bonus, in USD. */
+      base_usd?: number
     }
   | { ok: false; code: VerifyErrorCode; message: string }
 
@@ -211,22 +215,26 @@ export async function verifyDeposit({
         message: `No live price for ${tokenConfig.symbol}. This deposit cannot be valued right now.`,
       }
     }
-    if (quote.liquidityUsd < tokenConfig.oracle.minLiquidityUsd) {
+    const floor = Number(tokenConfig.oracle.minLiquidityUsd ?? 0)
+    if (!quote.policy && quote.liquidityUsd < floor) {
       return {
         ok: false,
         code: 'liquidity_too_low',
         message: `${tokenConfig.symbol} market liquidity ($${Math.round(
           quote.liquidityUsd
-        )}) is below the $${tokenConfig.oracle.minLiquidityUsd} floor.`,
+        )}) is below the $${floor} floor.`,
       }
     }
 
     const rawAmount = BigInt(parsed.raw_amount)
     const tokenAmount = Number(rawAmount) / 10 ** tokenConfig.decimals
     const haircut = 1 - tokenConfig.oracle.haircutBps / 10_000
+    const bonusBps = Number(tokenConfig.oracle.bonusBps ?? 0)
     const grossUsd = tokenAmount * quote.priceUsd
     const netUsd = grossUsd * haircut
 
+    // The cap is applied to the valued amount, never to the bonus, so the perk cannot be
+    // used to walk past the per-deposit limit.
     if (netUsd > tokenConfig.oracle.maxDepositUsd) {
       return {
         ok: false,
@@ -244,13 +252,16 @@ export async function verifyDeposit({
       }
     }
 
+    const creditedUsd = netUsd * (1 + bonusBps / 10_000)
     return {
       ok: true,
       token: parsed.token,
-      amount_usd_micros: Math.floor(netUsd * 1_000_000),
+      amount_usd_micros: Math.floor(creditedUsd * 1_000_000),
       raw_amount: parsed.raw_amount,
       price_usd: quote.priceUsd,
       haircut_bps: tokenConfig.oracle.haircutBps,
+      bonus_bps: bonusBps,
+      base_usd: netUsd,
     }
   } catch (err: any) {
     return {

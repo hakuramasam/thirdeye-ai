@@ -42,8 +42,11 @@ test('every tracked token carries the verified contract facts', () => {
 test('illiquid tokens are gated by an oracle floor, never valued at face value', () => {
   for (const token of base().tokens.filter((t) => !t.stable)) {
     assert.ok(token.oracle, `${token.symbol} must be priced, not credited 1:1`)
+    // The platform token is priced by ops policy, not by a market we run, so the
+    // market-floor assertions below deliberately do not apply to it.
+    if (token.oracle.provider === 'policy') continue
     assert.equal(token.oracle.provider, 'geckoterminal')
-    assert.ok(token.oracle.minLiquidityUsd > 0, 'a liquidity floor keeps dust pools out')
+    assert.ok((token.oracle.minLiquidityUsd ?? 0) > 0, 'a liquidity floor keeps dust pools out')
     assert.ok(token.oracle.maxDepositUsd <= 25, `${token.symbol} stays small until it trades`)
     assert.ok(token.oracle.haircutBps > 0, 'credit must sit below the quoted price')
   }

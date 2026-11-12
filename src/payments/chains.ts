@@ -8,15 +8,25 @@ export type TokenConfig = {
   stable?: boolean
   /** Pricing rules for non-stable deposit tokens. */
   oracle?: {
-    provider: 'geckoterminal'
-    /** GeckoTerminal network slug, e.g. 'base' */
-    network: string
-    /** Refuse deposits when pool liquidity (USD) is below this. */
-    minLiquidityUsd: number
+    /**
+     * geckoterminal: price read from a public market, with a liquidity floor.
+     * policy: an ops-published USD rate, for a token whose only market is one we
+     * control (our own platform token). A market we own cannot price itself
+     * honestly, so the rate is set deliberately and gated by the deposit cap.
+     */
+    provider: 'geckoterminal' | 'policy'
+    /** GeckoTerminal network slug, e.g. 'base'. geckoterminal provider only. */
+    network?: string
+    /** Ops-published USD price per whole token. policy provider only. */
+    usdPerToken?: number
+    /** Refuse deposits when pool liquidity (USD) is below this. policy provider: unused. */
+    minLiquidityUsd?: number
     /** Max USD value accepted in a single deposit. */
     maxDepositUsd: number
     /** Credit discount applied to the oracle price, in basis points. */
     haircutBps: number
+    /** Credit premium added on top of the valued amount, in basis points (platform token perk). */
+    bonusBps?: number
   }
 }
 
@@ -153,19 +163,68 @@ export function registerPlatformToken(): void {
   if (!base) return
   const exists = base.tokens.some((t) => t.address.toLowerCase() === env.platformTokenAddress)
   if (exists) return
+  // Two ways to value our own token, chosen by whether an ops rate is published.
+  // With a rate, deposits are priced by policy: the token's only market is a curve we
+  // run, so a spot read off it would be circular (and, while the curve is one-sided,
+  // unquotable in the sell direction anyway). Without a rate it falls back to a public
+  // GeckoTerminal read, which refuses until the token has a real, deep market.
+  const rate = Number(env.platformTokenUsdRate) || 0
+  const oracle =
+    rate > 0
+      ? {
+          provider: 'policy' as const,
+          usdPerToken: rate,
+          maxDepositUsd: env.platformTokenMaxDepositUsd,
+          haircutBps: 0, // platform token deposits earn the bonus instead of a haircut
+          bonusBps: env.platformTokenBonusBps,
+        }
+      : {
+          provider: 'geckoterminal' as const,
+          network: 'base',
+          minLiquidityUsd: env.platformTokenMinLiquidityUsd,
+          maxDepositUsd: env.platformTokenMaxDepositUsd,
+          haircutBps: 0,
+          bonusBps: env.platformTokenBonusBps,
+        }
   base.tokens.push({
     symbol: env.platformTokenSymbol,
     address: env.platformTokenAddress,
     decimals: env.platformTokenDecimals,
     stable: false,
-    oracle: {
-      provider: 'geckoterminal',
-      network: 'base',
-      minLiquidityUsd: env.platformTokenMinLiquidityUsd,
-      maxDepositUsd: env.platformTokenMaxDepositUsd,
-      haircutBps: 0, // platform token deposits earn the bonus instead of a haircut
-    },
+    oracle,
   })
+}
+
+/** True when this address is the platform token, valued by an ops-published rate. */
+export function isPlatformToken(tokenAddress: string): boolean {
+  if (!env.platformTokenAddress || !tokenAddress) return false
+  return String(tokenAddress).toLowerCase() === env.platformTokenAddress
+}
+
+/**
+ * Value a platform-token amount at the published policy rate, bonus included.
+ * Returns null when no policy rate is published, so callers refuse rather than
+ * credit an unvalued deposit.
+ */
+export function platformTokenUsdMicros(rawAmount: bigint, decimals: number): number | null {
+  const base = CHAINS.find((c) => c.id === 'base')
+  const token = base?.tokens.find((t) => t.address.toLowerCase() === env.platformTokenAddress)
+  const cfg = token?.oracle
+  if (!cfg || cfg.provider !== 'policy') return null
+  const rate = Number(cfg.usdPerToken)
+  if (!Number.isFinite(rate) || rate <= 0) return null
+  const amount = Number(rawAmount) / 10 ** Number(decimals)
+  const bonus = 1 + Number(cfg.bonusBps ?? 0) / 10_000
+  if (!Number.isFinite(amount) || amount <= 0) return null
+  return Math.round(amount * rate * bonus * 1_000_000)
+}
+
+/** True when the token is priced by ops policy rather than a public market. */
+export function isPolicyPricedToken(tokenAddress: string): boolean {
+  if (!isPlatformToken(tokenAddress)) return false
+  const base = CHAINS.find((c) => c.id === 'base')
+  const token = base?.tokens.find((t) => t.address.toLowerCase() === env.platformTokenAddress)
+  return token?.oracle?.provider === 'policy'
 }
 
 registerPlatformToken()

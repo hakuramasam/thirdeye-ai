@@ -59,6 +59,10 @@
       "destination": "/api"
     },
     {
+      "source": "/team",
+      "destination": "/api"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
