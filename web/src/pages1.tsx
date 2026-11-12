@@ -321,7 +321,15 @@ function Credits({ onChanged }: { onChanged: () => void }) {
   const [txHash, setTxHash] = useState('')
   const [busy, setBusy] = useState(false)
   const [payInToken, setPayInToken] = useState<boolean | null>(null)
-  const [tokenInfo, setTokenInfo] = useState<{ symbol: string; address: string } | null>(null)
+  const [tokenInfo, setTokenInfo] = useState<{
+    symbol: string
+    address: string
+    decimals?: number
+    usd_rate?: number
+    bonus_bps?: number
+    max_deposit_usd?: number
+    priced?: boolean
+  } | null>(null)
   const [keys, setKeys] = useState<KeyRow[]>([])
   const [loadKeyId, setLoadKeyId] = useState('')
   const load = useCallback(() => {
@@ -365,7 +373,11 @@ function Credits({ onChanged }: { onChanged: () => void }) {
               <strong>Settle in {tokenInfo?.symbol ?? 'platform token'}</strong>
               <p className="muted small" style={{ margin: '4px 0 0' }}>
                 {tokenInfo
-                  ? `Prefer ${tokenInfo.symbol} for deposits and usage settlement. Deposits in ${tokenInfo.symbol} are credited with a bonus.`
+                  ? `Prefer ${tokenInfo.symbol} for deposits and usage settlement. Deposits in ${tokenInfo.symbol} are credited at ${
+                      tokenInfo.bonus_bps ? `+${(tokenInfo.bonus_bps / 100).toFixed(0)}%` : 'par'
+                    } on a published rate${
+                      tokenInfo.usd_rate ? ` of $${tokenInfo.usd_rate}` : ''
+                    } per token${tokenInfo.max_deposit_usd ? `, up to $${tokenInfo.max_deposit_usd} per deposit` : ''}.`
                   : 'Preference is saved now and activates when the platform token launches. Deposits stay in USDC/USDG until then.'}
               </p>
             </div>
@@ -396,7 +408,16 @@ function Credits({ onChanged }: { onChanged: () => void }) {
           <p className="warn small">No platform receiver address configured yet (demo deployment).</p>
         ) : (
           <>
-            <p className="muted small">Send USDC (Base) or USDG (Robinhood Chain) from a wallet registered to your account, then submit the transaction hash below. Verification is automatic and idempotent.</p>
+            <p className="muted small">Send USDC (Base), USDG (Robinhood Chain){tokenInfo ? `, or ${tokenInfo.symbol}` : ''} from a wallet registered to your account, then submit the transaction hash below. Verification is automatic and idempotent.</p>
+            {tokenInfo && (
+              <div className="copyable" style={{ margin: '0 0 12px' }}>
+                <span className="mono small">{tokenInfo.symbol} · {tokenInfo.address}</span>
+                <button className="ghost small-btn" onClick={() => { navigator.clipboard.writeText(tokenInfo.address); toast('Token contract copied') }}>Copy</button>
+              </div>
+            )}
+            {tokenInfo && tokenInfo.priced === false && (
+              <p className="warn small">{tokenInfo.symbol} has no published rate yet, so deposits in it would be refused. Send USDC or USDG until the rate is published.</p>
+            )}
             <div className="copyable" style={{ margin: '12px 0' }}>
               <span className="val">{info.deposit_address || info.receiver_address}</span>
               <button className="ghost small-btn" onClick={() => { const a = info.deposit_address || info.receiver_address; navigator.clipboard.writeText(a); toast('Address copied') }}>Copy</button>

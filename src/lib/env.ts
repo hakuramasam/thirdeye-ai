@@ -44,6 +44,13 @@ export const env = {
   /** Deposit guards for the platform token while its market is thin. */
   platformTokenMaxDepositUsd: num(process.env.PLATFORM_TOKEN_MAX_DEPOSIT_USD, 25),
   platformTokenMinLiquidityUsd: num(process.env.PLATFORM_TOKEN_MIN_LIQUIDITY_USD, 5000),
+  /**
+   * Ops-published USD price per whole platform token. When set, platform-token deposits are
+   * valued by this rate instead of a market read: the token's only pool is one we run, so
+   * crediting off its spot price would be circular. Unset means deposits fall back to the
+   * public GeckoTerminal read and are refused while no real market exists.
+   */
+  platformTokenUsdRate: num(process.env.PLATFORM_TOKEN_USD_RATE, 0),
 
   /** Platform provider keys, any OpenAI-based provider: PROV_<NAME>_API_KEY */
   providerKeys: (() => {
