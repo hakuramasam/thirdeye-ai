@@ -63,6 +63,7 @@ const NAV: [string, string][] = [
   ['/changelog', 'Changelog'],
   ['/docs', 'Docs'],
   ['/agents', 'Agents'],
+  ['/team', 'Team'],
   ['/partnerships', 'Partners'],
 ]
 
@@ -98,6 +99,7 @@ pre code{background:none;padding:0}
 .ok{color:var(--accent);border-color:#1f3b2a}.warn{color:var(--warn);border-color:#3b3320}
 .muted{color:var(--muted)}
 footer{border-top:1px solid var(--line);color:var(--muted);font-size:12.5px;padding:18px 0 40px}
+.tw{overflow-x:auto}.tw table{margin:0}
 @media(max-width:520px){h1{font-size:24px}nav{gap:4px 14px}}
 `
 
@@ -298,6 +300,195 @@ const DOCS_AGENTS = `
 <p>For agent-to-agent traffic there is an A2A card at <code>/.well-known/agent-card.json</code> and a JSON-RPC endpoint at <code>/a2a</code>. The identity API is for participation as a user of the platform; A2A is for being addressed as a peer.</p>
 `
 
+// ── Team activity ────────────────────────────────────────────────────────────
+/**
+ * The agent team's working log, built from `agent_runs` and `agent_run_events`.
+ *
+ * What this page selects *is* the safety design. It reads tool NAMES, outcomes, timestamps, status,
+ * spend and budget, and nothing else. It never selects `args_excerpt`, `result_excerpt`, `input`,
+ * `output`, `system_prompt` or `user_id`, because those carry repo contents, prompts and account
+ * identifiers. Raw provider errors are never rendered either, since they can embed the upstream
+ * organisation name, so a failure is reduced to one of four fixed reason codes.
+ */
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/** Absolute UTC first: a relative time goes stale in any cache. */
+export function utcStamp(value: unknown): string {
+  const d = value instanceof Date ? value : value ? new Date(String(value)) : null
+  if (!d || Number.isNaN(d.getTime())) return '—'
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getUTCDate())} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}Z`
+}
+
+export function usdFromMicros(micros: unknown): string {
+  const n = Number(micros ?? 0)
+  if (!Number.isFinite(n) || n <= 0) return '$0'
+  const d = n / 1_000_000
+  return d >= 0.01 ? `$${d.toFixed(4)}` : `$${d.toFixed(6)}`
+}
+
+export type RunFailure = 'rate_limited' | 'timeout' | 'crashed' | 'failed' | null
+
+/** Lossy on purpose: show a shape an operator can act on without publishing provider details. */
+export function classifyRunError(status: string, error: unknown): RunFailure {
+  if (status !== 'error' && status !== 'failed') return null
+  const t = String(error ?? '').toLowerCase()
+  if (!t) return 'failed'
+  if (t.includes('429') || t.includes('rate limit')) return 'rate_limited'
+  if (t.includes('timeout') || t.includes('timed out') || t.includes('etimedout')) return 'timeout'
+  if (t.includes('crash') || t.includes('http 500')) return 'crashed'
+  return 'failed'
+}
+
+const FAILURE_LABEL: Record<Exclude<RunFailure, null>, string> = {
+  rate_limited: 'provider rate limit',
+  timeout: 'timed out',
+  crashed: 'crashed mid-run',
+  failed: 'run failed',
+}
+
+/** A run still marked `running` long after it started is the orphan the runner never closes. */
+export const STUCK_AFTER_MS = 30 * 60 * 1000
+
+export function runPill(status: string, createdAt: unknown, error: unknown, now = Date.now()): string {
+  const started = createdAt ? new Date(String(createdAt)).getTime() : NaN
+  if (status === 'running') {
+    return Number.isFinite(started) && now - started > STUCK_AFTER_MS
+      ? '<span class="pill warn">stuck</span>'
+      : '<span class="pill">running</span>'
+  }
+  if (status === 'success' || status === 'completed' || status === 'ok') return '<span class="pill ok">ok</span>'
+  const reason = classifyRunError(status, error)
+  return `<span class="pill warn">${esc(reason ? FAILURE_LABEL[reason] : 'failed')}</span>`
+}
+
+const TEAM_WHERE = `left(a.id, 4) = 'tdt_'`
+
+async function teamPage(): Promise<string> {
+  let failed = false
+  let stats: any = null
+  let roster: any[] = []
+  let runs: any[] = []
+  let log: any[] = []
+  let findings: any[] = []
+  try {
+    stats = await one(
+      `SELECT
+         (SELECT count(*) FROM agent_runs r WHERE left(r.agent_id, 4) = 'tdt_')::int AS runs,
+         (SELECT count(*) FROM agent_run_events e WHERE left(e.agent_id, 4) = 'tdt_')::int AS calls,
+         (SELECT coalesce(sum(r.spend_usd_micros), 0) FROM agent_runs r WHERE left(r.agent_id, 4) = 'tdt_')::int AS spend,
+         (SELECT count(*) FROM agent_alerts WHERE acknowledged_at IS NULL)::int AS open_findings`
+    )
+    roster = (
+      await query(
+        `SELECT a.id, a.name, a.model, a.status, a.budget_usd_micros, a.last_run_at,
+                (SELECT count(*) FROM agent_runs r WHERE r.agent_id = a.id)::int AS runs,
+                (SELECT coalesce(sum(r.spend_usd_micros), 0) FROM agent_runs r WHERE r.agent_id = a.id)::int AS spend
+         FROM agents a WHERE ${TEAM_WHERE} ORDER BY a.name`
+      )
+    ).rows
+    runs = (
+      await query(
+        `SELECT r.status, r.tool_calls, r.spend_usd_micros, r.created_at, r.error, a.name
+         FROM agent_runs r JOIN agents a ON a.id = r.agent_id
+         WHERE ${TEAM_WHERE} ORDER BY r.created_at DESC LIMIT 20`
+      )
+    ).rows
+    log = (
+      await query(
+        `SELECT e.seq, e.tool, e.ok, e.refused, e.created_at, a.name
+         FROM agent_run_events e JOIN agents a ON a.id = e.agent_id
+         WHERE ${TEAM_WHERE} ORDER BY e.created_at DESC, e.seq DESC LIMIT 30`
+      )
+    ).rows
+    findings = (
+      await query(
+        `SELECT al.code, al.severity, al.created_at, al.acknowledged_at, a.name
+         FROM agent_alerts al LEFT JOIN agents a ON a.id = al.agent_id
+         ORDER BY al.created_at DESC LIMIT 10`
+      )
+    ).rows
+  } catch {
+    failed = true
+  }
+
+  if (failed) {
+    return `
+<h1>Agent team activity</h1>
+<p class="lead">The working log of the development team: what each agent ran, which tools it called and what came back.</p>
+<div class="card"><h3>The ledger did not answer</h3><p>This page reads the run ledger directly. The query failed, so nothing here would be true, and an empty table would read as "quiet team" instead of "broken page". Try again shortly.</p></div>`
+  }
+
+  const now = Date.now()
+
+  const stat = (label: string, value: string, note: string) =>
+    `<div class="card"><h3>${esc(label)}</h3><p style="font-size:22px;color:var(--ink);font-variant-numeric:tabular-nums">${esc(value)}</p><p>${esc(note)}</p></div>`
+
+  const statStrip = `<div class="grid">
+  ${stat('Runs recorded', String(stats?.runs ?? 0), 'every agent run, successful or not')}
+  ${stat('Tool calls logged', String(stats?.calls ?? 0), 'one row per call, arguments never stored here')}
+  ${stat('Spend to date', usdFromMicros(stats?.spend), 'sum of recorded per-run spend')}
+  ${stat('Open findings', String(stats?.open_findings ?? 0), 'raised by the monitor, not yet acknowledged')}
+</div>`
+
+  const rosterRows = roster.length
+    ? roster
+        .map(
+          (a) =>
+            `<tr><td><strong>${esc(a.name)}</strong></td><td>${esc(a.model)}</td><td>${esc(usdFromMicros(a.budget_usd_micros))}</td><td>${a.runs}</td><td>${esc(usdFromMicros(a.spend))}</td><td>${esc(utcStamp(a.last_run_at))}</td><td>${esc(a.status)}</td></tr>`
+        )
+        .join('')
+    : `<tr><td colspan="7" class="muted">No team agents registered.</td></tr>`
+
+  const runRows = runs.length
+    ? runs
+        .map(
+          (r) =>
+            `<tr><td>${esc(utcStamp(r.created_at))}</td><td>${esc(r.name)}</td><td>${runPill(String(r.status), r.created_at, r.error, now)}</td><td>${r.tool_calls}</td><td>${esc(usdFromMicros(r.spend_usd_micros))}</td></tr>`
+        )
+        .join('')
+    : `<tr><td colspan="5" class="muted">No runs recorded yet. The first scheduled tick writes the first row.</td></tr>`
+
+  const logRows = log.length
+    ? log
+        .map((e) => {
+          const outcome = e.refused
+            ? '<span class="pill warn">refused</span>'
+            : e.ok
+              ? '<span class="pill ok">ok</span>'
+              : '<span class="pill warn">error</span>'
+          return `<tr><td>${esc(utcStamp(e.created_at))}</td><td>${esc(e.name)}</td><td>${e.seq}</td><td><code>${esc(e.tool)}</code></td><td>${outcome}</td></tr>`
+        })
+        .join('')
+    : `<tr><td colspan="5" class="muted">No tool calls logged yet.</td></tr>`
+
+  const findingRows = findings.length
+    ? findings
+        .map(
+          (f) =>
+            `<tr><td><code>${esc(f.code)}</code></td><td>${esc(f.severity)}</td><td>${esc(f.name ?? '—')}</td><td>${esc(utcStamp(f.created_at))}</td><td>${f.acknowledged_at ? '<span class="pill ok">acknowledged</span>' : '<span class="pill warn">open</span>'}</td></tr>`
+        )
+        .join('')
+    : `<tr><td colspan="5" class="muted">No findings raised.</td></tr>`
+
+  return `
+<h1>Agent team activity</h1>
+<p class="lead">The working log of the development team. Every row below is a recorded run or a recorded tool call, read from the same ledger the monitor reads. Nothing here is a summary we wrote by hand.</p>
+${statStrip}
+<h2>The team</h2>
+<div class="tw"><table><thead><tr><th>Agent</th><th>Model</th><th>Per-run budget</th><th>Runs</th><th>Spend</th><th>Last run</th><th>Status</th></tr></thead><tbody>${rosterRows}</tbody></table></div>
+<h2>Recent runs</h2>
+<div class="tw"><table><thead><tr><th>Started (UTC)</th><th>Agent</th><th>Outcome</th><th>Tool calls</th><th>Spend</th></tr></thead><tbody>${runRows}</tbody></table></div>
+<h2>Working log</h2>
+<p class="muted" style="font-size:13.5px">The last 30 tool calls, newest first. A refused call is one the agent attempted and the runner blocked.</p>
+<div class="tw"><table><thead><tr><th>When (UTC)</th><th>Agent</th><th>#</th><th>Tool</th><th>Outcome</th></tr></thead><tbody>${logRows}</tbody></table></div>
+<h2>Findings</h2>
+<p class="muted" style="font-size:13.5px">Raised by the monitor over these rows: stuck and failed runs, refused writes, spend without a matching verification, timestamp mismatches.</p>
+<div class="tw"><table><thead><tr><th>Code</th><th>Severity</th><th>Agent</th><th>Raised (UTC)</th><th>State</th></tr></thead><tbody>${findingRows}</tbody></table></div>
+<p class="muted" style="margin-top:26px">What this page leaves out, deliberately: agent prompts, tool arguments, tool results, run inputs and outputs, account identifiers, and the raw text of a provider error. Arguments and results are the parts that carry repository contents and customer data, so they stay behind the master key at <code>/api/admin/agents</code>. A failure is published as one of four reason codes instead of the provider's message, because that message can name the upstream account.</p>`
+}
+
 export function registerPublicRoutes(app: SessionApp): void {
   app.get('/platform', (c) => c.html(layout('Platform', '/platform', PLATFORM)))
   app.get('/docs', (c) => c.html(layout('Documentation', '/docs', DOCS_HUB)))
@@ -369,6 +560,12 @@ export function registerPublicRoutes(app: SessionApp): void {
 <p class="muted">Registering takes a session or a key and one request. See <a href="/docs/agents">the Agent API</a>. Owner accounts, spend and key prefixes are never published.</p>`
     return c.html(layout('Agent directory', '/agents', body))
   })
+
+  /**
+   * The agent team's working log. Public by construction: the SELECT list is the allowlist, so a
+   * column that is not named here cannot appear on the page.
+   */
+  app.get('/team', async (c) => c.html(layout('Team activity', '/team', await teamPage())))
 
   app.get('/changelog', (c) => {
     const rows = CHANGELOG.map((e) => `<tr><td><code>${esc(e.sha)}</code></td><td>${esc(e.date)}</td><td>${esc(e.summary)}</td></tr>`).join('')
