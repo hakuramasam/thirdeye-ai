@@ -109,6 +109,8 @@ export async function callAnthropicChat({
   raw?: any
 }> {
   const payload = convertOpenAIToAnthropicParams(params)
+  // One timer per request: computing this twice discarded the first AbortSignal.
+  const signal = requestSignal(timeoutMs)
   let res: Response
   try {
     res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -119,14 +121,21 @@ export async function callAnthropicChat({
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
-      ...(requestSignal(timeoutMs) ? { signal: requestSignal(timeoutMs)! } : {}),
+      ...(signal ? { signal } : {}),
     })
   } catch (e: any) {
     mapTimeoutError(e, timeoutMs)
   }
 
   if (!res.ok) {
-    const errBody = await res.json().catch(() => null)
+    // A refusal body is not a verdict, but an abort while reading it is our own deadline and must
+    // not be swallowed as "no reason given": the caller has to see why nothing came back.
+    let errBody: any = null
+    try {
+      errBody = await res.json()
+    } catch (e: any) {
+      if (e?.name === 'TimeoutError' || e?.name === 'AbortError') mapTimeoutError(e, timeoutMs)
+    }
     const msg = errBody?.error?.message || `Anthropic upstream error: ${res.statusText || res.status}`
     throw new UpstreamError(msg, res.status, errBody || { error: { message: msg, type: 'upstream', code: res.status } })
   }
