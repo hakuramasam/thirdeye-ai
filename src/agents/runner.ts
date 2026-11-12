@@ -8,7 +8,7 @@ import { query, one } from '../db/index.js'
 import { env } from '../lib/env.js'
 import { debitForUsage } from '../lib/billing.js'
 import { payForStep } from './credit.js'
-import { callWithRateLimitRetry } from './retry.js'
+import { callWithRateLimitRetry, isRateLimitError } from './retry.js'
 import { isCovered } from '../lib/allowance.js'
 import { computeCostMicros } from '../lib/pricing.js'
 import { getModelRow, type ProviderCall } from '../providers/index.js'
@@ -100,7 +100,15 @@ export type RunnerDeps = {
   pipelineId?: string
   stageId?: string
   /** Injectable for tests; default resolves via the provider layer. */
-  llm?: { call(params: Record<string, any>): Promise<LlmResult> }
+  llm?: { call(params: Record<string, any>, opts?: { timeoutMs?: number }): Promise<LlmResult> }
+  /** Override the rate-limit wait budget (tests use a few milliseconds instead of 50s). */
+  retryWaitMs?: number
+  /**
+   * Hard ceiling for the whole invocation (epoch ms), shared by everything a cron tick runs.
+   * Several agents run in sequence inside one 60s function, so a per-run window alone can push
+   * the tick past the platform limit.
+   */
+  deadlineMs?: number
   mcpTools?: McpTools
   /**
    * Internal: counters handed in by `runAgent` so the crash path can still write what the run
@@ -112,6 +120,13 @@ export type RunnerDeps = {
 /** Live per-run counters, shared between the body and the crash path. */
 export type RunProgress = { toolCalls: number; spendUsdMicros: number }
 
+/**
+ * Time kept back from the invocation ceiling to write the run row, the audit event and the
+ * response. Without it a run that spends every second on waiting has nothing left to record
+ * anything, and the platform kills it mid-answer.
+ */
+export const FINALIZE_RESERVE_MS = 5_000
+
 export type RunResult = {
   runId: string
   status: 'success' | 'error'
@@ -121,6 +136,11 @@ export type RunResult = {
   error: string | null
   /** True when this call did not run anything because the run id was already used. */
   replayed?: boolean
+  /**
+   * True when the run ended because the provider's meter refused it. The work is not done, so a
+   * scheduled slot stays owed and the next tick retries instead of counting this as the day's run.
+   */
+  rateLimited?: boolean
   /**
    * Address of this run's output in the artifact registry (PH2-003). Present on a successful run
    * that produced text, so a caller hands on an address instead of a truncated copy.
@@ -224,11 +244,20 @@ export async function runAgent(
     return await runAgentInner(agent, input, user, { ...deps, runId, correlationId, progress })
   } catch (e: any) {
     const message = String(e?.message || e).slice(0, 500)
+    // A provider meter refusal is not a defect in our code: it means the work is owed, not done.
+    // Naming it separately keeps the run row honest and tells the cron caller the slot must retry.
+    const rateLimited = isRateLimitError(message)
+    const timedOut = /timed out after|^deadline_exceeded/i.test(message)
+    const stored = rateLimited
+      ? `rate_limited: ${message}`
+      : timedOut
+        ? `deadline_exceeded: ${message.replace(/^deadline_exceeded:\s*/, '')}`
+        : `uncaught: ${message}`
     try {
       await query(
         `UPDATE agent_runs SET status='error', error=$1, tool_calls=$2, spend_usd_micros=$3
           WHERE id=$4 AND status='running'`,
-        [`uncaught: ${message}`, progress.toolCalls, progress.spendUsdMicros, runId]
+        [stored, progress.toolCalls, progress.spendUsdMicros, runId]
       )
       await query(`UPDATE agents SET last_run_at = now() WHERE id = $1`, [agent.id])
     } catch {
@@ -247,7 +276,7 @@ export async function runAgent(
           stageId: deps.stageId ?? null,
         },
         {
-          errorCode: 'uncaught_exception',
+          errorCode: rateLimited ? 'rate_limited' : timedOut ? 'deadline_exceeded' : 'uncaught_exception',
           errorSummary: message,
           // The run row above now holds the real counters, so the audit event has to agree with
           // it or the ledger still says a crashed run cost nothing.
@@ -264,7 +293,10 @@ export async function runAgent(
       output: null,
       tool_calls: progress.toolCalls,
       spend_usd_micros: progress.spendUsdMicros,
-      error: `uncaught: ${message}`,
+      error: stored,
+      // The caller needs to know a refused run may simply be retried, rather than reading it as a
+      // defect. The slot stays owed, so the next tick can pick it up.
+      ...(rateLimited ? { rateLimited: true } : {}),
     }
   }
 }
@@ -463,10 +495,32 @@ async function runAgentInner(
       byok = modelRow ? (await resolveProvider(user, modelRow)).byok : false
     } catch { byok = false }
 
+    // One budget for the whole run, not one per step: a router that waits 50s on step one and
+    // 50s again on step two would be killed by the platform mid-answer and record nothing.
+    // The ceiling is anchored at the run's start (model resolution and MCP setup are charged to
+    // it) and shrunk by the finalization reserve, so a wait followed by a slow answer still leaves
+    // time to write the run row and the audit event.
+    const retryWaitMs = deps.retryWaitMs ?? env.agentRetryWaitMs
+    const hardCeiling = Math.min(startedAt + env.agentRunCeilingMs, deps.deadlineMs ?? Infinity)
+    const lastUsefulMoment = hardCeiling - FINALIZE_RESERVE_MS
+    const retryDeadline = Math.min(startedAt + retryWaitMs, lastUsefulMoment)
+
     for (let step = 0; step < maxSteps; step++) {
       // A free-tier meter can refuse a step that would have succeeded seconds later, and a
       // scheduled run has nobody to retry it. Wait out only what the provider told us to.
-      const res = await callWithRateLimitRetry(() => llm!.call(useTools ? { messages, tools } : { messages }))
+      // The call itself is bounded too, because a deadline that only limits sleeps still lets a
+      // slow provider response run past the platform's kill.
+      const callMs = lastUsefulMoment - Date.now()
+      if (!(callMs > 0)) {
+        // finish(), not throw: a throw reaches the outer catch, and this run has already been
+        // charged for the steps behind it. Closing here keeps the run row, its spend and its tool
+        // count in agreement with the ledger.
+        return await finish('error', null, toolCalls, spend, 'deadline_exceeded: no time left in this invocation to call the model')
+      }
+      const res = await callWithRateLimitRetry(
+        () => llm!.call(useTools ? { messages, tools } : { messages }, { timeoutMs: callMs }),
+        { totalWaitMs: retryWaitMs, deadlineMs: retryDeadline }
+      )
       const cost =
         modelRow != null
           ? computeCostMicros(modelRow, res.prompt_tokens, res.completion_tokens, env.platformMarginPct, byok)
@@ -492,6 +546,13 @@ async function runAgentInner(
       }
 
       if (res.tool_calls && res.tool_calls.length > 0) {
+        // Tool work (MCP, x402, a delegated child) is not bounded by the model-call timeout, so a
+        // spent invocation budget must stop it here rather than let it eat the finalization reserve.
+        if (!(lastUsefulMoment - Date.now() > 0)) {
+          // Same reason as the model guard above: this run has paid for the response that asked for
+          // the tool, so it must close with its own counters instead of unwinding into the catch.
+          return await finish('error', null, toolCalls, spend, 'deadline_exceeded: no time left in this invocation to run the tool work')
+        }
         messages.push({
           role: 'assistant',
           content: res.content || '',
@@ -671,6 +732,9 @@ async function runAgentInner(
                         // undefined and the provider is resolved per agent.
                         llm: deps.llm,
                         roster: deps.roster,
+                        // The child runs inside this invocation, so it must not claim a fresh
+                        // lifetime of its own: it is clamped to the parent's ceiling.
+                        deadlineMs: hardCeiling,
                       }
                     )
                     await recordTaskOutcome(
@@ -778,6 +842,8 @@ async function runAgentInner(
 /** A stable code for the audit row, so failures can be counted without parsing prose. */
 export function errorCodeFrom(message?: string | null): string {
   const m = String(message ?? '')
+  if (/rate_limited:|rate limit|\b429\b|too many requests/i.test(m)) return 'rate_limited'
+  if (/deadline_exceeded|timed out after/i.test(m)) return 'deadline_exceeded'
   if (/insufficient credits/i.test(m)) return 'insufficient_credits'
   if (/budget exceeded/i.test(m)) return 'budget_exceeded'
   if (/max steps/i.test(m)) return 'max_steps'
