@@ -15,7 +15,14 @@ function app() {
   return a
 }
 
-const PATHS = ['/platform', '/docs', '/docs/api', '/docs/mcp', '/docs/x402', '/docs/agents', '/roadmap', '/partnerships', '/changelog', '/agents', '/team']
+const PATHS = ['/platform', '/docs', '/docs/api', '/docs/mcp', '/docs/x402', '/docs/agents', '/roadmap', '/partnerships', '/changelog', '/agents', '/team', '/whitepaper']
+
+/**
+ * The whitepaper cites a public transaction hash so a reader can decode the launch themselves. That
+ * hash is 64 hex characters, exactly the shape the key scan below hunts for, so it is removed from
+ * the body before the scan rather than the scan being weakened for every other page.
+ */
+const PUBLIC_HASHES = ['0x66e65f6e49bf08a34cbc703df9ae6b2d4fd983a2a2068340a17a53b93589ead2']
 
 test('every public page renders as html with a title', async () => {
   await migrate()
@@ -57,7 +64,21 @@ test('no public page leaks a credential, a secret name or a private key', async 
     for (const forbidden of ['sk-thirdeye', 'MASTER_KEY', 'DATABASE_URL=', 'PRIVY', 'private_key']) {
       assert.ok(!body.includes(forbidden), `${path} leaked ${forbidden}`)
     }
-    assert.ok(!/[0-9a-f]{64}/i.test(body), `${path} contains something shaped like a raw key`)
+    const scrubbed = PUBLIC_HASHES.reduce((acc, h) => acc.split(h).join(''), body)
+    assert.ok(!/[0-9a-f]{64}/i.test(scrubbed), `${path} contains something shaped like a raw key`)
+  }
+})
+
+test('the whitepaper cites the onchain record rather than asserting a sale', async () => {
+  await migrate()
+  const body = await (await app().request('/whitepaper')).text()
+  assert.ok(body.includes('0xA8A65A86E01D227Dbfd7C7a94d14344b33603df5'), 'the token contract should be named')
+  assert.ok(body.includes(PUBLIC_HASHES[0]), 'the launch transaction should be citable')
+  assert.ok(body.includes('1,000,000,000'), 'the fixed supply should be stated')
+  assert.match(body, /No token was sold/, 'the absence of a sale has to be explicit')
+  assert.match(body, /not an offer to sell/, 'the document must disclaim being an offer')
+  for (const claim of ['x-thirdeye-cost-usd', '/api/v1/models', '/status', '/changelog']) {
+    assert.ok(body.includes(claim), `the whitepaper should point at ${claim} as verification`)
   }
 })
 
