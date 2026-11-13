@@ -1,0 +1,382 @@
+/** Agent CRUD, manual run, run history, and the cron trigger endpoint. */
+
+import { randomUUID } from 'node:crypto'
+import { query, one } from '../db/index.js'
+import { env } from '../lib/env.js'
+import type { SessionApp } from '../lib/session.js'
+import { requireUser } from '../lib/session.js'
+import { parseCron, isCronDue } from '../agents/cron.js'
+import { runAgent, type AgentRow } from '../agents/runner.js'
+import { acquireScheduleLock, finishScheduleLock, cronSlotKey } from '../agents/schedule-lock.js'
+
+type McpServerIn = { name?: string; url?: string; headers?: Record<string, string> }
+
+const MAX_AGENTS = 20
+const MAX_MCP_SERVERS = 5
+
+function validMcpServers(v: unknown): { ok: boolean; servers?: any[]; error?: string } {
+  if (!Array.isArray(v)) return { ok: false, error: 'mcp_servers must be an array' }
+  if (v.length > MAX_MCP_SERVERS) return { ok: false, error: `At most ${MAX_MCP_SERVERS} MCP servers per agent` }
+  const servers: any[] = []
+  for (const s of v as McpServerIn[]) {
+    if (!s || typeof s.name !== 'string' || !/^[a-zA-Z0-9_-]{1,24}$/.test(s.name)) {
+      return { ok: false, error: 'MCP server name must be 1-24 chars (letters, digits, _, -)' }
+    }
+    if (typeof s.url !== 'string' || !/^https?:\/\//.test(s.url)) {
+      return { ok: false, error: `MCP server '${s.name}': url must be http(s)` }
+    }
+    servers.push({ name: s.name, url: s.url, ...(s.headers && typeof s.headers === 'object' ? { headers: s.headers } : {}) })
+  }
+  return { ok: true, servers }
+}
+
+/** Allowlist entries: hostnames or *.domain wildcards, no scheme needed. */
+function validSellers(input: any): { ok: boolean; entries: string[]; error?: string } {
+  if (!Array.isArray(input)) return { ok: false, entries: [], error: 'x402_allowed_sellers must be an array of hostnames' }
+  if (input.length > 50) return { ok: false, entries: [], error: 'At most 50 allowlisted sellers' }
+  const entries: string[] = []
+  for (const raw of input) {
+    if (typeof raw !== 'string') return { ok: false, entries: [], error: 'Each allowlisted seller must be a string' }
+    const e = raw.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+    if (!/^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(e)) {
+      return { ok: false, entries: [], error: `Invalid seller hostname: ${raw}` }
+    }
+    if (!entries.includes(e)) entries.push(e)
+  }
+  return { ok: true, entries }
+}
+
+function rowOut(a: any) {
+  return {
+    id: a.id,
+    name: a.name,
+    system_prompt: a.system_prompt,
+    model: a.model,
+    mcp_servers: typeof a.mcp_servers === 'string' ? JSON.parse(a.mcp_servers || '[]') : a.mcp_servers || [],
+    x402_enabled: a.x402_enabled,
+    x402_allowed_sellers: typeof a.x402_allowed_sellers === 'string' ? JSON.parse(a.x402_allowed_sellers || '[]') : a.x402_allowed_sellers || [],
+    x402_max_per_call_usd_micros: Number(a.x402_max_per_call_usd_micros ?? 20000),
+    budget_usd_micros: Number(a.budget_usd_micros),
+    max_steps: a.max_steps,
+    cron: a.cron,
+    last_run_at: a.last_run_at,
+    status: a.status,
+    created_at: a.created_at,
+  }
+}
+
+async function loadOwned(id: string | undefined, userId: string): Promise<AgentRow | null> {
+  return one(`SELECT * FROM agents WHERE id = $1 AND user_id = $2 AND status != 'deleted'`, [id, userId])
+}
+
+export function registerAgentsRoutes(app: SessionApp): void {
+  // GET /api/agents — list
+  app.get('/api/agents', requireUser, async (c) => {
+    const user = c.get('user')!
+    const res = await query(
+      `SELECT * FROM agents WHERE user_id = $1 AND status != 'deleted' ORDER BY created_at DESC`,
+      [user.id]
+    )
+    return c.json({ agents: res.rows.map(rowOut) })
+  })
+
+  // POST /api/agents — create
+  app.post('/api/agents', requireUser, async (c) => {
+    const user = c.get('user')!
+    const body = await c.req.json().catch(() => null)
+    if (!body) return c.json({ error: { message: 'Invalid JSON body', type: 'invalid_request', code: 400 } }, 400)
+    const { name, system_prompt, model, mcp_servers = [], x402_enabled = false, budget_usd_micros = 100000, max_steps = 8, cron = null,
+      x402_allowed_sellers = [], x402_max_per_call_usd_micros = 20000 } = body
+
+    if (typeof name !== 'string' || name.trim().length < 1 || name.trim().length > 64) {
+      return c.json({ error: { message: 'name must be 1-64 characters', type: 'invalid_request', code: 400 } }, 400)
+    }
+    if (typeof system_prompt !== 'string' || system_prompt.length < 1 || system_prompt.length > 8000) {
+      return c.json({ error: { message: 'system_prompt must be 1-8000 characters', type: 'invalid_request', code: 400 } }, 400)
+    }
+    if (typeof model !== 'string' || model.length < 1 || model.length > 100) {
+      return c.json({ error: { message: 'model is required', type: 'invalid_request', code: 400 } }, 400)
+    }
+    const modelRow = await one(`SELECT model FROM models_catalog WHERE model = $1 AND enabled`, [model])
+    if (!modelRow) {
+      return c.json({ error: { message: `Unknown or disabled model: ${model}`, type: 'invalid_request', code: 400 } }, 400)
+    }
+    const mcp = validMcpServers(mcp_servers)
+    if (!mcp.ok) return c.json({ error: { message: mcp.error!, type: 'invalid_request', code: 400 } }, 400)
+    const budget = Number(budget_usd_micros)
+    if (!Number.isInteger(budget) || budget < 1 || budget > 10_000_000) {
+      return c.json({ error: { message: 'budget_usd_micros must be an integer between 1 and 10,000,000 ($10)', type: 'invalid_request', code: 400 } }, 400)
+    }
+    const steps = Number(max_steps)
+    if (!Number.isInteger(steps) || steps < 1 || steps > 20) {
+      return c.json({ error: { message: 'max_steps must be 1-20', type: 'invalid_request', code: 400 } }, 400)
+    }
+    if (cron != null) {
+      if (typeof cron !== 'string') return c.json({ error: { message: 'cron must be a 5-field string', type: 'invalid_request', code: 400 } }, 400)
+      try { parseCron(cron) } catch (e: any) {
+        return c.json({ error: { message: `Invalid cron: ${e.message}`, type: 'invalid_request', code: 400 } }, 400)
+      }
+    }
+
+    const sellers = validSellers(x402_allowed_sellers)
+    if (!sellers.ok) return c.json({ error: { message: sellers.error!, type: 'invalid_request', code: 400 } }, 400)
+    const perCall = Number(x402_max_per_call_usd_micros)
+    if (!Number.isInteger(perCall) || perCall < 1 || perCall > 1_000_000) {
+      return c.json({ error: { message: 'x402_max_per_call_usd_micros must be an integer between 1 and 1,000,000 ($1)', type: 'invalid_request', code: 400 } }, 400)
+    }
+    if (x402_enabled && sellers.entries.length === 0) {
+      return c.json({ error: { message: 'x402_enabled requires at least one allowlisted seller; payments fail closed without one', type: 'invalid_request', code: 400 } }, 400)
+    }
+
+    const count = await one(`SELECT count(*)::int AS n FROM agents WHERE user_id = $1 AND status != 'deleted'`, [user.id])
+    if (count.n >= MAX_AGENTS) {
+      return c.json({ error: { message: `Agent limit reached (${MAX_AGENTS})`, type: 'invalid_request', code: 400 } }, 400)
+    }
+
+    const id = randomUUID()
+    await query(
+      `INSERT INTO agents (id, user_id, name, system_prompt, model, mcp_servers, x402_enabled, x402_allowed_sellers, x402_max_per_call_usd_micros, budget_usd_micros, max_steps, cron)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [id, user.id, name.trim(), system_prompt, model, JSON.stringify(mcp.servers), !!x402_enabled, JSON.stringify(sellers.entries), perCall, budget, steps, cron]
+    )
+    const row = await one(`SELECT * FROM agents WHERE id = $1`, [id])
+    return c.json({ agent: rowOut(row) }, 201)
+  })
+
+  // GET /api/agents/:id
+  app.get('/api/agents/:id', requireUser, async (c) => {
+    const user = c.get('user')!
+    const row = await loadOwned(c.req.param('id'), user.id)
+    if (!row) return c.json({ error: { message: 'Agent not found', type: 'not_found', code: 404 } }, 404)
+    return c.json({ agent: rowOut(row) })
+  })
+
+  // PATCH /api/agents/:id
+  app.patch('/api/agents/:id', requireUser, async (c) => {
+    const user = c.get('user')!
+    const row = await loadOwned(c.req.param('id'), user.id)
+    if (!row) return c.json({ error: { message: 'Agent not found', type: 'not_found', code: 404 } }, 404)
+    const body = await c.req.json().catch(() => ({}))
+    const sets: string[] = []
+    const vals: any[] = []
+    const add = (col: string, v: any) => { vals.push(v); sets.push(`${col} = $${vals.length}`) }
+    if (body.system_prompt !== undefined) {
+      if (typeof body.system_prompt !== 'string' || body.system_prompt.length < 1 || body.system_prompt.length > 8000) {
+        return c.json({ error: { message: 'system_prompt must be 1-8000 characters', type: 'invalid_request', code: 400 } }, 400)
+      }
+      add('system_prompt', body.system_prompt)
+    }
+    if (body.model !== undefined) {
+      const m = await one(`SELECT model FROM models_catalog WHERE model = $1 AND enabled`, [body.model])
+      if (!m) return c.json({ error: { message: `Unknown or disabled model: ${body.model}`, type: 'invalid_request', code: 400 } }, 400)
+      add('model', body.model)
+    }
+    if (body.mcp_servers !== undefined) {
+      const mcp = validMcpServers(body.mcp_servers)
+      if (!mcp.ok) return c.json({ error: { message: mcp.error!, type: 'invalid_request', code: 400 } }, 400)
+      add('mcp_servers', JSON.stringify(mcp.servers))
+    }
+    if (body.x402_enabled !== undefined) add('x402_enabled', !!body.x402_enabled)
+    if (body.x402_allowed_sellers !== undefined) {
+      const sellers = validSellers(body.x402_allowed_sellers)
+      if (!sellers.ok) return c.json({ error: { message: sellers.error!, type: 'invalid_request', code: 400 } }, 400)
+      add('x402_allowed_sellers', JSON.stringify(sellers.entries))
+    }
+    if (body.x402_max_per_call_usd_micros !== undefined) {
+      const perCall = Number(body.x402_max_per_call_usd_micros)
+      if (!Number.isInteger(perCall) || perCall < 1 || perCall > 1_000_000) {
+        return c.json({ error: { message: 'x402_max_per_call_usd_micros must be an integer between 1 and 1,000,000', type: 'invalid_request', code: 400 } }, 400)
+      }
+      add('x402_max_per_call_usd_micros', perCall)
+    }
+    if (body.budget_usd_micros !== undefined) {
+      const b = Number(body.budget_usd_micros)
+      if (!Number.isInteger(b) || b < 1 || b > 10_000_000) {
+        return c.json({ error: { message: 'budget_usd_micros must be an integer between 1 and 10,000,000', type: 'invalid_request', code: 400 } }, 400)
+      }
+      add('budget_usd_micros', b)
+    }
+    if (body.max_steps !== undefined) {
+      const s = Number(body.max_steps)
+      if (!Number.isInteger(s) || s < 1 || s > 20) {
+        return c.json({ error: { message: 'max_steps must be 1-20', type: 'invalid_request', code: 400 } }, 400)
+      }
+      add('max_steps', s)
+    }
+    if (body.cron !== undefined) {
+      if (body.cron !== null) {
+        if (typeof body.cron !== 'string') return c.json({ error: { message: 'cron must be a string or null', type: 'invalid_request', code: 400 } }, 400)
+        try { parseCron(body.cron) } catch (e: any) {
+          return c.json({ error: { message: `Invalid cron: ${e.message}`, type: 'invalid_request', code: 400 } }, 400)
+        }
+      }
+      add('cron', body.cron)
+    }
+    if (body.status === 'paused' || body.status === 'active') add('status', body.status)
+
+    if (sets.length === 0) return c.json({ error: { message: 'Nothing to update', type: 'invalid_request', code: 400 } }, 400)
+    vals.push(row.id)
+    const updated = await one(`UPDATE agents SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals)
+    return c.json({ agent: rowOut(updated) })
+  })
+
+  // DELETE /api/agents/:id (soft)
+  app.delete('/api/agents/:id', requireUser, async (c) => {
+    const user = c.get('user')!
+    const row = await loadOwned(c.req.param('id'), user.id)
+    if (!row) return c.json({ error: { message: 'Agent not found', type: 'not_found', code: 404 } }, 404)
+    await query(`UPDATE agents SET status = 'deleted' WHERE id = $1`, [row.id])
+    return c.json({ ok: true })
+  })
+
+  // POST /api/agents/:id/run — run now
+  app.post('/api/agents/:id/run', requireUser, async (c) => {
+    const user = c.get('user')!
+    const row = await loadOwned(c.req.param('id'), user.id)
+    if (!row) return c.json({ error: { message: 'Agent not found', type: 'not_found', code: 404 } }, 404)
+    const body = await c.req.json().catch(() => null)
+    const input = body?.input
+    if (typeof input !== 'string' || input.length < 1 || input.length > 16000) {
+      return c.json({ error: { message: 'input must be 1-16000 characters', type: 'invalid_request', code: 400 } }, 400)
+    }
+    const result = await runAgent(row, input, user)
+    return c.json(result, result.status === 'success' ? 200 : 422)
+  })
+
+  // GET /api/agents/:id/runs — run history
+  app.get('/api/agents/:id/runs', requireUser, async (c) => {
+    const user = c.get('user')!
+    const row = await loadOwned(c.req.param('id'), user.id)
+    if (!row) return c.json({ error: { message: 'Agent not found', type: 'not_found', code: 404 } }, 404)
+    const res = await query(
+      `SELECT id, status, input, output, tool_calls, spend_usd_micros, error, created_at
+       FROM agent_runs WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 20`,
+      [row.id]
+    )
+    return c.json({ runs: res.rows })
+  })
+}
+
+/**
+ * How late a missed schedule slot may still be picked up. One daily cron tick drifting by an
+ * hour, or a tick that never fired because nothing invoked the route, must not cost the team
+ * its whole day: 26 hours covers a full daily cycle plus slack, and the per-slot lock still
+ * makes a second invocation inside the same slot a no-op.
+ */
+const SCHEDULE_LOOKBACK_MINUTES = 26 * 60
+
+/**
+ * The input a scheduled run receives. It states the situation rather than asking an open
+ * question: the earlier generic message made the orchestrator request clarification instead
+ * of acting, because a bare timestamp carries no objective.
+ */
+function scheduledBrief(now: Date): string {
+  return [
+    `Scheduled tick at ${now.toISOString()} (UTC). No human is present in this run.`,
+    'Read your skill pack, then the open alerts and the last few run reports, and pick the single',
+    'highest-value task you can actually complete with the tools you hold. Do the work, then report:',
+    'what you chose and why, the evidence for it (path:line, test or command output), what you could',
+    'not do, and what needs the owner. Do not ask clarifying questions in this run; if nothing is',
+    'justifiable, say so in one line and stop.',
+  ].join(' ')
+}
+
+/**
+ * POST /api/cron/agents — Vercel cron / external pinger entry.
+ * No session: guarded by Bearer CRON_SECRET. Runs every active, cron-set agent
+ * that is due, sequentially, capped at 20 per invocation.
+ */
+export function registerCronRoute(app: SessionApp): void {
+  const handler = async (c: any) => {
+    const auth = c.req.header('authorization') || ''
+    if (!env.cronSecret || auth !== `Bearer ${env.cronSecret}`) {
+      return c.json({ error: { message: 'Unauthorized', type: 'auth', code: 401 } }, 401)
+    }
+    // Ops path: run one named agent with an explicit task. This is how a human or a
+    // scheduler hands real work to the team instead of the generic scheduled message.
+    const body = await c.req.json().catch(() => ({} as any))
+    const opsRun = body?.agent_id ? String(body.agent_id) : null
+    if (opsRun) {
+      const row = await one(`SELECT * FROM agents WHERE id = $1 AND status = 'active'`, [opsRun])
+      if (!row) return c.json({ error: { message: 'Agent not found or not active', type: 'not_found' } }, 404)
+      const user = await one('SELECT * FROM users WHERE id = $1', [(row as any).user_id])
+      if (!user) return c.json({ error: { message: 'Owner not found', type: 'not_found' } }, 404)
+      const input = String(body?.input || '').trim()
+      if (!input) return c.json({ error: { message: 'input is required when agent_id is set', type: 'invalid_request' } }, 400)
+
+      // Optional idempotency key: a retried ops call with the same key must not run or charge
+      // twice. Without a key an ops call is a deliberate fresh run and is not deduplicated.
+      const idem = body?.idempotency_key ? String(body.idempotency_key).slice(0, 200) : ''
+      let lock: Awaited<ReturnType<typeof acquireScheduleLock>> = null
+      if (idem) {
+        lock = await acquireScheduleLock(opsRun, `ops:${idem}`, { runId: crypto.randomUUID() })
+        if (!lock) {
+          return c.json({ triggered: [], skipped: [{ agent_id: opsRun, reason: 'idempotency key already used or in flight' }] })
+        }
+      }
+
+      const r = await runAgent(row as AgentRow, input.slice(0, 4000), user, lock ? { runId: lock.runId } : {})
+      if (lock) await finishScheduleLock(lock.id, lock.runId, r.status === 'success' ? 'COMPLETED' : 'FAILED')
+      return c.json({ triggered: [opsRun], results: [{ agent_id: opsRun, ...r }] })
+    }
+
+    // Due-ness is measured against the last SUCCESSFUL run, not the last attempt. A scheduled
+    // run that failed has not done its day's work, so its slot stays owed and the next tick
+    // retries it; otherwise one provider hiccup costs the team a whole cycle. The retry is
+    // bounded in practice because the pinger fires once a day and the lookback is 26 hours.
+    const res = await query(
+      `SELECT a.*, (SELECT max(r.created_at) FROM agent_runs r
+                     WHERE r.agent_id = a.id AND r.status = 'success') AS last_success_at
+         FROM agents a WHERE a.status = 'active' AND a.cron IS NOT NULL
+        ORDER BY a.last_run_at ASC NULLS FIRST LIMIT 20`
+    )
+    const triggered: string[] = []
+    const results: any[] = []
+    const skipped: any[] = []
+    const now = new Date()
+    const slot = cronSlotKey(now)
+    for (const row of res.rows as AgentRow[]) {
+      let due = false
+      // The pinger is external and its timing is not ours to guarantee, so a slot that
+      // passed while nothing was invoking this route still runs late instead of being lost.
+      const lastSuccess = (row as any).last_success_at
+      try { due = isCronDue(row.cron!, now, lastSuccess ? new Date(lastSuccess) : null, { lookbackMinutes: SCHEDULE_LOOKBACK_MINUTES }) } catch { due = false }
+      if (!due) continue
+
+      // One owner per (agent, slot). A second overlapping tick gets null, records a skip and
+      // never double-executes or double-charges the run.
+      let lock: Awaited<ReturnType<typeof acquireScheduleLock>> = null
+      try {
+        lock = await acquireScheduleLock(row.id, slot, { scheduledAt: now, runId: crypto.randomUUID() })
+      } catch (e: any) {
+        results.push({ agent_id: row.id, status: 'error', error: `lock error: ${String(e?.message || e).slice(0, 200)}` })
+        continue
+      }
+      if (!lock) {
+        skipped.push({ agent_id: row.id, reason: 'slot already running or completed', slot })
+        continue
+      }
+
+      triggered.push(row.id)
+      try {
+        const user = await one('SELECT * FROM users WHERE id = $1', [row.user_id])
+        if (!user) {
+          await finishScheduleLock(lock.id, lock.runId, 'FAILED', { reason: 'owner not found' })
+          results.push({ agent_id: row.id, status: 'error', error: 'owner not found' })
+          continue
+        }
+        const r = await runAgent(row, scheduledBrief(now), user, { runId: lock.runId })
+        await finishScheduleLock(lock.id, lock.runId, r.status === 'success' ? 'COMPLETED' : 'FAILED', {
+          spend_usd_micros: r.spend_usd_micros,
+        })
+        results.push({ agent_id: row.id, ...r })
+      } catch (e: any) {
+        await finishScheduleLock(lock.id, lock.runId, 'FAILED', { reason: String(e?.message || e).slice(0, 200) })
+        results.push({ agent_id: row.id, status: 'error', error: String(e?.message || e).slice(0, 300) })
+      }
+    }
+    return c.json({ triggered, results, skipped, slot })
+  }
+  // Vercel cron sends GET with `Authorization: Bearer $CRON_SECRET`; accept both.
+  app.on(['GET', 'POST'], '/api/cron/agents', handler)
+}

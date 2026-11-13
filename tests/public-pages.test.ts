@@ -3,6 +3,7 @@ delete process.env.DATABASE_URL
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { readFileSync } from 'node:fs'
 
 const { Hono } = await import('hono')
 const { registerPublicRoutes } = await import('../src/routes/public.js')
@@ -289,4 +290,30 @@ test('every public page carries the Vercel Analytics script', async () => {
     assert.match(body, /window\.va=window\.va\|\|function/, `${path} should bootstrap the analytics queue`)
     assert.match(body, /<script defer src="\/_vercel\/insights\/script\.js"><\/script>/, `${path} should load analytics`)
   }
+})
+
+// Speed Insights measures Core Web Vitals, so it has to be present on both shells: the marketing
+// pages served as HTML here, and the app served from web/index.html.
+test('every public page carries the Vercel Speed Insights script', async () => {
+  // The app at / is served from web/index.html, not this shell, and is covered by the next test.
+  for (const path of ['/status', '/docs', '/team', '/whitepaper', '/contact', '/platform']) {
+    const body = await (await app().request(path)).text()
+    assert.match(body, /window\.si=window\.si\|\|function/, `${path} should bootstrap the vitals queue`)
+    assert.match(
+      body,
+      /<script defer src="\/_vercel\/speed-insights\/script\.js"><\/script>/,
+      `${path} should load Speed Insights`
+    )
+  }
+})
+
+test('the app collects vitals once, from the bundle rather than a second tag', () => {
+  // Two collectors would double every measurement, and the package's own script carries a
+  // data-sdkn marker the plain tag does not, so Vercel cannot dedupe them for us.
+  const shell = readFileSync(new URL('../web/index.html', import.meta.url), 'utf8')
+  assert.equal(shell.includes('speed-insights'), false, 'web/index.html must not tag the vitals script')
+
+  const entry = readFileSync(new URL('../web/src/main.tsx', import.meta.url), 'utf8')
+  assert.match(entry, /from '@vercel\/speed-insights'/, 'the app should use the documented package entry')
+  assert.match(entry, /injectSpeedInsights\(\)/, 'the app must actually inject it')
 })

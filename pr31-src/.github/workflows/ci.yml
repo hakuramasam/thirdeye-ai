@@ -1,0 +1,35 @@
+# The gate that makes agent pull requests safe to accept.
+#
+# Until this existed, nothing checked a patch: an agent (or I) could open a PR that failed to
+# compile and no one would know until production. Every pull request now proves three things
+# before a human reads it: it typechecks, the suite is green on PGlite, and it contains no
+# credential-shaped strings.
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Suite (PGlite, no DATABASE_URL)
+        env:
+          DATABASE_URL: ''
+          DATABASE_URL_UNPOOLED: ''
+        run: npm test
+      - name: No credentials in the diff
+        run: |
+          if git diff --unified=0 "origin/${{ github.base_ref || 'main' }}...HEAD" | grep -nE '(sk-thirdeye-[A-Za-z0-9]{8,}|sk-(proj|ant)-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,})'; then
+            echo "::error::A credential-shaped string appears in this diff."; exit 1
+          fi
+          echo "clean"

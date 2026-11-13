@@ -1,0 +1,90 @@
+{
+  "buildCommand": "npm run build:web",
+  "outputDirectory": "web/dist",
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api"
+    },
+    {
+      "source": "/.well-known/agent-card.json",
+      "destination": "/api"
+    },
+    {
+      "source": "/a2a",
+      "destination": "/api"
+    },
+    {
+      "source": "/platform",
+      "destination": "/api"
+    },
+    {
+      "source": "/status",
+      "destination": "/api"
+    },
+    {
+      "source": "/roadmap",
+      "destination": "/api"
+    },
+    {
+      "source": "/changelog",
+      "destination": "/api"
+    },
+    {
+      "source": "/partnerships",
+      "destination": "/api"
+    },
+    {
+      "source": "/docs",
+      "destination": "/api"
+    },
+    {
+      "source": "/docs/api",
+      "destination": "/api"
+    },
+    {
+      "source": "/docs/mcp",
+      "destination": "/api"
+    },
+    {
+      "source": "/docs/x402",
+      "destination": "/api"
+    },
+    {
+      "source": "/agents",
+      "destination": "/api"
+    },
+    {
+      "source": "/docs/agents",
+      "destination": "/api"
+    },
+    {
+      "source": "/team",
+      "destination": "/api"
+    },
+    {
+      "source": "/whitepaper",
+      "destination": "/api"
+    },
+    {
+      "source": "/contact",
+      "destination": "/api"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ],
+  "functions": {
+    "api/index.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/agents",
+      "schedule": "0 9 * * *"
+    }
+  ]
+}
