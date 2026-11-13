@@ -80,6 +80,12 @@ function Landing({ onSignedIn }: { onSignedIn: (u: User, mode: string) => void }
           <div className="card feature"><h3>Wallet-native accounts</h3><p>Sign in with Ethereum — MetaMask, Rainbow, OKX, Bitget. No passwords, no email.</p></div>
           <div className="card feature"><h3>Usage analytics</h3><p>Token usage, cost, and platform inflow/outflow feeds — the substrate for tokenized assets.</p></div>
         </div>
+        <footer style={{ borderTop: '1px solid #212121', marginTop: 34, paddingTop: 16, fontSize: 13, color: '#888888', display: 'flex', flexWrap: 'wrap', gap: '6px 18px' }}>
+          <span>Official project email: <a href="mailto:thirdeye-ai@agentmail.to">thirdeye-ai@agentmail.to</a></span>
+          <a href="/contact">Contact and verification</a>
+          <a href="/whitepaper">Whitepaper</a>
+          <a href="/status">Status</a>
+        </footer>
       </div>
       {wrongNet && <NetworkPrompt onDismiss={() => setWrongNet(false)} />}
     </div>
