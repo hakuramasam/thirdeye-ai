@@ -1,7 +1,0 @@
-node_modules/
-.data/
-dist/
-.env
-*.local
-.vercel
-node_modules

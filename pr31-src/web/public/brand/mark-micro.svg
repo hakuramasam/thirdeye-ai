@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Thirdeye AI logo mark">
-  <title>Thirdeye AI</title>
-  <g fill="none" stroke="#F5A524" stroke-width="17" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M26 128 Q128 40 230 128 Q128 216 26 128 Z"/>
-    <circle cx="128" cy="128" r="34" stroke-width="15"/>
-    <circle cx="128" cy="128" r="13" fill="#F5A524" stroke="none"/>
-  </g>
-</svg>
