@@ -20,6 +20,7 @@
     "@hono/node-server": "^2.1.6",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@neondatabase/serverless": "^1.2.0",
+    "@vercel/speed-insights": "^2.1.0",
     "@walletconnect/ethereum-provider": "^2.25.0",
     "hono": "^4.13.17",
     "inngest": "^4.26.2",

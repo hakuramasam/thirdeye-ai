@@ -1,9 +1,20 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { injectSpeedInsights } from '@vercel/speed-insights'
 import './styles.css'
 import { api, short, toast, Toasts, ChainBadge, NetworkPrompt } from './wallet'
 import { Landing, Overview, Keys, Byok, Credits } from './pages1'
 import { Agents, Models, Docs, Feedback } from './pages2'
 import { Playground } from './pages3'
+
+/**
+ * Vercel Speed Insights records Core Web Vitals for the app.
+ *
+ * Injected from the bundle rather than added as a <script> tag in web/index.html on purpose: the
+ * package appends its own script with a data-sdkn marker, so tagging the shell as well would load
+ * the collector twice and double every measurement. The server-rendered marketing pages are a
+ * different shell (src/routes/public.ts) that never loads this bundle, so they carry the plain tag.
+ */
+injectSpeedInsights()
 
 type Tab = 'overview' | 'playground' | 'keys' | 'byok' | 'credits' | 'agents' | 'models' | 'docs' | 'feedback'
 

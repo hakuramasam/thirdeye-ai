@@ -138,6 +138,8 @@ ${head(title, path)}
 <footer><div class="wrap"><p style="margin:0 0 6px">Official project email: <a href="mailto:${PROJECT_EMAIL}">${PROJECT_EMAIL}</a> &middot; <a href="/contact">Contact and verification</a></p>Public pages show what we choose to publish. Account balances, keys, partner terms and security findings are private and never rendered here.</div></footer>
 <script>window.va=window.va||function(){(window.vaq=window.vaq||[]).push(arguments)};</script>
 <script defer src="/_vercel/insights/script.js"></script>
+<script>window.si=window.si||function(){(window.siq=window.siq||[]).push(arguments)};</script>
+<script defer src="/_vercel/speed-insights/script.js"></script>
 </body></html>`
 }
 
