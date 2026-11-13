@@ -279,3 +279,12 @@ test('a failing ledger query renders a stated failure rather than an empty table
     await query(`ALTER TABLE agent_run_events_hidden RENAME TO agent_run_events`)
   }
 })
+
+// Analytics is one script tag served by the platform. It is easy to lose in a shell rewrite and
+// nothing else would notice, so the server-rendered shell asserts it is present.
+test('every public page carries the Vercel Analytics script', async () => {
+  for (const path of ['/status', '/docs', '/team', '/whitepaper']) {
+    const body = await (await app().request(path)).text()
+    assert.match(body, /<script defer src="\/_vercel\/insights\/script\.js"><\/script>/, `${path} should load analytics`)
+  }
+})
