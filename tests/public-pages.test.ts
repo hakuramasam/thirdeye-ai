@@ -3,7 +3,6 @@ delete process.env.DATABASE_URL
 
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { readFileSync } from 'node:fs'
 
 const { Hono } = await import('hono')
 const { registerPublicRoutes } = await import('../src/routes/public.js')
@@ -307,7 +306,9 @@ test('every public page carries the Vercel Speed Insights script', async () => {
   }
 })
 
-test('the app collects vitals once, from the bundle rather than a second tag', () => {
+test('the app collects vitals once, from the bundle rather than a second tag', async () => {
+  // Imported here: a top-level binding would collide with the one this file already creates.
+  const { readFileSync } = await import('node:fs')
   // Two collectors would double every measurement, and the package's own script carries a
   // data-sdkn marker the plain tag does not, so Vercel cannot dedupe them for us.
   const shell = readFileSync(new URL('../web/index.html', import.meta.url), 'utf8')
