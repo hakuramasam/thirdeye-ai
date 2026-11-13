@@ -17,6 +17,17 @@ const esc = (s: unknown): string =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
 
 const SITE = 'https://thirdeye-ai-alpha.vercel.app'
+
+/**
+ * The project's official contact address, published here on purpose.
+ *
+ * Token listings ask for an address on the project's own domain. The project domain is a
+ * vercel.app subdomain, which cannot receive mail, so the address is hosted on AgentMail's public
+ * domain instead. Publishing it on this page is what makes it verifiable: a reviewer can see the
+ * address the project claims, on the project's own site, next to the contract and the creator
+ * address it belongs to. Keep this value in sync with any listing submission.
+ */
+export const PROJECT_EMAIL = 'thirdeye-ai@agentmail.to'
 const OG_DESCRIPTION = 'Pay per call, not per seat. OpenAI-compatible inference, wallet-native accounts, USDC credits.'
 
 /**
@@ -53,6 +64,14 @@ function head(title: string, path: string): string {
     name: 'Thirdeye AI',
     url: SITE,
     logo: `${SITE}/brand/mark.svg`,
+    email: PROJECT_EMAIL,
+    contactPoint: [{
+      '@type': 'ContactPoint',
+      contactType: 'customer support',
+      email: PROJECT_EMAIL,
+      url: `${SITE}/contact`,
+      availableLanguage: 'English',
+    }],
     description: OG_DESCRIPTION,
   }).replace(/</g, '\\u003c')}</script>`
 }
@@ -67,6 +86,7 @@ const NAV: [string, string][] = [
   ['/team', 'Team'],
   ['/partnerships', 'Partners'],
   ['/whitepaper', 'Whitepaper'],
+  ['/contact', 'Contact'],
 ]
 
 const CSS = `
@@ -115,7 +135,7 @@ ${head(title, path)}
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"><style>${CSS}</style></head><body>
 <header><div class="wrap"><div class="brand"><img src="/brand/mark-micro.svg" alt="" width="20" height="20">Thirdeye AI <span>pay-per-call inference</span></div><nav>${links}<a href="/">App</a></nav></div></header>
 <main><div class="wrap">${body}</div></main>
-<footer><div class="wrap">Public pages show what we choose to publish. Account balances, keys, partner terms and security findings are private and never rendered here.</div></footer>
+<footer><div class="wrap"><p style="margin:0 0 6px">Official project email: <a href="mailto:${PROJECT_EMAIL}">${PROJECT_EMAIL}</a> &middot; <a href="/contact">Contact and verification</a></p>Public pages show what we choose to publish. Account balances, keys, partner terms and security findings are private and never rendered here.</div></footer>
 </body></html>`
 }
 
@@ -491,6 +511,40 @@ ${statStrip}
 <p class="muted" style="margin-top:26px">What this page leaves out, deliberately: agent prompts, tool arguments, tool results, run inputs and outputs, account identifiers, and the raw text of a provider error. Arguments and results are the parts that carry repository contents and customer data, so they stay behind the master key at <code>/api/admin/agents</code>. A failure is published as one of four reason codes instead of the provider's message, because that message can name the upstream account.</p>`
 }
 
+// ── Contact ──────────────────────────────────────────────────────────────────
+/**
+ * The official contact page. Two jobs: publish the address a token listing asks for, and give a
+ * reviewer enough anchors to check that the address really belongs to this project.
+ */
+const CONTACT = `
+<h1>Contact</h1>
+<p class="lead">One address, published here so it can be checked against the project rather than taken on trust.</p>
+<div class="card"><h3>Official project email</h3><p style="font-size:16px"><a href="mailto:${PROJECT_EMAIL}">${PROJECT_EMAIL}</a></p><p class="muted" style="margin-top:6px">Display name: Thirdeye AI. This is the only address the project uses.</p></div>
+<h2>What this address is for</h2>
+<div class="grid">
+  <div class="card"><h3>Token and listing verification</h3><p>The contact address on file with block explorers and token listings, including the BaseScan token information submission for the THIRDEYE contract.</p></div>
+  <div class="card"><h3>Platform and billing</h3><p>Account, invoice, deposit and credit questions for people and agents using the inference API.</p></div>
+  <div class="card"><h3>Security and abuse</h3><p>Vulnerability reports, key exposure, and reports of the platform being used to attack something else.</p></div>
+  <div class="card"><h3>Partnerships</h3><p>First contact for barter and integration enquiries. Terms already published at <a href="/partnerships">Partnerships</a>.</p></div>
+</div>
+<h2>Why the address is not on this domain</h2>
+<p>The project site runs on a <code>vercel.app</code> subdomain. A subdomain of a hosting platform cannot receive mail, so the project mail is hosted on AgentMail's public domain instead. That is a public mail domain in the same sense as Gmail, which is why this page exists: the address is published on the project's own site, next to the contract and the creator address it belongs to, so a reviewer can confirm that the project is the party claiming it rather than relying on the address alone.</p>
+<h2>Verifying that this is the project</h2>
+<p>Every anchor below is onchain or on a public host, so none of them depend on this page being truthful.</p>
+<table><thead><tr><th>Anchor</th><th>Value</th></tr></thead><tbody>
+<tr><td>Token contract (Base)</td><td><code>0xA8A65A86E01D227Dbfd7C7a94d14344b33603df5</code></td></tr>
+<tr><td>Launch transaction</td><td><code>0x66e65f6e49bf08a34cbc703df9ae6b2d4fd983a2a2068340a17a53b93589ead2</code></td></tr>
+<tr><td>Block and time of launch</td><td>56,365,145 &middot; 12 Nov 2026 06:03:24 UTC</td></tr>
+<tr><td>Creator address</td><td><code>0xb09f37a1110a126d63463Ec08a0C0B97612D90ab</code></td></tr>
+<tr><td>Launch contract</td><td><code>0x660eaaedebc968f8f3694354fa8ec0b4c5ba8d12</code></td></tr>
+<tr><td>Source repository</td><td><a href="https://github.com/hakuramasam/thirdeye-ai" rel="noopener">github.com/hakuramasam/thirdeye-ai</a></td></tr>
+<tr><td>X</td><td><a href="https://x.com/Thirdeye_Infra" rel="noopener">@Thirdeye_Infra</a></td></tr>
+</tbody></table>
+<h2>What this address will never ask for</h2>
+<p>No one writing from this address will ask for a seed phrase, a private key, a signed transaction you did not initiate, or a payment to anywhere other than the deposit path documented in <a href="/docs/api">the API guide</a>. A message from a lookalike domain is not from us: the address on this page is the only one the project uses.</p>
+<p class="muted">Response is not instant. The mailbox is read by the project operator, and an autonomous agent triages it first; anything involving money, credentials or a contract change is escalated to the operator rather than answered by the agent.</p>
+`
+
 export function registerPublicRoutes(app: SessionApp): void {
   app.get('/platform', (c) => c.html(layout('Platform', '/platform', PLATFORM)))
   app.get('/docs', (c) => c.html(layout('Documentation', '/docs', DOCS_HUB)))
@@ -501,6 +555,7 @@ export function registerPublicRoutes(app: SessionApp): void {
   app.get('/roadmap', (c) => c.html(layout('Roadmap', '/roadmap', ROADMAP)))
   app.get('/partnerships', (c) => c.html(layout('Partnerships', '/partnerships', PARTNERSHIPS)))
   app.get('/whitepaper', (c) => c.html(layout('Whitepaper', '/whitepaper', WHITEPAPER)))
+  app.get('/contact', (c) => c.html(layout('Contact', '/contact', CONTACT)))
 
   /**
    * Status is the only page that reads the database, and it reads exactly one thing: whether a
