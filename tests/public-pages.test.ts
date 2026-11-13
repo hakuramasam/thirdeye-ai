@@ -285,6 +285,8 @@ test('a failing ledger query renders a stated failure rather than an empty table
 test('every public page carries the Vercel Analytics script', async () => {
   for (const path of ['/status', '/docs', '/team', '/whitepaper']) {
     const body = await (await app().request(path)).text()
+    // Both halves of Vercel's documented HTML integration: the queue bootstrap, then the script.
+    assert.match(body, /window\.va=window\.va\|\|function/, `${path} should bootstrap the analytics queue`)
     assert.match(body, /<script defer src="\/_vercel\/insights\/script\.js"><\/script>/, `${path} should load analytics`)
   }
 })
