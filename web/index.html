@@ -35,6 +35,11 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Vercel Web Analytics. Cookieless and first-party, so no consent banner is needed.
+         Served by the platform at this path; it records a pageview for the app shell. -->
+    <!-- Documented HTML integration: queue calls made before the script loads. -->
+    <script>window.va=window.va||function(){(window.vaq=window.vaq||[]).push(arguments)};</script>
+    <script defer src="/_vercel/insights/script.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

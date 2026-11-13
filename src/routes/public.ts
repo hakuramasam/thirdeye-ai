@@ -136,6 +136,8 @@ ${head(title, path)}
 <header><div class="wrap"><div class="brand"><img src="/brand/mark-micro.svg" alt="" width="20" height="20">Thirdeye AI <span>pay-per-call inference</span></div><nav>${links}<a href="/">App</a></nav></div></header>
 <main><div class="wrap">${body}</div></main>
 <footer><div class="wrap"><p style="margin:0 0 6px">Official project email: <a href="mailto:${PROJECT_EMAIL}">${PROJECT_EMAIL}</a> &middot; <a href="/contact">Contact and verification</a></p>Public pages show what we choose to publish. Account balances, keys, partner terms and security findings are private and never rendered here.</div></footer>
+<script>window.va=window.va||function(){(window.vaq=window.vaq||[]).push(arguments)};</script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body></html>`
 }
 
