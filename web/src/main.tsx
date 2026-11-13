@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { Analytics } from '@vercel/analytics/react'
 import './styles.css'
 import { api, short, toast, Toasts, ChainBadge, NetworkPrompt } from './wallet'
 import { Landing, Overview, Keys, Byok, Credits } from './pages1'
@@ -54,6 +55,7 @@ function App() {
         <TopBar user={null} mode={mode} balance={null} onLogout={logout} onNeedSwitch={() => {}} />
         <Landing onSignedIn={(u, m) => { setUser(u); setMode(m); onChanged() }} />
         <Toasts />
+        <Analytics />
       </>
     )
   }
@@ -86,6 +88,7 @@ function App() {
       </div>
       {netPrompt && <NetworkPrompt onDismiss={() => setNetPrompt(false)} />}
       <Toasts />
+      <Analytics />
     </>
   )
 }
