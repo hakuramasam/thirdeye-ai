@@ -1,9 +1,9 @@
 import { Hono } from 'hono'
 import { logger } from 'hono/logger'
 import type { AppEnv } from './lib/types.js'
-import { migrate, dbMode } from './db/index.js'
+import { migrate, dbMode, probe } from './db/index.js'
 import { configProblems } from './lib/env.js'
-import { configGuard, healthzBody } from './lib/config-guard.js'
+import { configGuard, healthzBody, livezBody } from './lib/config-guard.js'
 import { seedDemoData } from './db/seed-demo.js'
 
 import { registerV1Routes } from './routes/v1.js'
@@ -52,13 +52,23 @@ function bootstrap(): Promise<void> {
 }
 
 /**
- * Health is registered before the database bootstrap on purpose.
+ * The two probes are registered before the database bootstrap on purpose.
  *
- * It sat behind the middleware below, which runs migrate() first, so a deployment whose connection
- * string was missing or malformed answered a generic 500 from migrate instead of naming the
- * problem. A readiness probe that cannot survive the failure it exists to report is not a probe.
+ * They sat behind the middleware below, which runs migrate() first, so a deployment whose
+ * connection string was missing or malformed answered a generic 500 from migrate instead of naming
+ * the problem. A readiness probe that cannot survive the failure it exists to report is not a probe.
+ *
+ * Liveness never touches the database. Readiness measures it, under the timeout in probe(), and
+ * reports only a class of failure: the driver's own message names the host and database, and this
+ * body is public.
  */
-app.get('/api/healthz', (c) => c.json(healthzBody(configProblems, dbMode())))
+app.get('/api/livez', (c) => c.json(livezBody(dbMode())))
+app.get('/api/healthz', async (c) => {
+  // A refused deployment has no database to measure: its fallback would be an in-memory one, and
+  // opening it just to report it healthy is the failure mode this refusal exists to prevent.
+  const database = configProblems.length ? null : await probe(Number(process.env.HEALTH_DB_TIMEOUT_MS) || 2000)
+  return c.json(healthzBody(configProblems, dbMode(), undefined, database))
+})
 
 app.use('/api/*', async (_c, next) => {
   await bootstrap()

@@ -196,3 +196,136 @@ test('a deployment with a malformed DATABASE_URL still answers health, naming th
   assert.equal(out['/api/v1/models'].status, 503)
   assert.equal(out['/api/v1/models'].body.error.type, 'misconfigured')
 })
+
+// ── Readiness measures the database; liveness does not ─────────────────────────────────────────
+
+import { livezBody, LIVE_PATH } from '../src/lib/config-guard.js'
+import { probe } from '../src/db/index.js'
+
+test('readiness fails when the database it measured is unreachable', () => {
+  const healthy = healthzBody([], 'postgres', '2026-11-11T00:00:00.000Z', { ok: true, ms: 3 })
+  assert.equal(healthy.ok, true)
+  assert.deepEqual(healthy.database, { ok: true, ms: 3 })
+
+  const down = healthzBody([], 'postgres', '2026-11-11T00:00:00.000Z', { ok: false, ms: 2000, error: 'timeout' })
+  assert.equal(down.ok, false, 'a reachable configuration over a dead database is not ready')
+  assert.equal(down.database!.ok, false)
+  assert.equal(down.database!.error, 'timeout')
+})
+
+test('a health body that measured nothing claims nothing', () => {
+  // Before, `ok` meant only "the secrets are fine" while the body called itself health.
+  const unmeasured = healthzBody([], 'pglite', '2026-11-11T00:00:00.000Z')
+  assert.equal(unmeasured.database, null)
+  assert.equal(JSON.stringify(unmeasured).includes('"database":{"ok":true'), false, 'no invented database result')
+})
+
+test('liveness stays true through a database outage and a refused configuration', async () => {
+  const problems = validateDatabase({ databaseUrl: '', isServerless: true })
+  const app = new Hono()
+  app.use('*', configGuard(problems) as never)
+  app.get(LIVE_PATH, (c) => c.json(livezBody('pglite', '2026-11-11T00:00:00.000Z')))
+
+  const res = await app.request(LIVE_PATH)
+  assert.equal(res.status, 200, 'a probe the guard blocks cannot report the reason it is blocked')
+  const body = (await res.json()) as any
+  assert.deepEqual(body, { ok: true, mode: 'pglite', time: '2026-11-11T00:00:00.000Z' })
+})
+
+test('the probe answers against a live database and is bounded when there is none', async () => {
+  const { spawnSync } = await import('node:child_process')
+
+  // The suite runs DATABASE_URL unset, so this exercises the local PGlite driver. It runs in a
+  // child because src/db/index.ts reads its directory from process.env at import time.
+  const live = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '-e',
+      `import('./src/db/index.ts').then(async (m) => {
+         const p = await m.probe(2000)
+         console.log(JSON.stringify(p))
+       })`,
+    ],
+    {
+      env: { ...process.env, DATABASE_URL: '', PREVIEW_DATABASE_URL: '', PGLITE_DIR: 'memory://' },
+      encoding: 'utf8',
+      timeout: 60_000,
+    }
+  )
+  const liveLine = String(live.stdout || '').trim().split('\n').filter(Boolean).pop() || '{}'
+  const alive = JSON.parse(liveLine) as { ok: boolean; ms: number }
+  assert.equal(alive.ok, true, `probe should succeed on PGlite: ${live.stdout}${live.stderr}`)
+  assert.equal(typeof alive.ms, 'number')
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '-e',
+      `import('./src/db/index.ts').then(async (m) => {
+         const t = Date.now()
+         const p = await m.probe(1200)
+         console.log(JSON.stringify({ ...p, elapsed: Date.now() - t }))
+       })`,
+    ],
+    {
+      env: {
+        ...process.env,
+        DATABASE_URL: 'postgres://probeuser:probesecret@127.0.0.1:1/probedb',
+        PREVIEW_DATABASE_URL: '',
+        PGLITE_DIR: 'memory://',
+      },
+      encoding: 'utf8',
+      timeout: 60_000,
+    }
+  )
+  const line = String(result.stdout || '').trim().split('\n').filter(Boolean).pop() || '{}'
+  const down = JSON.parse(line) as { ok: boolean; error?: string; elapsed: number; ms: number }
+  assert.equal(down.ok, false)
+  assert.ok(['unreachable', 'timeout', 'error'].includes(String(down.error)), `got ${JSON.stringify(down)}`)
+  assert.ok(down.elapsed < 10_000, `the probe must not hang: ${down.elapsed}ms`)
+  assert.equal(JSON.stringify(down).includes('probesecret'), false, 'the probe never echoes credentials')
+})
+
+test('a deployment whose database refuses connections reports not-ready, without leaking it', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const result = spawnSync(process.execPath, ['--import', 'tsx', 'tests/helpers/app-health-probe.ts'], {
+    env: {
+      ...process.env,
+      PROBE_PATHS: '/api/livez,/api/healthz,/api/v1/models',
+      DATABASE_URL: 'postgres://probeuser:probesecret@127.0.0.1:1/probedb',
+      PREVIEW_DATABASE_URL: '',
+      NODE_ENV: 'production',
+      VERCEL: '1',
+      PGLITE_DIR: 'memory://',
+      SESSION_SECRET: 's'.repeat(64),
+      MASTER_KEY: 'm'.repeat(64),
+      HEALTH_DB_TIMEOUT_MS: '1500',
+    },
+    encoding: 'utf8',
+    timeout: 180_000,
+  })
+  const line = String(result.stdout || '').trim().split('\n').filter(Boolean).pop() || '{}'
+  const out = JSON.parse(line) as Record<string, { status: number; body: any }>
+
+  const live = out['/api/livez']
+  assert.equal(live.status, 200)
+  assert.equal(live.body.ok, true, 'the process is up even when its database is not')
+
+  const ready = out['/api/healthz']
+  assert.equal(ready.status, 200, 'the body carries the verdict, as the rest of this file assumes')
+  assert.equal(ready.body.ok, false, 'a database that refuses connections is not ready')
+  assert.equal(ready.body.config.ok, true, 'the configuration itself is valid; the database is the fault')
+  assert.equal(ready.body.database.ok, false)
+  assert.ok(['unreachable', 'error', 'timeout'].includes(ready.body.database.error))
+
+  const text = JSON.stringify(out)
+  assert.equal(text.includes('probesecret'), false, 'no credential in any probe body')
+  assert.equal(text.includes('127.0.0.1'), false, 'no host in any probe body')
+
+  // A request that needs the database still fails loudly rather than serving an empty one.
+  assert.notEqual(out['/api/v1/models'].status, 200)
+})
