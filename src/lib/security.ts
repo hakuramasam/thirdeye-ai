@@ -46,6 +46,45 @@ export function validateSecrets(
 export type SiweDecision = { ok: boolean; reason?: string; lenient: boolean }
 
 /**
+ * A deployment with no database is not demo mode, it is a data-loss bug.
+ *
+ * `dbMode()` falls back to PGlite whenever no connection string is set, and on serverless PGlite
+ * runs at `memory://`. Every request then reads an empty database and every write is discarded on
+ * the next cold start, answering 200 the whole time, with nothing in the logs to say so. A local
+ * check-out may run that way on purpose (the file-backed dev database and the test suite both do),
+ * so the refusal is scoped to a deployment: serverless, or NODE_ENV=production.
+ *
+ * The check names the variable and never the value, like the secret rules beside it.
+ */
+export function validateDatabase(input: {
+  databaseUrl?: string
+  /** The variable the runtime actually read. Previews prefer PREVIEW_DATABASE_URL. */
+  databaseUrlVar?: string
+  isServerless?: boolean
+  nodeEnv?: string
+}): SecretProblem[] {
+  const deployed = Boolean(input.isServerless) || (input.nodeEnv ?? 'development') === 'production'
+  if (!deployed) return []
+  const problems: SecretProblem[] = []
+  // Name the variable in play, not the conventional one: a preview reads PREVIEW_DATABASE_URL, so
+  // reporting DATABASE_URL would send an operator to a variable that is not being consulted.
+  const name = input.databaseUrlVar || 'DATABASE_URL'
+  const url = String(input.databaseUrl ?? '').trim()
+  if (!url) {
+    problems.push({
+      name,
+      problem:
+        'missing on a deployment, so the app would fall back to its local database (an in-memory one on serverless) and no write would reach production',
+    })
+    return problems
+  }
+  if (!/^postgres(ql)?:\/\//i.test(url)) {
+    problems.push({ name, problem: 'not a postgres:// connection string' })
+  }
+  return problems
+}
+
+/**
  * Decide whether a SIWE login may proceed.
  *
  * Rules: a domain that does not match the host is a rejection, not a log line, because a

@@ -51,6 +51,44 @@ export async function query(sql: string, params: any[] = []): Promise<QueryResul
   return { rows: res.rows ?? [], rowCount: res.affectedTuples ?? res.rows?.length ?? 0 }
 }
 
+/**
+ * A bounded readiness check: one trivial query, reported as a class of failure rather than a
+ * driver message.
+ *
+ * The timeout is the point of the function. A health endpoint that waits for a database that is
+ * hanging is indistinguishable from a dead process, and the driver's own message can carry the
+ * host and database name, which a public endpoint must never print. So this maps every outcome to
+ * `ok`, a duration, and one of three classes: `timeout`, `unreachable`, `error`.
+ */
+export type DbProbe = { ok: boolean; ms: number; error?: 'timeout' | 'unreachable' | 'error' }
+
+const PROBE_TIMEOUT = Symbol('probe_timeout')
+
+export async function probe(timeoutMs = 2000): Promise<DbProbe> {
+  const started = Date.now()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      query('SELECT 1 AS ok'),
+      new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(PROBE_TIMEOUT), timeoutMs)
+      }),
+    ])
+    return { ok: true, ms: Date.now() - started }
+  } catch (e: any) {
+    const code = String(e?.code ?? '')
+    const error: DbProbe['error'] =
+      e === PROBE_TIMEOUT
+        ? 'timeout'
+        : /ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ETIMEDOUT|ENETUNREACH|EAI_AGAIN/.test(code) || /ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ETIMEDOUT/.test(String(e?.message ?? ''))
+          ? 'unreachable'
+          : 'error'
+    return { ok: false, ms: Date.now() - started, error }
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 export async function one(sql: string, params: any[] = []): Promise<any | null> {
   const r = await query(sql, params)
   return r.rows[0] ?? null

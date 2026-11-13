@@ -292,12 +292,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
     return c.json({ ok: true, pay_in_token: Boolean(updated?.pay_in_token) })
   })
 
-  // GET /api/healthz
-  app.get('/api/healthz', (c) => {
-    return c.json({
-      ok: true,
-      mode: dbMode(),
-      time: new Date().toISOString(),
-    })
-  })
+  // /api/healthz is registered in src/app.ts, ahead of the database bootstrap, and reports
+  // readiness. A second registration here would shadow it or be shadowed by it depending on
+  // order, and this one answered ok:true unconditionally.
 }

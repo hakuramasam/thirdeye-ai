@@ -1,5 +1,5 @@
 import { randomBytes, createCipheriv, createDecipheriv, createHash } from 'node:crypto'
-import { validateSecrets, type SecretProblem } from './security.js'
+import { validateDatabase, validateSecrets, type SecretProblem } from './security.js'
 
 /** Central typed config. Everything optional for dev/demo; set in production. */
 const num = (v: string | undefined, d: number) => (v == null || v === '' ? d : Number(v))
@@ -17,6 +17,8 @@ export const env = {
    * write live rows. Unset in production, so production behaviour is unchanged.
    */
   databaseUrl: process.env.PREVIEW_DATABASE_URL || process.env.DATABASE_URL || '',
+  /** Which name supplied databaseUrl, so a refusal tells the operator what to change. */
+  databaseUrlVar: process.env.PREVIEW_DATABASE_URL ? 'PREVIEW_DATABASE_URL' : 'DATABASE_URL',
   pgliteDir: process.env.PGLITE_DIR ?? (process.env.VERCEL ? 'memory://' : '.data/thirdeye'),
 
   sessionSecret: process.env.SESSION_SECRET || 'thirdeye-dev-session-secret',
@@ -202,5 +204,22 @@ export const secretProblems: SecretProblem[] = validateSecrets({
   nodeEnv: process.env.NODE_ENV,
 })
 
-/** True when this process may serve requests: its signing secrets passed validation. */
-export const configOk = secretProblems.length === 0
+/**
+ * Everything that must hold before this process may serve a request, in one list.
+ *
+ * Signing secrets were the first entry; a deployed runtime with no database is the second, because
+ * that failure is quiet. The list is additive, so the refusal still names every problem at once
+ * rather than one per redeploy.
+ */
+export const configProblems: SecretProblem[] = [
+  ...secretProblems,
+  ...validateDatabase({
+    databaseUrl: env.databaseUrl,
+    databaseUrlVar: env.databaseUrlVar,
+    isServerless: env.isServerless,
+    nodeEnv: env.nodeEnv,
+  }),
+]
+
+/** True when this process may serve requests: its secrets and its database configuration hold. */
+export const configOk = configProblems.length === 0

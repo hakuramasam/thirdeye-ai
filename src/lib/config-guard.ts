@@ -1,5 +1,6 @@
 /**
- * Legible refusal for a deployment whose signing secrets failed validation.
+ * Legible refusal for a deployment whose configuration failed validation: signing secrets first,
+ * then a serverless runtime with no database, which would otherwise serve an in-memory database.
  *
  * The strictness itself lives in security.ts and env.ts: a production boot with a missing,
  * development, short or duplicated secret is still refused. What this module fixes is the way
@@ -16,6 +17,20 @@ import type { SecretProblem } from './security.js'
 /** Kept reachable on a misconfigured deployment so the refusal can be observed from outside. */
 export const HEALTH_PATH = '/api/healthz'
 
+/**
+ * Liveness, as distinct from readiness.
+ *
+ * Readiness (healthz) answers "may this process serve traffic": configuration plus a reachable
+ * database, which is what a load balancer should act on. Liveness answers "is the process up",
+ * which must not depend on the database, or a database outage becomes a restart loop that fixes
+ * nothing. Both are reachable while misconfigured, because a probe that dies on the fault it
+ * reports is unreadable from outside.
+ */
+export const LIVE_PATH = '/api/livez'
+
+/** Paths the guard lets through: the two health probes and nothing else. */
+export const PROBE_PATHS = [HEALTH_PATH, LIVE_PATH]
+
 export type ConfigStatus = { ok: boolean; problems: SecretProblem[] }
 
 export function configStatus(problems: SecretProblem[]): ConfigStatus {
@@ -28,7 +43,7 @@ export function misconfiguredBody(problems: SecretProblem[]) {
     error: {
       type: 'misconfigured',
       message:
-        'This deployment refused to start because its signing secrets are unsafe. ' +
+        'This deployment refused to start because its configuration is unsafe. ' +
         'Fix the environment variables named in problems, then redeploy.',
       problems: configStatus(problems).problems,
     },
@@ -42,16 +57,39 @@ export function misconfiguredBody(problems: SecretProblem[]) {
 export function configGuard(problems: SecretProblem[]) {
   return async (c: any, next: () => Promise<void>) => {
     if (problems.length === 0) return next()
-    if (c.req.path === HEALTH_PATH) return next()
+    if (PROBE_PATHS.includes(c.req.path)) return next()
     return c.json(misconfiguredBody(problems), 503)
   }
 }
 
 /**
- * The health payload. `ok` stays false while the configuration is unsafe, so a monitor fails on
- * the body and not only on the status code, and `config` carries the reason.
+ * The readiness payload. `ok` stays false while the configuration is unsafe or the database is
+ * unreachable, so a monitor fails on the body and not only on the status code.
+ *
+ * `database` is supplied by the caller that can actually reach a database. When it is omitted the
+ * payload says so rather than claiming a readiness it never measured, because a health body that
+ * reports ok without touching the database is the exact deception this module exists to remove.
  */
-export function healthzBody(problems: SecretProblem[], mode: string, now: string = new Date().toISOString()) {
+export type DatabaseProbe = { ok: boolean; ms?: number; error?: string }
+
+export function healthzBody(
+  problems: SecretProblem[],
+  mode: string,
+  now: string = new Date().toISOString(),
+  database?: DatabaseProbe | null
+) {
   const config = configStatus(problems)
-  return { ok: config.ok, mode, config, time: now }
+  const db = database ?? null
+  return {
+    ok: config.ok && (db ? db.ok : true),
+    mode,
+    config,
+    database: db,
+    time: now,
+  }
+}
+
+/** Liveness: uptime carries no database claim, so it stays true while the database is down. */
+export function livezBody(mode: string, now: string = new Date().toISOString()) {
+  return { ok: true, mode, time: now }
 }

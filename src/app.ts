@@ -1,9 +1,9 @@
 import { Hono } from 'hono'
 import { logger } from 'hono/logger'
 import type { AppEnv } from './lib/types.js'
-import { migrate, dbMode } from './db/index.js'
-import { secretProblems } from './lib/env.js'
-import { configGuard, healthzBody } from './lib/config-guard.js'
+import { migrate, dbMode, probe } from './db/index.js'
+import { configProblems } from './lib/env.js'
+import { configGuard, healthzBody, livezBody } from './lib/config-guard.js'
 import { seedDemoData } from './db/seed-demo.js'
 
 import { registerV1Routes } from './routes/v1.js'
@@ -32,8 +32,9 @@ const app = new Hono<AppEnv>()
 app.use(logger())
 
 // First, before anything touches the database: refuse the whole API on a deployment whose signing
-// secrets failed validation, naming the variable instead of dying as a bare 500.
-app.use('*', configGuard(secretProblems))
+// secrets or database configuration failed validation, naming the variable instead of dying as a
+// bare 500 or, worse, serving an in-memory database that silently loses every write.
+app.use('*', configGuard(configProblems))
 
 // Ensure schema + (in demo mode) demo data exist before any DB-backed request.
 let bootstrapped: Promise<void> | null = null
@@ -50,12 +51,29 @@ function bootstrap(): Promise<void> {
   return bootstrapped
 }
 
+/**
+ * The two probes are registered before the database bootstrap on purpose.
+ *
+ * They sat behind the middleware below, which runs migrate() first, so a deployment whose
+ * connection string was missing or malformed answered a generic 500 from migrate instead of naming
+ * the problem. A readiness probe that cannot survive the failure it exists to report is not a probe.
+ *
+ * Liveness never touches the database. Readiness measures it, under the timeout in probe(), and
+ * reports only a class of failure: the driver's own message names the host and database, and this
+ * body is public.
+ */
+app.get('/api/livez', (c) => c.json(livezBody(dbMode())))
+app.get('/api/healthz', async (c) => {
+  // A refused deployment has no database to measure: its fallback would be an in-memory one, and
+  // opening it just to report it healthy is the failure mode this refusal exists to prevent.
+  const database = configProblems.length ? null : await probe(Number(process.env.HEALTH_DB_TIMEOUT_MS) || 2000)
+  return c.json(healthzBody(configProblems, dbMode(), undefined, database))
+})
+
 app.use('/api/*', async (_c, next) => {
   await bootstrap()
   await next()
 })
-
-app.get('/api/healthz', (c) => c.json(healthzBody(secretProblems, dbMode())))
 
 registerAuthRoutes(app)
 registerKeysRoutes(app)
