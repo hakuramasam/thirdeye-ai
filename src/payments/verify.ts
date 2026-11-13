@@ -2,6 +2,8 @@ import { createPublicClient, http, parseAbi } from 'viem'
 import { env, platformReceivers } from '../lib/env.js'
 import { getTokenPriceUsd } from './oracle.js'
 import { getChain, CHAINS, ChainConfig } from './chains.js'
+import { finalityVerdict, FinalityVerdict } from './finality.js'
+import { rawAmountToNumber } from '../lib/money.js'
 
 export type VerifyErrorCode =
   | 'not_found'
@@ -13,6 +15,7 @@ export type VerifyErrorCode =
   | 'price_unavailable'
   | 'liquidity_too_low'
   | 'deposit_too_large'
+  | 'insufficient_confirmations'
 
 export type VerifyResult =
   | {
@@ -201,6 +204,22 @@ export async function verifyDeposit({
     const parsed = parseTransferLogs(receipt, chainConfig, platformReceivers(), fromWallet)
     if (!parsed.ok) return parsed
 
+    // Finality gate. A receipt at one confirmation can still be replaced by a reorg, so the
+    // transfer is neither valued nor credited until block depth meets the chain's policy.
+    const headBlock = await client.getBlockNumber()
+    const verdict = finalityVerdict({
+      chainId: chainConfig.chainId,
+      receiptBlock: receipt.blockNumber ?? 0n,
+      headBlock,
+    })
+    if (verdict.state !== 'confirmed') {
+      return {
+        ok: false,
+        code: 'insufficient_confirmations',
+        message: `This transfer has ${verdict.confirmations} of ${verdict.required} required confirmations on ${chainConfig.chainId}. Nothing is credited until it is buried that deep; retry this claim then.`,
+      }
+    }
+
     const tokenConfig = chainConfig.tokens.find(
       (t) => t.address.toLowerCase() === parsed.token.toLowerCase()
     )
@@ -227,7 +246,8 @@ export async function verifyDeposit({
     }
 
     const rawAmount = BigInt(parsed.raw_amount)
-    const tokenAmount = Number(rawAmount) / 10 ** tokenConfig.decimals
+    // Exact first, dollar-scale float second: Number(raw) loses precision on 18-decimal values.
+    const tokenAmount = rawAmountToNumber(rawAmount, tokenConfig.decimals)
     const haircut = 1 - tokenConfig.oracle.haircutBps / 10_000
     const bonusBps = Number(tokenConfig.oracle.bonusBps ?? 0)
     const grossUsd = tokenAmount * quote.priceUsd
@@ -288,13 +308,19 @@ export type IncomingTransfer = {
   decimals: number
   registered: boolean
   block_number: number
+  /** Block depth observed at claim time, and the depth this chain requires. */
+  confirmations: number
+  required_confirmations: number
 }
 
 export async function findIncomingTransfer(params: {
   chainId: number
   txHash: string
   receivers: string[]
-}): Promise<{ ok: true; transfer: IncomingTransfer } | { ok: false; code: string; message: string }> {
+}): Promise<
+  | { ok: true; transfer: IncomingTransfer; finality: FinalityVerdict }
+  | { ok: false; code: string; message: string }
+> {
   const chainConfig = getChain(String(params.chainId)) ?? CHAINS.find((c) => c.chainId === params.chainId)
   if (!chainConfig) {
     return { ok: false, code: 'unsupported_chain', message: `Chain ${params.chainId} is not configured` }
@@ -318,6 +344,21 @@ export async function findIncomingTransfer(params: {
   if (!(receipt.status === '0x1' || receipt.status === 1 || receipt.status === true)) {
     return { ok: false, code: 'failed_tx', message: 'Transaction did not succeed' }
   }
+
+  // Depth is measured here, before anything is valued or recorded, so the caller can store a
+  // confirming payment instead of crediting it. An unreadable head block counts as zero
+  // confirmations on purpose: waiting is safe, crediting on a guess is not.
+  let headBlock = 0n
+  try {
+    headBlock = BigInt(String(await client.request({ method: 'eth_blockNumber', params: [] } as any)))
+  } catch {
+    headBlock = 0n
+  }
+  const finality = finalityVerdict({
+    chainId: params.chainId,
+    receiptBlock: receipt.blockNumber ?? 0n,
+    headBlock,
+  })
 
   // Native sends are recorded against the zero address, the same sentinel Uniswap v4 and the
   // market analyser use for the native coin.
@@ -389,7 +430,10 @@ export async function findIncomingTransfer(params: {
       decimals,
       registered: Boolean(registeredToken),
       block_number: Number(receipt.blockNumber ?? 0),
+      confirmations: finality.confirmations,
+      required_confirmations: finality.required,
     },
+    finality,
   }
 }
 
