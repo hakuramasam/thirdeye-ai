@@ -266,6 +266,29 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 CREATE INDEX IF NOT EXISTS idx_payments_user_time ON payments(user_id, created_at DESC);
 
+-- WO-02: a recorded payment is not a spendable one. `state` is the settlement state machine
+-- (detected, confirming, confirmed, credited, reorged, rejected, needs_reconciliation) and the
+-- confirmation columns are the evidence the gate was met. Rows written before this change default
+-- to 'detected', which the settle path will complete on a retry; crediting stays idempotent per
+-- (chain, tx, token) so re-running it cannot double-credit an old deposit.
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'detected';
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS confirmations integer;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS observed_block bigint;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS credited_at timestamptz;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS reconciled_at timestamptz;
+CREATE INDEX IF NOT EXISTS idx_payments_state ON payments(state, created_at DESC);
+
+-- Append-only settlement audit. State changes and reorg findings land here; nothing is deleted,
+-- so an auditor can reconstruct why a deposit was credited or flagged.
+CREATE TABLE IF NOT EXISTS payment_events (
+  id          text PRIMARY KEY,
+  payment_id  text NOT NULL,
+  kind        text NOT NULL,             -- recorded | confirming | credited | reorg_detected
+  detail      jsonb NOT NULL DEFAULT '{}',
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_payment_events_payment ON payment_events(payment_id, created_at);
+
 -- Partner hub: a private, scoped workspace shared between the owner, this agent and
 -- named external partners. Keys are stored hashed and shown once at issue time.
 CREATE TABLE IF NOT EXISTS partner_agents (
