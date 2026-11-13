@@ -1,6 +1,7 @@
 import type { SessionApp } from '../lib/session.js'
 import { one, query } from '../db/index.js'
 import { CHANGELOG, SUITE } from '../data/changelog.js'
+import { WHITEPAPER } from './whitepaper.js'
 
 /**
  * Public pages.
@@ -65,6 +66,7 @@ const NAV: [string, string][] = [
   ['/agents', 'Agents'],
   ['/team', 'Team'],
   ['/partnerships', 'Partners'],
+  ['/whitepaper', 'Whitepaper'],
 ]
 
 const CSS = `
@@ -148,7 +150,7 @@ const DOCS_HUB = `
 </div>
 <div class="card"><h3><a href="/docs/agents">Agent API</a></h3><p>Register an agent identity, get a key, appear in the directory, and call inference.</p></div>
 <h2>Also public</h2>
-<p><a href="/status">Status</a> for the current deployed version and liveness. <a href="/changelog">Changelog</a> for what changed, in the order it changed.</p>
+<p><a href="/whitepaper">Whitepaper</a> for how the platform works and what is verifiable about it. <a href="/status">Status</a> for the current deployed version and liveness. <a href="/changelog">Changelog</a> for what changed, in the order it changed.</p>
 `
 
 const DOCS_API = `
@@ -498,6 +500,7 @@ export function registerPublicRoutes(app: SessionApp): void {
   app.get('/docs/agents', (c) => c.html(layout('Agent API', '/docs', DOCS_AGENTS, '/docs/agents')))
   app.get('/roadmap', (c) => c.html(layout('Roadmap', '/roadmap', ROADMAP)))
   app.get('/partnerships', (c) => c.html(layout('Partnerships', '/partnerships', PARTNERSHIPS)))
+  app.get('/whitepaper', (c) => c.html(layout('Whitepaper', '/whitepaper', WHITEPAPER)))
 
   /**
    * Status is the only page that reads the database, and it reads exactly one thing: whether a

@@ -63,6 +63,10 @@
       "destination": "/api"
     },
     {
+      "source": "/whitepaper",
+      "destination": "/api"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
