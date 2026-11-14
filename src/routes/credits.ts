@@ -10,7 +10,7 @@ import { verifyDeposit } from '../payments/verify.js'
 import { findIncomingTransfer, checkSenderOwnership } from '../payments/verify.js'
 import { prepareAutoConvert, autoConvertPolicyFromEnv } from '../payments/autoConvert.js'
 import { decideSettlement } from '../payments/finality.js'
-import { markCredited, markReorged, paymentStateFor } from '../payments/settle.js'
+import { markCredited, markReorged, paymentStateFor, logPaymentEvent } from '../payments/settle.js'
 import { randomBytes } from 'node:crypto'
 import type { IncomingTransfer } from '../payments/verify.js'
 
@@ -367,6 +367,16 @@ export function registerCreditsRoutes(app: SessionApp): void {
         usdMicros: 0, status: 'pending_confirmations', refusalCode: null,
         state: 'confirming', confirmations: finality.confirmations, observedBlock: finality.observedBlock,
       })
+      // The confirming transition is part of the settlement record, so it is written to the audit
+      // log too. Only on the insert: a replay polls this route, and appending the same note on every
+      // poll would bury the real transitions without adding a fact.
+      if (!waiting.duplicate) {
+        await logPaymentEvent(waiting.paymentId, 'confirming', {
+          confirmations: finality.confirmations,
+          required: finality.required,
+          observed_block: finality.observedBlock === null ? null : String(finality.observedBlock),
+        })
+      }
       return c.json(
         {
           accepted: true,
@@ -503,6 +513,10 @@ export function registerCreditsRoutes(app: SessionApp): void {
       usdMicros, status: decision.status === 'credited' ? 'recorded' : 'pending_conversion',
       refusalCode: decision.status === 'credited' ? null : decision.status,
       priceUsd: prepared.analysis.priceUsd, pool: prepared.analysis.poolAddress,
+      // How deep the transfer was when we decided, kept rather than discarded: a later question
+      // about a credit ("was it final?") is answered from the row, not re-derived from a chain that
+      // has moved on.
+      confirmations: finality.confirmations, observedBlock: finality.observedBlock,
     })
 
     // Release credit only for a first-time, tradable payment. creditDeposit is

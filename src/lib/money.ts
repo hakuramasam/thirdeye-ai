@@ -1,10 +1,14 @@
 /**
  * Exact conversion of raw token units.
  *
- * `Number(raw)` on an 18-decimal amount loses precision past 2^53 raw units, which is a fraction of
- * a cent for most tokens but truncates large balances and rounds in the wrong direction on the way
- * into a USD valuation. Formatting through BigInt first keeps every digit, and only the final
- * dollar-scale number is a float, where the float is unavoidable because oracle prices are floats.
+ * `Number(raw)` on an 18-decimal amount loses precision past 2^53 raw units, so the raw figure is
+ * converted through BigInt first and every digit survives that step.
+ *
+ * What this module does NOT guarantee is an exact dollar figure. `rawAmountToNumber` returns a
+ * token-scale float and callers multiply it by an oracle price that is itself a float, so the USD
+ * valuation is a float estimate (rounding, not truncation, at the last step), while the ledger keeps
+ * integer micro-dollars. Read the header as "no digit is lost converting the raw amount", not as
+ * "the arithmetic downstream is exact".
  */
 
 const MAX_DECIMALS = 36
