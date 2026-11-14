@@ -1,4 +1,4 @@
-import { createPublicClient, http, parseAbi } from 'viem'
+import { createPublicClient, http, parseAbi, TransactionNotFoundError, TransactionReceiptNotFoundError } from 'viem'
 import { env, platformReceivers } from '../lib/env.js'
 import { getTokenPriceUsd } from './oracle.js'
 import { getChain, CHAINS, ChainConfig } from './chains.js'
@@ -16,6 +16,7 @@ export type VerifyErrorCode =
   | 'liquidity_too_low'
   | 'deposit_too_large'
   | 'insufficient_confirmations'
+  | 'rpc_error'
 
 export type VerifyResult =
   | {
@@ -196,7 +197,32 @@ export async function verifyDeposit({
     const client = createPublicClient({
       transport: http(chainConfig.rpc),
     })
-    const receipt = await client.getTransactionReceipt({ hash })
+    // A failed *read* and an *absent* transaction are different answers. The old single catch below
+    // turned an RPC outage into `not_found`, which told the caller a real deposit did not exist and,
+    // on the review path, was enough to have one classified as a reorg.
+    let receipt: any
+    try {
+      receipt = await client.getTransactionReceipt({ hash })
+    } catch (err: any) {
+      // viem throws both when the receipt does not exist and when the read itself fails, so the two
+      // are separated here. An absent receipt is `not_found`, which is the answer the caller needs; a
+      // failed read is `rpc_error`, which is retryable. The old single catch could not tell them
+      // apart and reported an outage as a missing transaction.
+      const name = String(err?.name ?? '')
+      if (
+        err instanceof TransactionReceiptNotFoundError ||
+        err instanceof TransactionNotFoundError ||
+        name === 'ReceiptNotFoundError' ||
+        name === 'TransactionNotFoundError'
+      ) {
+        return { ok: false, code: 'not_found', message: 'Transaction receipt not found' }
+      }
+      return {
+        ok: false,
+        code: 'rpc_error',
+        message: `Could not read the transaction receipt: ${err?.shortMessage || err?.message || 'rpc error'}`,
+      }
+    }
     if (!receipt) {
       return { ok: false, code: 'not_found', message: 'Transaction receipt not found' }
     }
@@ -206,17 +232,27 @@ export async function verifyDeposit({
 
     // Finality gate. A receipt at one confirmation can still be replaced by a reorg, so the
     // transfer is neither valued nor credited until block depth meets the chain's policy.
-    const headBlock = await client.getBlockNumber()
+    // An unreadable head is a wait, not a missing transaction: reporting it as `not_found` told
+    // the caller a real deposit did not exist. It matches findIncomingTransfer, which counts an
+    // unreadable head as zero confirmations.
+    let headBlock: bigint | null = null
+    try {
+      headBlock = await client.getBlockNumber()
+    } catch {
+      headBlock = null
+    }
     const verdict = finalityVerdict({
       chainId: chainConfig.chainId,
-      receiptBlock: receipt.blockNumber ?? 0n,
-      headBlock,
+      receiptBlock: receipt.blockNumber ?? null,
+      headBlock: headBlock ?? 0n,
     })
     if (verdict.state !== 'confirmed') {
       return {
         ok: false,
         code: 'insufficient_confirmations',
-        message: `This transfer has ${verdict.confirmations} of ${verdict.required} required confirmations on ${chainConfig.chainId}. Nothing is credited until it is buried that deep; retry this claim then.`,
+        message: verdict.unverifiable === 'unreadable_head' || headBlock === null
+          ? `The current block height on chain ${chainConfig.chainId} could not be read, so this transfer cannot be shown to be final yet. Nothing is credited; retry shortly.`
+          : `This transfer has ${verdict.confirmations} of ${verdict.required} required confirmations on ${chainConfig.chainId}. Nothing is credited until it is buried that deep; retry this claim then.`,
       }
     }
 
@@ -284,10 +320,12 @@ export async function verifyDeposit({
       base_usd: netUsd,
     }
   } catch (err: any) {
+    // Anything reaching here is a path we did not classify (a price fetch, a log parse): it is a
+    // failed verification, not proof the transaction is missing, so it must stay retryable.
     return {
       ok: false,
-      code: 'not_found',
-      message: err?.message || 'Transaction receipt not found',
+      code: 'rpc_error',
+      message: err?.shortMessage || err?.message || 'Deposit verification failed; retry shortly.',
     }
   }
 }
@@ -338,7 +376,9 @@ export async function findIncomingTransfer(params: {
   try {
     receipt = await client.request({ method: 'eth_getTransactionReceipt', params: [params.txHash as `0x${string}`] } as any)
   } catch (err: any) {
-    return { ok: false, code: 'not_found', message: `Could not read receipt: ${err?.shortMessage || err?.message || 'rpc error'}` }
+    // A failed read is not an absent transaction. Reporting an RPC outage as `not_found` let one
+    // flaky call mark a real deposit reorged, and the row then refused to credit forever.
+    return { ok: false, code: 'rpc_error', message: `Could not read receipt: ${err?.shortMessage || err?.message || 'rpc error'}` }
   }
   if (!receipt) return { ok: false, code: 'not_found', message: 'Transaction not found on this chain' }
   if (!(receipt.status === '0x1' || receipt.status === 1 || receipt.status === true)) {
@@ -356,7 +396,7 @@ export async function findIncomingTransfer(params: {
   }
   const finality = finalityVerdict({
     chainId: params.chainId,
-    receiptBlock: receipt.blockNumber ?? 0n,
+    receiptBlock: receipt.blockNumber ?? null,
     headBlock,
   })
 

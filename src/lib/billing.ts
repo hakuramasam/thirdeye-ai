@@ -41,7 +41,17 @@ export async function creditDeposit(
   amountMicros: number,
   ref: { chain: string; txHash: string; token: string },
   opts: { toKeyId?: string | null } = {}
-): Promise<{ credited: boolean; balance: number; keyCredit?: number }> {
+): Promise<{
+  credited: boolean
+  balance: number
+  keyCredit?: number
+  /**
+   * Set on a replay: the account that already owns the deposits row for this transfer, or null when
+   * nothing matched. A caller uses it to tell "this transfer's credit is already on this user's
+   * balance" from "somebody else claimed this transfer first", which are opposite conclusions.
+   */
+  existingUserId?: string | null
+}> {
   return tx(async (q) => {
     await q('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId])
     const dep = await q(
@@ -51,8 +61,17 @@ export async function creditDeposit(
       [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros]
     )
     if (!dep.rows[0]) {
+      const owner = await q('SELECT user_id FROM deposits WHERE chain = $1 AND tx_hash = $2 AND token = $3', [
+        ref.chain,
+        ref.txHash.toLowerCase(),
+        ref.token.toLowerCase(),
+      ])
       const b = await q('SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal FROM ledger WHERE user_id = $1', [userId])
-      return { credited: false, balance: Number(b.rows[0]?.bal ?? 0) }
+      return {
+        credited: false,
+        balance: Number(b.rows[0]?.bal ?? 0),
+        existingUserId: (owner.rows[0]?.user_id as string | undefined) ?? null,
+      }
     }
     // A key-tagged deposit loads that key: the deposits row keeps the real amount and the
     // replay protection, while the money lands on the key instead of the account ledger.
