@@ -33,18 +33,39 @@ export type FinalityPolicy = {
   source: 'default' | 'env'
 }
 
+/**
+ * An ignored override is a configuration fault the operator cannot see otherwise, so it is reported
+ * once per setting rather than per request. The token is redacted: this only ever holds a number.
+ */
+const rejectedOverrides = new Set<string>()
+
+function warnRejectedOverride(key: string, raw: string, fallback: number): void {
+  const token = `${key}=${raw}`
+  if (rejectedOverrides.has(token)) return
+  rejectedOverrides.add(token)
+  // eslint-disable-next-line no-console
+  console.warn(
+    `[finality] ${key}="${raw}" is not a positive integer; the ${fallback}-confirmation default is in force.`
+  )
+}
+
 /** Per-chain confirmation requirement, overridable with FINALITY_CONFIRMATIONS_<CHAIN>. */
 export function finalityPolicy(
   chainId: number,
   env: Record<string, string | undefined> = process.env
 ): FinalityPolicy {
   const base = DEFAULTS[chainId] ?? FALLBACK
-  const raw = env[`FINALITY_CONFIRMATIONS_${base.label.toUpperCase()}`]
-  // An override is only honoured when it is a plain positive integer. `Number('')` is 0 and
+  const key = `FINALITY_CONFIRMATIONS_${base.label.toUpperCase()}`
+  const raw = env[key]
+  // An override is only honoured when it is a plain positive safe integer. `Number('')` is 0 and
   // `Math.floor('0.5')` is 0, so a loose parse let a typo switch the confirmation gate off
-  // entirely, which is the one value that must never be reachable by accident.
-  const usable =
-    raw !== undefined && /^\d+$/.test(raw.trim()) && Number(raw.trim()) >= 1 ? Number(raw.trim()) : null
+  // entirely, which is the one value that must never be reachable by accident. Digits alone are
+  // not enough either: `Number('9'.repeat(400))` is Infinity, and an infinite requirement would
+  // leave every deposit waiting for a depth that can never be reached.
+  const trimmed = typeof raw === 'string' ? raw.trim() : ''
+  const parsed = /^\d+$/.test(trimmed) ? Number(trimmed) : NaN
+  const usable = Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : null
+  if (raw !== undefined && usable === null) warnRejectedOverride(key, String(raw), base.min)
   return {
     chainId,
     label: base.label,

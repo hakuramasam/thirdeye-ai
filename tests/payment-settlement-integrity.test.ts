@@ -151,7 +151,11 @@ describe('settlement integrity', () => {
     assert.equal((await eventsFor(payment.paymentId, 'credited')).length, 1)
   })
 
-  it('concurrent credits of the same payment produce exactly one credited event', async () => {
+  // PGlite serves one connection, so these three calls are serialised: this proves the guard holds
+  // for repeated credits, not for a true concurrent race. Real concurrency needs a Postgres case,
+  // which belongs with the migration work; the guard itself is a single guarded UPDATE, so nothing
+  // between the check and the write can interleave.
+  it('repeated credits of the same payment produce exactly one credited event', async () => {
     const payment = await claim({ tx_hash: '0x' + 'd'.repeat(64) })
     const results = await Promise.all([
       markCredited(payment.paymentId, 5_000_000),
@@ -340,5 +344,101 @@ describe('settlement integrity', () => {
     const ghost = await markCredited('pay_does_not_exist', 1)
     assert.equal(ghost.credited, false)
     assert.equal(ghost.state, null)
+  })
+
+  it('a legacy refusal that predates the rejected state still cannot be credited', async () => {
+    // Rows written before this change stored a refusal as status 'refused' with state 'detected',
+    // which the state whitelist alone would happily move to credited on a later retry.
+    const legacyTx = '0x' + '3'.repeat(63) + 'a'
+    const legacy = await claim({ tx_hash: legacyTx }, { status: 'refused', state: 'detected', usdMicros: 0 })
+    const rec = await markCredited(legacy.paymentId, 5_000_000)
+    assert.equal(rec.credited, false, 'the status guard refuses it, not only the state whitelist')
+    const row = await one(`SELECT state FROM payments WHERE id = $1`, [legacy.paymentId])
+    assert.equal(row.state, 'detected', 'a refused row is left exactly as it was')
+    assert.equal((await eventsFor(legacy.paymentId, 'credited')).length, 0)
+  })
+
+  it('a deposit awaiting conversion is not creditable', async () => {
+    const pendingTx = '0x' + '3'.repeat(63) + 'b'
+    const pending = await claim({ tx_hash: pendingTx }, { status: 'pending_conversion', state: 'confirmed' })
+    const rec = await markCredited(pending.paymentId, 5_000_000)
+    assert.equal(rec.credited, false, 'no conversion has happened, so there is nothing to credit')
+  })
+
+  it('an unscoped reorg check reclassifies every row the transaction describes', async () => {
+    // One transaction can pay the same token into two of our wallets, so (chain, tx) alone matches
+    // two rows. Picking one left the other still creditable, on a transfer that no longer exists.
+    const tx = '0x' + 'ab'.repeat(32)
+    const inVault = await claim({ tx_hash: tx }, { receivedAt: VAULT })
+    const inWallet = await claim({ tx_hash: tx }, { receivedAt: WALLET })
+
+    const report = await markReorged(CHAIN, tx)
+    assert.ok(report, 'the rows exist, so a report is returned')
+    assert.equal(report!.payments.length, 2, 'both receiver rows are reclassified')
+    assert.equal(report!.paymentId, null, 'no single row may answer for the whole transaction')
+    assert.equal(report!.wasCredited, false)
+
+    for (const id of [inVault.paymentId, inWallet.paymentId]) {
+      const row = await one(`SELECT state FROM payments WHERE id = $1`, [id])
+      assert.equal(row.state, 'reorged')
+      assert.equal((await eventsFor(id, 'reorg_detected')).length, 1, 'each row gets its own audit event')
+      assert.equal((await markCredited(id, 5_000_000)).credited, false, 'neither row is still creditable')
+    }
+  })
+
+  it('a credit that committed before its bookkeeping can be completed by the retry', async () => {
+    // The crash window: the money moves, then the process stops before markCredited runs. A retry
+    // must not read 'the deposit exists' as 'nothing to do' and leave the row confirmed forever.
+    const txHash = '0x' + 'cd'.repeat(32)
+    const payment = await claim({ tx_hash: txHash })
+    const args = { chain: 'base', txHash, token: TOKEN }
+
+    const first = await creditDeposit(owner.id, 5_000_000, args)
+    assert.equal(first.credited, true)
+
+    const replay = await creditDeposit(owner.id, 5_000_000, args)
+    assert.equal(replay.credited, false, 'the deposit is never paid twice')
+    assert.equal(replay.existingUserId, owner.id, 'the replay can see the money is already this user\'s')
+    assert.equal((await eventsFor(payment.paymentId, 'credited')).length, 0, 'the crash skipped the bookkeeping')
+
+    // This is what the route now does whenever `settled` is true, on a first claim and on a replay.
+    const rec = await markCredited(payment.paymentId, 5_000_000)
+    assert.equal(rec.credited, true, 'the retry completes the transition the crash skipped')
+    assert.equal((await eventsFor(payment.paymentId, 'credited')).length, 1)
+  })
+
+  it('a transfer another account claimed does not settle this one', async () => {
+    const other = { id: randomUUID(), wallet: '0x' + '5'.repeat(40) }
+    await query(`INSERT INTO users (id, wallet, role) VALUES ($1, $2, 'user')`, [other.id, other.wallet])
+    const txHash = '0x' + 'ef'.repeat(32)
+    await claim({ tx_hash: txHash })
+
+    const theirs = await creditDeposit(other.id, 5_000_000, { chain: 'base', txHash, token: TOKEN })
+    assert.equal(theirs.credited, true)
+
+    const replay = await creditDeposit(owner.id, 5_000_000, { chain: 'base', txHash, token: TOKEN })
+    assert.equal(replay.credited, false)
+    assert.equal(replay.existingUserId, other.id)
+    assert.notEqual(replay.existingUserId, owner.id, 'the transfer belongs to another account, so it must not settle here')
+  })
+
+  it('a confirmation requirement that overflows is rejected, not honoured', async () => {
+    for (const raw of ['9'.repeat(400), '1'.repeat(20), '9007199254740993']) {
+      const policy = finalityPolicy(CHAIN, { FINALITY_CONFIRMATIONS_BASE: raw })
+      assert.equal(policy.minConfirmations, 10, `"${raw.slice(0, 12)}..." must fall back to the chain default`)
+      assert.equal(policy.source, 'default')
+    }
+  })
+
+  it('an unreadable receipt is a retryable error, not a missing transaction', async () => {
+    const { verifyDeposit } = await import('../src/payments/verify.js')
+    const res = await verifyDeposit({
+      chain: 'base',
+      txHash: 'not-a-hash',
+      fromWallet: '0x' + '1'.repeat(40),
+    })
+    assert.equal(res.ok, false)
+    assert.notEqual((res as any).code, 'not_found', 'a failed read must not tell the caller the deposit does not exist')
+    assert.equal((res as any).code, 'rpc_error')
   })
 })

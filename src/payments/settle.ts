@@ -17,7 +17,7 @@
  */
 import { randomBytes } from 'node:crypto'
 import { query, tx } from '../db/index.js'
-import { shouldCreditOnTransition } from './finality.js'
+import { CREDITABLE_STATES } from './finality.js'
 
 /** The full uniqueness key of a payment row: what the table's UNIQUE constraint covers. */
 export type PaymentRef = {
@@ -79,12 +79,21 @@ export type CreditRecord = {
 }
 
 /**
+ * The payment statuses a credit may still be booked against. A `refused` row is a decision that was
+ * already made against itself, and a `pending_conversion` row has no money to credit yet, so
+ * neither may turn into a credited payment on a later retry.
+ */
+export const CREDITABLE_STATUSES: readonly string[] = ['recorded', 'pending_confirmations']
+
+/**
  * Record that a deposit's credit was released, and how much, in one transaction.
  *
  * Called only after the money side has already succeeded (or been proven idempotent), so the job
  * here is bookkeeping. The UPDATE is guarded on the states that may still become credited:
  *
  *  - `credited` is excluded, so a replay is a no-op rather than a second event.
+ *  - a `refused` or `pending_conversion` status is excluded too: the first is a refusal that a
+ *    retry must not overturn, the second has not been converted into a creditable amount.
  *  - `reorged` and `needs_reconciliation` are excluded, so a stale retry cannot overwrite a
  *    finding with a success. A reorg observed before this credit landed, but after the credit
  *    committed, is escalated to `needs_reconciliation` below instead of being silently reversed:
@@ -104,9 +113,12 @@ export async function markCredited(
               usd_value_micros = CASE WHEN $2::bigint > 0 THEN $2::bigint ELSE usd_value_micros END,
               status = CASE WHEN status = 'pending_confirmations' THEN 'recorded' ELSE status END
         WHERE id = $1
-          AND state IN ('detected', 'confirming', 'confirmed')
+          AND state = ANY($3::text[])
+          AND status = ANY($4::text[])
         RETURNING id, state, intent_id`,
-      [paymentId, usdMicros]
+      // Both whitelists are passed in from their single definition rather than written into the
+      // SQL, so the guard, the verdict and the route cannot drift apart.
+      [paymentId, usdMicros, [...CREDITABLE_STATES], [...CREDITABLE_STATUSES]]
     )
 
     const row = updated.rows[0]
@@ -117,8 +129,9 @@ export async function markCredited(
         'credited',
         JSON.stringify({ usd_micros: usdMicros }),
       ])
-      // A credited deposit settles its intent here rather than at claim time, so an intent stays
-      // open (and legally claimable) only while nothing has actually been credited against it.
+      // A row claimed as pending_confirmations had its intent left open by recordPayment, so the
+      // credit is where it settles. A row claimed as `recorded` was already marked paid at claim
+      // time and this is a no-op; it stays here so the two paths cannot leave an intent open.
       if (row.intent_id) {
         await q(
           `UPDATE payment_intents SET status = 'paid' WHERE id = $1 AND status = 'open'`,
@@ -154,16 +167,40 @@ export async function markCredited(
  * to be reconciled by a human, because reversing a ledger entry is a financial action, not a
  * retry: the row is moved to needs_reconciliation and the event records what it used to be.
  *
- * Scoped to the exact uniqueness key when the caller knows it, so one wallet's vanished transfer
- * cannot reclassify another wallet's deposit from the same transaction. A row already at
- * `needs_reconciliation` keeps that state: it is the stronger finding and a repeat check must not
- * downgrade it to `reorged` and report that nothing was credited.
+ * Scope matters as much as it does for a credit. (chain, tx) alone can match several rows, because
+ * the same transaction can pay the same token into two different receiving wallets, so the caller's
+ * scope is applied exactly as given and *every* matching row is reclassified and audited. Picking
+ * one with `LIMIT 1` would have let an arbitrary row answer for a transfer it does not describe,
+ * and left the others still creditable. Pass `token` and `received_by` to address one deposit.
+ *
+ * A row already at `needs_reconciliation` keeps that state: it is the stronger finding and a repeat
+ * check must not downgrade it to `reorged` and report that nothing was credited.
  */
+export type ReorgOutcome = {
+  paymentId: string
+  state: string
+  /** True when this deposit had already been credited (or escalated): a human must reconcile it. */
+  wasCredited: boolean
+  token: string
+  received_by: string
+}
+
+export type ReorgReport = {
+  /** Every row the scope matched, each with its own audited transition. */
+  payments: ReorgOutcome[]
+  /** True when any matched deposit had already been credited. */
+  wasCredited: boolean
+  /** The single matched row's id, or null when the scope matched none or more than one. */
+  paymentId: string | null
+  /** The single matched row's state, or null when the scope was not that narrow. */
+  state: string | null
+}
+
 export async function markReorged(
   chainId: number,
   txHash: string,
   scope?: { token?: string; received_by?: string }
-): Promise<{ paymentId: string; wasCredited: boolean; state: string } | null> {
+): Promise<ReorgReport | null> {
   return tx(async (q) => {
     const params: any[] = [chainId, String(txHash || '').toLowerCase()]
     let where = `chain_id = $1 AND lower(tx_hash) = $2`
@@ -175,29 +212,42 @@ export async function markReorged(
       params.push(String(scope.received_by))
       where += ` AND received_by = $${params.length}`
     }
+    // No LIMIT: the scope decides the set, and every row in it is reclassified. Ordering keeps the
+    // audit writes in a stable order so two runs against the same rows produce the same log.
     const found = await q(
-      `SELECT id, state FROM payments WHERE ${where} ORDER BY created_at ASC LIMIT 1 FOR UPDATE`,
+      `SELECT id, state, token, received_by FROM payments WHERE ${where} ORDER BY created_at ASC, id ASC FOR UPDATE`,
       params
     )
-    const row = found.rows[0]
-    if (!row) return null
+    if (found.rows.length === 0) return null
 
-    const wasCredited = row.state === 'credited' || row.state === 'needs_reconciliation'
-    const next = wasCredited ? 'needs_reconciliation' : 'reorged'
-    if (row.state !== next) {
-      await q(`UPDATE payments SET state = $2, reconciled_at = now() WHERE id = $1`, [row.id, next])
-      await q(`INSERT INTO payment_events (id, payment_id, kind, detail) VALUES ($1, $2, $3, $4)`, [
-        'pev_' + randomBytes(9).toString('hex'),
-        row.id,
-        'reorg_detected',
-        JSON.stringify({ previous_state: row.state, was_credited: wasCredited }),
-      ])
+    const payments: ReorgOutcome[] = []
+    for (const row of found.rows) {
+      const wasCredited = row.state === 'credited' || row.state === 'needs_reconciliation'
+      const next = wasCredited ? 'needs_reconciliation' : 'reorged'
+      if (row.state !== next) {
+        await q(`UPDATE payments SET state = $2, reconciled_at = now() WHERE id = $1`, [row.id, next])
+        await q(`INSERT INTO payment_events (id, payment_id, kind, detail) VALUES ($1, $2, $3, $4)`, [
+          'pev_' + randomBytes(9).toString('hex'),
+          row.id,
+          'reorg_detected',
+          JSON.stringify({ previous_state: row.state, was_credited: wasCredited }),
+        ])
+      }
+      payments.push({
+        paymentId: row.id,
+        state: next,
+        wasCredited,
+        token: row.token,
+        received_by: row.received_by,
+      })
     }
-    return { paymentId: row.id, wasCredited, state: next }
-  })
-}
 
-/** True when a stored state may still be moved to credited. Re-exported for the route and tests. */
-export function isCreditableState(state: string | null | undefined): boolean {
-  return shouldCreditOnTransition(state)
+    const single = payments.length === 1 ? payments[0] : null
+    return {
+      payments,
+      wasCredited: payments.some((p) => p.wasCredited),
+      paymentId: single?.paymentId ?? null,
+      state: single?.state ?? null,
+    }
+  })
 }

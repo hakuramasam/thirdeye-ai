@@ -35,6 +35,25 @@ async function creditVerified(
   args: { chain: string; txHash: string; token: string },
   intentId?: string | null
 ) {
+  /**
+   * `credited` answers "did this call move the money". `settled` answers the question the settlement
+   * bookkeeping actually needs: "is this transfer's money on this user's balance now", which is also
+   * true when an earlier call credited it and the process died before the payment row was updated.
+   * Without that distinction a crash between the two left the payment `confirmed` forever, with no
+   * credited event, and every retry reported nothing to do.
+   *
+   * Known limit: the `deposits` row records which user was paid but not which destination (key or
+   * account) funded it, so a transfer first claimed untagged and only later tagged with a key intent
+   * reads as settled while the key itself was never loaded. Nothing is credited twice and the user
+   * keeps the earlier account credit; recording the destination belongs in the versioned migration
+   * work, not in a settlement fix.
+   */
+  const wrap = (dep: any, to: 'key' | 'account') => ({
+    credited: Boolean(dep?.credited),
+    settled: Boolean(dep?.credited) || dep?.existingUserId === userId,
+    to,
+    dep,
+  })
   if (intentId) {
     const it = await one('SELECT api_key_id FROM payment_intents WHERE id = $1 AND user_id = $2', [intentId, userId])
     if (it?.api_key_id) {
@@ -43,16 +62,18 @@ async function creditVerified(
       // increment inside one transaction, and its UNIQUE (chain, tx_hash, token) is what makes a
       // replay a no-op instead of a second payout.
       const dep = await creditDeposit(userId, usdMicros, args, { toKeyId: it.api_key_id })
+      const w = wrap(dep, 'key')
       return {
-        credited: (dep as any).credited,
+        credited: w.credited,
+        settled: w.settled,
         to: 'key' as const,
         api_key_id: it.api_key_id,
         key_credit_usd_micros: (dep as any).keyCredit ?? null,
       }
     }
   }
-  const dep = await creditDeposit(userId, usdMicros, args)
-  return { credited: (dep as any).credited, to: 'account' as const, deposit: dep }
+  const w = wrap(await creditDeposit(userId, usdMicros, args), 'account')
+  return { credited: w.credited, settled: w.settled, to: 'account' as const, deposit: w.dep }
 }
 
 export function shouldCreditPayment(args: { status: string; duplicate: boolean; usdMicros: number }): boolean {
@@ -288,6 +309,9 @@ export function registerCreditsRoutes(app: SessionApp): void {
         // Only an absence the chain actually confirmed reaches here: findIncomingTransfer now
         // reports an RPC outage as `rpc_error`, which falls through to the 422 below, so one
         // flaky read can no longer mark a real deposit reorged.
+        // Every row this transaction describes is reclassified, not an arbitrary one: the same
+        // transaction can have paid two of our wallets, and leaving the other row creditable would
+        // silently keep a deposit whose transfer no longer exists.
         const reorged = await markReorged(chainId, txHash)
         if (reorged) {
           return c.json(
@@ -296,6 +320,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
               reconciliation: true,
               needs_reconciliation: reorged.wasCredited,
               payment_id: reorged.paymentId,
+              payments: reorged.payments,
               verification: {
                 ok: false,
                 code: 'reorg_detected',
@@ -417,7 +442,10 @@ export function registerCreditsRoutes(app: SessionApp): void {
       if (policyChain && policyDecision.status === 'credited' && policySettle.action === 'credit') {
         const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
         policyCredited = Boolean(dep.credited)
-        if (policyCredited) {
+        // The transition runs whenever the money is on this user's balance, whether this call put it
+        // there or a previous attempt did. markCredited is guarded and idempotent, so a replay only
+        // completes the bookkeeping a crash left behind.
+        if (dep.settled) {
           const rec = await markCredited(policyRecord.paymentId, usdMicros)
           policyReconciliation = rec.reconciliation
         }
@@ -513,7 +541,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
     if (chainSlug && settle.action === 'credit') {
       const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
       credited = Boolean(dep.credited)
-      if (credited) {
+      if (dep.settled) {
         const rec = await markCredited(recorded.paymentId, usdMicros)
         reconciliation = rec.reconciliation
       }

@@ -1,4 +1,4 @@
-import { createPublicClient, http, parseAbi } from 'viem'
+import { createPublicClient, http, parseAbi, TransactionNotFoundError, TransactionReceiptNotFoundError } from 'viem'
 import { env, platformReceivers } from '../lib/env.js'
 import { getTokenPriceUsd } from './oracle.js'
 import { getChain, CHAINS, ChainConfig } from './chains.js'
@@ -197,7 +197,32 @@ export async function verifyDeposit({
     const client = createPublicClient({
       transport: http(chainConfig.rpc),
     })
-    const receipt = await client.getTransactionReceipt({ hash })
+    // A failed *read* and an *absent* transaction are different answers. The old single catch below
+    // turned an RPC outage into `not_found`, which told the caller a real deposit did not exist and,
+    // on the review path, was enough to have one classified as a reorg.
+    let receipt: any
+    try {
+      receipt = await client.getTransactionReceipt({ hash })
+    } catch (err: any) {
+      // viem throws both when the receipt does not exist and when the read itself fails, so the two
+      // are separated here. An absent receipt is `not_found`, which is the answer the caller needs; a
+      // failed read is `rpc_error`, which is retryable. The old single catch could not tell them
+      // apart and reported an outage as a missing transaction.
+      const name = String(err?.name ?? '')
+      if (
+        err instanceof TransactionReceiptNotFoundError ||
+        err instanceof TransactionNotFoundError ||
+        name === 'ReceiptNotFoundError' ||
+        name === 'TransactionNotFoundError'
+      ) {
+        return { ok: false, code: 'not_found', message: 'Transaction receipt not found' }
+      }
+      return {
+        ok: false,
+        code: 'rpc_error',
+        message: `Could not read the transaction receipt: ${err?.shortMessage || err?.message || 'rpc error'}`,
+      }
+    }
     if (!receipt) {
       return { ok: false, code: 'not_found', message: 'Transaction receipt not found' }
     }
@@ -295,10 +320,12 @@ export async function verifyDeposit({
       base_usd: netUsd,
     }
   } catch (err: any) {
+    // Anything reaching here is a path we did not classify (a price fetch, a log parse): it is a
+    // failed verification, not proof the transaction is missing, so it must stay retryable.
     return {
       ok: false,
-      code: 'not_found',
-      message: err?.message || 'Transaction receipt not found',
+      code: 'rpc_error',
+      message: err?.shortMessage || err?.message || 'Deposit verification failed; retry shortly.',
     }
   }
 }
