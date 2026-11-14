@@ -23,17 +23,22 @@ test('finality policy is conservative by default and per chain', () => {
 test('the requirement is overridable from the environment, and junk is ignored', () => {
   assert.equal(finalityPolicy(8453, { FINALITY_CONFIRMATIONS_BASE: '3' }).minConfirmations, 3)
   assert.equal(finalityPolicy(8453, { FINALITY_CONFIRMATIONS_BASE: '3' }).source, 'env')
-  assert.equal(finalityPolicy(8453, { FINALITY_CONFIRMATIONS_BASE: '0' }).minConfirmations, 0)
+  // Reviewed after PR #41: a zero override switched the gate off, which no operator can intend and
+  // no typo should reach. Every unusable value now falls back to the chain default.
+  assert.equal(finalityPolicy(8453, { FINALITY_CONFIRMATIONS_BASE: '0' }).minConfirmations, 10)
+  assert.equal(finalityPolicy(8453, { FINALITY_CONFIRMATIONS_BASE: '' }).minConfirmations, 10)
+  assert.equal(finalityPolicy(8453, { FINALITY_CONFIRMATIONS_BASE: '0.5' }).minConfirmations, 10)
   // Anything unparseable or negative must not silently lower the gate.
   assert.equal(finalityPolicy(8453, { FINALITY_CONFIRMATIONS_BASE: 'soon' }).minConfirmations, 10)
   assert.equal(finalityPolicy(8453, { FINALITY_CONFIRMATIONS_BASE: '-5' }).minConfirmations, 10)
 })
 
-test('confirmations count block depth, and an unreadable head is zero rather than assumed', () => {
+test('confirmations count block depth, and a head behind the receipt is zero', () => {
   assert.equal(confirmationsFor(100n, 100n), 1)
   assert.equal(confirmationsFor(100n, 109n), 10)
   assert.equal(confirmationsFor(100n, 99n), 0)
   assert.equal(confirmationsFor(0, 0), 1)
+  // Behavioural coverage of the unreadable cases lives in payment-settlement-integrity.test.ts.
 })
 
 test('a receipt one block deep is confirming, not confirmed', () => {

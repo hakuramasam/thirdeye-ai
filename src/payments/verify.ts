@@ -16,6 +16,7 @@ export type VerifyErrorCode =
   | 'liquidity_too_low'
   | 'deposit_too_large'
   | 'insufficient_confirmations'
+  | 'rpc_error'
 
 export type VerifyResult =
   | {
@@ -206,17 +207,27 @@ export async function verifyDeposit({
 
     // Finality gate. A receipt at one confirmation can still be replaced by a reorg, so the
     // transfer is neither valued nor credited until block depth meets the chain's policy.
-    const headBlock = await client.getBlockNumber()
+    // An unreadable head is a wait, not a missing transaction: reporting it as `not_found` told
+    // the caller a real deposit did not exist. It matches findIncomingTransfer, which counts an
+    // unreadable head as zero confirmations.
+    let headBlock: bigint | null = null
+    try {
+      headBlock = await client.getBlockNumber()
+    } catch {
+      headBlock = null
+    }
     const verdict = finalityVerdict({
       chainId: chainConfig.chainId,
-      receiptBlock: receipt.blockNumber ?? 0n,
-      headBlock,
+      receiptBlock: receipt.blockNumber ?? null,
+      headBlock: headBlock ?? 0n,
     })
     if (verdict.state !== 'confirmed') {
       return {
         ok: false,
         code: 'insufficient_confirmations',
-        message: `This transfer has ${verdict.confirmations} of ${verdict.required} required confirmations on ${chainConfig.chainId}. Nothing is credited until it is buried that deep; retry this claim then.`,
+        message: verdict.unverifiable === 'unreadable_head' || headBlock === null
+          ? `The current block height on chain ${chainConfig.chainId} could not be read, so this transfer cannot be shown to be final yet. Nothing is credited; retry shortly.`
+          : `This transfer has ${verdict.confirmations} of ${verdict.required} required confirmations on ${chainConfig.chainId}. Nothing is credited until it is buried that deep; retry this claim then.`,
       }
     }
 
@@ -338,7 +349,9 @@ export async function findIncomingTransfer(params: {
   try {
     receipt = await client.request({ method: 'eth_getTransactionReceipt', params: [params.txHash as `0x${string}`] } as any)
   } catch (err: any) {
-    return { ok: false, code: 'not_found', message: `Could not read receipt: ${err?.shortMessage || err?.message || 'rpc error'}` }
+    // A failed read is not an absent transaction. Reporting an RPC outage as `not_found` let one
+    // flaky call mark a real deposit reorged, and the row then refused to credit forever.
+    return { ok: false, code: 'rpc_error', message: `Could not read receipt: ${err?.shortMessage || err?.message || 'rpc error'}` }
   }
   if (!receipt) return { ok: false, code: 'not_found', message: 'Transaction not found on this chain' }
   if (!(receipt.status === '0x1' || receipt.status === 1 || receipt.status === true)) {
@@ -356,7 +369,7 @@ export async function findIncomingTransfer(params: {
   }
   const finality = finalityVerdict({
     chainId: params.chainId,
-    receiptBlock: receipt.blockNumber ?? 0n,
+    receiptBlock: receipt.blockNumber ?? null,
     headBlock,
   })
 

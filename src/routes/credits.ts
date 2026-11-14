@@ -4,7 +4,6 @@ import { env, depositAddress, platformReceivers } from '../lib/env.js'
 import { query } from '../db/index.js'
 import { getBalanceMicros, creditDeposit } from '../lib/billing.js'
 import { one } from '../db/index.js'
-import { creditKey } from '../lib/keycredit.js'
 import { decideCredit } from '../lib/creditPolicy.js'
 import { CHAINS, isPolicyPricedToken, platformTokenUsdMicros } from '../payments/chains.js'
 import { verifyDeposit } from '../payments/verify.js'
@@ -39,8 +38,17 @@ async function creditVerified(
   if (intentId) {
     const it = await one('SELECT api_key_id FROM payment_intents WHERE id = $1 AND user_id = $2', [intentId, userId])
     if (it?.api_key_id) {
-      const keyCredit = await creditKey(it.api_key_id, usdMicros)
-      return { credited: true, to: 'key' as const, api_key_id: it.api_key_id, key_credit_usd_micros: keyCredit }
+      // Through creditDeposit, not creditKey. creditKey is a bare `credit = credit + $1`, so a
+      // retried claim added the amount again; creditDeposit writes the deposits row and the key
+      // increment inside one transaction, and its UNIQUE (chain, tx_hash, token) is what makes a
+      // replay a no-op instead of a second payout.
+      const dep = await creditDeposit(userId, usdMicros, args, { toKeyId: it.api_key_id })
+      return {
+        credited: (dep as any).credited,
+        to: 'key' as const,
+        api_key_id: it.api_key_id,
+        key_credit_usd_micros: (dep as any).keyCredit ?? null,
+      }
     }
   }
   const dep = await creditDeposit(userId, usdMicros, args)
@@ -62,7 +70,7 @@ function memoOf(intent: any | null) {
  * (chain, tx_hash, token, received_by) index means claiming the same transfer
  * twice cannot produce a second record, and so cannot credit twice later.
  */
-async function recordPayment(args: {
+export async function recordPayment(args: {
   intent: any | null
   userId: string
   transfer: IncomingTransfer
@@ -75,8 +83,8 @@ async function recordPayment(args: {
   /** Settlement state and the confirmation evidence behind it. */
   state?: string
   confirmations?: number
-  observedBlock?: number
-}): Promise<{ paymentId: string; duplicate: boolean }> {
+  observedBlock?: number | null
+}): Promise<{ paymentId: string; duplicate: boolean; state: string | null }> {
   const t = args.transfer
   const id = 'pay_' + randomBytes(9).toString('hex')
   const inserted = (
@@ -96,7 +104,19 @@ async function recordPayment(args: {
   ).rows
 
   const duplicate = inserted.length === 0
-  const paymentId = duplicate ? id : (inserted[0]?.id ?? id)
+  // On a conflict, return the id of the row that already exists. Returning the freshly generated
+  // id matched no row, so every later `UPDATE payments ... WHERE id = $1` silently changed
+  // nothing: the payment stayed in 'confirming' and the credit gate reopened on each retry.
+  let paymentId = inserted[0]?.id ?? id
+  if (duplicate) {
+    const existing = await query(
+      `SELECT id FROM payments
+        WHERE chain_id = $1 AND lower(tx_hash) = lower($2) AND lower(token) = lower($3) AND received_by = $4
+        LIMIT 1`,
+      [t.chain_id, t.tx_hash, t.token, args.receivedAt]
+    )
+    paymentId = existing.rows[0]?.id ?? id
+  }
 
   if (!duplicate && args.intent?.id && args.status === 'recorded') {
     await query(`UPDATE payment_intents SET status = 'paid' WHERE id = $1 AND user_id = $2 AND status = 'open'`, [
@@ -104,7 +124,7 @@ async function recordPayment(args: {
       args.userId,
     ])
   }
-  return { paymentId, duplicate }
+  return { paymentId, duplicate, state: args.state ?? null }
 }
 
 export function registerCreditsRoutes(app: SessionApp): void {
@@ -265,6 +285,9 @@ export function registerCreditsRoutes(app: SessionApp): void {
       // It is marked and audited rather than ignored, and a credited one is flagged because its
       // ledger entry now has no backing transfer and reversing it is a human decision.
       if (found.code === 'not_found') {
+        // Only an absence the chain actually confirmed reaches here: findIncomingTransfer now
+        // reports an RPC outage as `rpc_error`, which falls through to the 422 below, so one
+        // flaky read can no longer mark a real deposit reorged.
         const reorged = await markReorged(chainId, txHash)
         if (reorged) {
           return c.json(
@@ -352,6 +375,9 @@ export function registerCreditsRoutes(app: SessionApp): void {
         const refused = await recordPayment({
           intent, userId: c.get('user')!.id, transfer: t, receivedAt: received_at,
           usdMicros: 0, status: 'refused', refusalCode: 'price_unavailable',
+          // A refusal is a decision, not a pending state. Storing it as 'detected' left the row
+          // inside the credit gate, so a later retry could credit a deposit we had refused.
+          state: 'rejected',
         })
         return c.json({
           accepted: false,
@@ -377,16 +403,24 @@ export function registerCreditsRoutes(app: SessionApp): void {
         usdMicros, status: policyDecision.status === 'credited' ? 'recorded' : 'pending_conversion',
         refusalCode: policyDecision.status === 'credited' ? null : policyDecision.status,
       })
+      // The stored row decides, on a first claim as much as on a retry. Reading the state we just
+      // wrote, keyed by the whole uniqueness key, removes the branch that assumed a fresh claim
+      // was 'confirmed' and lets a refused or reorged row speak for itself.
+      const policyRef = { chain_id: t.chain_id, tx_hash: t.tx_hash, token: t.token, received_by: received_at }
       let policyCredited = false
+      let policyReconciliation = false
       const policySettle = decideSettlement({
-        state: policyRecord.duplicate ? await paymentStateFor(t) : 'confirmed',
+        state: await paymentStateFor(policyRef),
         confirmations: finality.confirmations,
         required: finality.required,
       })
       if (policyChain && policyDecision.status === 'credited' && policySettle.action === 'credit') {
         const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
         policyCredited = Boolean(dep.credited)
-        if (policyCredited) await markCredited(policyRecord.paymentId, usdMicros)
+        if (policyCredited) {
+          const rec = await markCredited(policyRecord.paymentId, usdMicros)
+          policyReconciliation = rec.reconciliation
+        }
       }
       return c.json({
         accepted: true,
@@ -395,6 +429,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
         intent: memoOf(intent),
         payment_id: policyRecord.paymentId,
         credited: policyCredited,
+        reconciliation: policyReconciliation,
         credit_status: policyDecision.status,
         credit_reason: policyDecision.reason,
         oracle_usd: usdMicros / 1_000_000,
@@ -419,6 +454,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       await recordPayment({
         intent, userId: c.get('user')!.id, transfer: t, receivedAt: received_at,
         usdMicros: 0, status: 'refused', refusalCode: prepared.code,
+        state: 'rejected',
       })
       return c.json(
         { accepted: false, received_at, verification: { ok: true, ...t }, intent: memoOf(intent), refusal: { code: prepared.code, message: prepared.message } },
@@ -467,15 +503,20 @@ export function registerCreditsRoutes(app: SessionApp): void {
           : 'The received token valued at zero, so nothing was credited.',
       })
     }
+    const settleRef = { chain_id: t.chain_id, tx_hash: t.tx_hash, token: t.token, received_by: received_at }
+    let reconciliation = false
     const settle = decideSettlement({
-      state: recorded.duplicate ? await paymentStateFor(t) : 'confirmed',
+      state: await paymentStateFor(settleRef),
       confirmations: finality.confirmations,
       required: finality.required,
     })
     if (chainSlug && settle.action === 'credit') {
       const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
       credited = Boolean(dep.credited)
-      if (credited) await markCredited(recorded.paymentId, usdMicros)
+      if (credited) {
+        const rec = await markCredited(recorded.paymentId, usdMicros)
+        reconciliation = rec.reconciliation
+      }
       balanceMicros = dep.to === 'account' ? (dep.deposit as any).balance : await getBalanceMicros(c.get('user')!.id)
     } else if (recorded.duplicate) {
       balanceMicros = await getBalanceMicros(c.get('user')!.id)
@@ -488,6 +529,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       payment_id: recorded.paymentId,
       duplicate: recorded.duplicate,
       credited,
+      reconciliation,
       balance_usd_micros: balanceMicros,
       value_usd: prepared.analysis.amountUsd,
       price_usd: prepared.analysis.priceUsd,
