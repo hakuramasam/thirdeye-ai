@@ -136,6 +136,21 @@ CREATE TABLE IF NOT EXISTS auth_nonces (
 );
 CREATE INDEX IF NOT EXISTS idx_auth_nonces_age ON auth_nonces(created_at);
 
+-- Why a sign-in was refused, or why it needed the tolerant path. Deliberately holds no nonce, no
+-- address and no signature: only the reason, the domain the message claimed, and the host the
+-- request arrived on. Runtime logs do not survive long enough to answer a support question about
+-- a failed mobile sign-in, and this does.
+CREATE TABLE IF NOT EXISTS auth_signin_log (
+  id             bigserial PRIMARY KEY,
+  outcome        text NOT NULL,              -- accepted | rejected
+  reason         text NOT NULL,              -- ok reason code: lenient_accepted, domain_mismatch, unparseable...
+  message_domain text,
+  request_host   text,
+  lenient        boolean NOT NULL DEFAULT false,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_auth_signin_log_created ON auth_signin_log(created_at);
+
 -- ── Agent identities ─────────────────────────────────────────────────────
 -- An outside agent can hold its own identity without holding its own money. An identity belongs to
 -- a user account and its keys bill that account, because billing is per user and one account must

@@ -2,7 +2,12 @@ import { Hono } from 'hono'
 import { randomBytes } from 'node:crypto'
 import { verifyMessage } from 'viem'
 import { SiweMessage } from 'siwe'
-import { decideSiwe } from '../lib/security.js'
+import {
+  decideSiwe,
+  normalizeSiweText,
+  extractSiweDomain,
+  allowedSiweHosts,
+} from '../lib/security.js'
 import { query, one, dbMode } from '../db/index.js'
 import { env, newId, sha256 } from '../lib/env.js'
 import { checkBucketLimit } from '../lib/ratelimit.js'
@@ -76,6 +81,40 @@ export async function pruneExpiredNonces(): Promise<void> {
   await query(`DELETE FROM auth_nonces WHERE created_at < now() - ($1 || ' minutes')::interval`, [String(NONCE_TTL_MINUTES)])
 }
 
+/** Every hostname this request could legitimately be for, client-facing first. */
+export function requestHosts(c: any): string[] {
+  return allowedSiweHosts({
+    forwardedHost: c?.req?.header?.('x-forwarded-host'),
+    host: c?.req?.header?.('host'),
+    allowlist: process.env.SIWE_ALLOWED_DOMAINS,
+  })
+}
+
+/**
+ * Record a sign-in that needed the tolerant path, or that was refused.
+ *
+ * Vercel runtime logs are not retained long enough to answer "why did this user's sign-in fail",
+ * which is exactly the question that took a support round trip to ask. This row answers it, and it
+ * deliberately holds no nonce, no address and no signature: only the reason, the domain the message
+ * claimed, and the host the request arrived on.
+ */
+export async function recordSignInDiagnostic(row: {
+  outcome: 'accepted' | 'rejected'
+  reason: string
+  messageDomain: string | null
+  requestHost: string | null
+  lenient: boolean
+}): Promise<void> {
+  await query(
+    `INSERT INTO auth_signin_log (outcome, reason, message_domain, request_host, lenient) VALUES ($1, $2, $3, $4, $5)`,
+    [row.outcome, row.reason.slice(0, 120), row.messageDomain?.slice(0, 120) ?? null, row.requestHost?.slice(0, 120) ?? null, row.lenient]
+  ).catch((e) => {
+    // Diagnostics must never be the reason a valid login fails, but a silent swallow here would
+    // hide the very failures this table exists to explain.
+    console.warn('[auth] sign-in diagnostic not recorded:', (e as Error).message)
+  })
+}
+
 export function registerAuthRoutes(app: Hono<AppEnv>): void {
   // GET /api/auth/nonce
   app.get('/api/auth/nonce', async (c) => {
@@ -91,7 +130,11 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
     await query('INSERT INTO auth_nonces (nonce) VALUES ($1)', [nonce])
     // Bounded cleanup: a nonce that was issued and never used must not live forever.
     await pruneExpiredNonces().catch(() => {})
-    return c.json({ nonce })
+    // Hand the client the domain WE see this request on, so the message it asks the wallet to sign
+    // carries that domain rather than whatever window.location reports. A mobile wallet browser or
+    // a transcoding proxy can present a different location than the host header of the very same
+    // request, and that mismatch is what made mobile sign-in fail as "wrong site".
+    return c.json({ nonce, domain: requestHosts(c)[0] ?? null })
   })
 
   // POST /api/auth/verify
@@ -117,27 +160,43 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
       )
     }
 
+    // Normalise the transport noise (CRLF endings, padded whitespace, BOM, zero-width joiners) and
+    // parse THAT. The signature is still checked against the exact bytes the wallet signed, so this
+    // cannot accept a message the user did not approve; it only stops a message we generated from
+    // being rejected because a mobile wallet or a data-saving browser re-serialised its newlines.
+    const normalized = normalizeSiweText(message)
     let siweMsg: SiweMessage
     let lenient = false
     try {
-      siweMsg = new SiweMessage(message)
+      siweMsg = new SiweMessage(normalized)
     } catch (e: any) {
-      // Some mobile wallets (WalletConnect relays, in-app browsers) mangle the message
-      // (CRLF line endings, trimmed/reordered fields) so the strict EIP-4361 parser throws.
-      // Security is preserved: nonce is single-use, freshness enforced via the nonce row's
-      // created_at, and the signature is verified against the EXACT raw message below.
-      const addr = message.match(/0x[a-fA-F0-9]{40}/)?.[0]
-      const nonce = message.match(/Nonce:\s*([A-Za-z0-9_-]+)/i)?.[1]
+      // Still unreadable as EIP-4361. Recover what we can and let decideSiwe decide, now that the
+      // domain is recovered too: the old path gave up on the domain, which meant every one of these
+      // was refused in production with a message that told the user nothing.
+      const addr = normalized.match(/0x[a-fA-F0-9]{40}/)?.[0]
+      const nonce = normalized.match(/Nonce:\s*([A-Za-z0-9_-]+)/i)?.[1]
       if (!addr || !nonce) {
-        console.warn('[auth] SIWE parse failed', describeSiweParseFailure(message, e))
+        console.warn('[auth] SIWE parse failed', describeSiweParseFailure(normalized, e))
+        await recordSignInDiagnostic({
+          outcome: 'rejected',
+          reason: 'unparseable',
+          messageDomain: extractSiweDomain(normalized),
+          requestHost: requestHosts(c)[0] ?? null,
+          lenient: true,
+        })
         return c.json(
           { error: { message: 'Invalid SIWE message format.', type: 'invalid_request', code: 400 } },
           400
         )
       }
       lenient = true
-      siweMsg = { address: addr, nonce, issuedAt: '' } as unknown as SiweMessage
-      console.warn('[auth] SIWE strict parse failed, using lenient parse', describeSiweParseFailure(message, e))
+      siweMsg = {
+        address: addr,
+        nonce,
+        issuedAt: '',
+        domain: extractSiweDomain(normalized) ?? undefined,
+      } as unknown as SiweMessage
+      console.warn('[auth] SIWE strict parse failed, using lenient parse', describeSiweParseFailure(normalized, e))
     }
 
     // Single-use nonce check
@@ -170,31 +229,70 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
       }
     }
 
-    // Domain mismatch check (rejecting, not merely logging)
-    const host = c.req.header('host')
+    // Domain mismatch check (rejecting, not merely logging). Every hostname this request may
+    // legitimately be for is allowed, headers first, plus anything the operator pinned in
+    // SIWE_ALLOWED_DOMAINS, so a proxy browser or a custom domain cannot fail us on our own site.
+    const hosts = requestHosts(c)
     const decision = decideSiwe({
       messageDomain: siweMsg.domain,
-      host,
+      host: c.req.header('host'),
+      allowedHosts: hosts,
       strictParseFailed: lenient,
       nodeEnv: env.nodeEnv,
       allowLenient: process.env.ALLOW_LENIENT_SIWE === '1',
       allowDomainMismatch: process.env.ALLOW_SIWE_DOMAIN_MISMATCH === '1',
     })
     if (!decision.ok) {
-      console.warn(`[auth] SIWE rejected: ${decision.reason}; domain="${siweMsg.domain ?? ''}", host="${host ?? ''}"`)
-      return c.json({ error: { message: 'Signature does not match this site or message format.', type: 'auth', code: 401 } }, 401)
+      console.warn(`[auth] SIWE rejected: ${decision.reason}; domain="${siweMsg.domain ?? ''}", host="${hosts.join(',')}"`)
+      await recordSignInDiagnostic({
+        outcome: 'rejected',
+        reason: decision.reason ?? 'rejected',
+        messageDomain: siweMsg.domain ?? extractSiweDomain(normalized),
+        requestHost: hosts[0] ?? null,
+        lenient,
+      })
+      return c.json(
+        {
+          error: {
+            message: 'Signature does not match this site or message format.',
+            type: 'auth',
+            code: 401,
+            reason: decision.reason,
+          },
+        },
+        401
+      )
+    }
+    if (lenient) {
+      // Accepted on the tolerant path: worth a durable row, because it means a wallet or a browser
+      // altered our own message and the next user may hit the same thing.
+      await recordSignInDiagnostic({
+        outcome: 'accepted',
+        reason: 'lenient_accepted',
+        messageDomain: siweMsg.domain ?? extractSiweDomain(normalized),
+        requestHost: hosts[0] ?? null,
+        lenient,
+      })
     }
 
     // Signature verification using viem
     let isValid = false
+    const address = siweMsg.address as `0x${string}`
+    const sig = signature as `0x${string}`
     try {
-      isValid = await verifyMessage({
-        address: siweMsg.address as `0x${string}`,
-        message,
-        signature: signature as `0x${string}`,
-      })
+      isValid = await verifyMessage({ address, message, signature: sig })
     } catch (e: any) {
       isValid = false
+    }
+    // A wallet that re-serialised the message before signing (newline normalisation is the common
+    // one) produces a signature over the normalised text. Check it too, but only over text derived
+    // from the same message by our own normaliser, so nothing else can be substituted.
+    if (!isValid && normalized !== message) {
+      try {
+        isValid = await verifyMessage({ address, message: normalized, signature: sig })
+      } catch (e: any) {
+        isValid = false
+      }
     }
 
     if (!isValid) {
