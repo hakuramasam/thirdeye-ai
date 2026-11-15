@@ -1,14 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { api } from './wallet'
+import { modelLabel, normalizeModels, type CatalogModel } from './models'
 
 type Msg = { role: 'user' | 'assistant'; content: string; cost?: string }
 
-type ModelRow = { id: string; pricing?: { prompt?: string; completion?: string }; owned_by?: string }
-
 /** Chat with any catalogue model directly, using a session-scoped key. */
 export function Playground({ user, onChanged }: { user: any; onChanged: () => void }) {
-  const [models, setModels] = useState<ModelRow[]>([])
-  const [model, setModel] = useState('gpt-oss-120b')
+  const [models, setModels] = useState<CatalogModel[]>([])
+  // Empty until the catalogue answers: the old default named a model the list might not contain,
+  // so the select showed nothing selected and the first send carried no model.
+  const [model, setModel] = useState('')
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
@@ -19,10 +20,10 @@ export function Playground({ user, onChanged }: { user: any; onChanged: () => vo
 
   useEffect(() => {
     api('/api/models').then((r) => {
-      const list = (r.models || r.data || []) as ModelRow[]
+      const list = normalizeModels(r)
       setModels(list)
-      if (list.length && !list.some((m) => m.id === model)) setModel(list[0].id)
-    }).catch(() => {})
+      if (list.length) setModel((cur) => (list.some((m) => m.id === cur) ? cur : list[0].id))
+    }).catch((e) => setErr('Could not load the model catalogue: ' + String(e?.message || e)))
     // One short-lived key for this page load; it is revoked on the next load.
     api('/api/playground/token', { method: 'POST' })
       .then((r) => { setToken(r.token); setBalance(r.balance_usd_micros ?? null) })
@@ -34,6 +35,10 @@ export function Playground({ user, onChanged }: { user: any; onChanged: () => vo
   async function send() {
     const text = input.trim()
     if (!text || busy || !token) return
+    if (!model) {
+      setErr('Pick a model first. The catalogue has not loaded, so there is nothing to send to.')
+      return
+    }
     const next: Msg[] = [...msgs, { role: 'user', content: text }]
     setMsgs(next); setInput(''); setBusy(true); setErr(null)
     try {
@@ -62,19 +67,28 @@ export function Playground({ user, onChanged }: { user: any; onChanged: () => vo
     <div className="stack">
       <div className="card">
         <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <label style={{ flex: 1, minWidth: 220 }}>
+          <label style={{ flex: '1 1 260px', minWidth: 220, margin: 0 }}>
             <span className="muted">Model</span>
-            <select value={model} onChange={(e) => setModel(e.target.value)} disabled={busy}>
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              disabled={busy || models.length === 0}
+              aria-label="Model"
+            >
+              {models.length === 0 && <option value="">{err ? 'catalogue unavailable' : 'loading models…'}</option>}
               {models.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.id}{m.pricing?.prompt ? ` · $${m.pricing.prompt}/M in` : ''}
+                  {modelLabel(m)}
                 </option>
               ))}
             </select>
           </label>
-          <div className="muted" style={{ paddingBottom: 6 }}>
+          {/* On its own line: side by side with a 100%-wide select, this wrapped under it on a phone
+              and read as if the balance were the selected model. */}
+          <div className="muted small" style={{ whiteSpace: 'nowrap' }}>
             {balance !== null ? `balance $${(balance / 1e6).toFixed(4)}` : 'balance unavailable'}
             {!token && ' · no key yet'}
+            {models.length > 0 && ` · ${models.length} model${models.length === 1 ? '' : 's'}`}
           </div>
         </div>
       </div>
