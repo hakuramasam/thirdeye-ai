@@ -52,12 +52,14 @@ const CONTROL_PLANE_FILES = [
   'src/inngest/functions.ts',
   'src/team/validate.ts',
   'src/telemetry/langfuse.ts',
+  'src/antseed/analyst.ts',
 ]
 
 /** The protected sample set used for the actor matrix. */
 const PROTECTED_SAMPLES = [
   '.env',
   'src/providers/index.ts',
+  'src/lib/paragraph.ts',
   'src/db/schema.sql',
   'src/routes/credits.ts',
   'src/routes/redeem.ts',
@@ -228,6 +230,8 @@ describe('ordinary application paths', () => {
       'SRC/AGENTS/REPO-WRITE.TS': 'control-plane',
       'Src/Routes/Agents.ts': 'control-plane',
       'SRC/PROVIDERS/INDEX.TS': 'secrets',
+      'SRC/ANTSEED/ANALYST.TS': 'control-plane',
+      'src/lib/Paragraph.ts': 'secrets',
       'SRC/PAYMENTS/SWAP.TS': 'payments',
       'Team/Policies/Authority.md': 'authority',
       '.GITHUB/workflows/ci.yml': 'ci',
