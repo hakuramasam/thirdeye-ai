@@ -176,7 +176,9 @@ export function decideSiwe(input: {
 }): SiweDecision {
   const isProd = (input.nodeEnv ?? 'development') === 'production'
   const lenient = Boolean(input.strictParseFailed)
-  const md = String(input.messageDomain ?? '').toLowerCase().trim()
+  // The message's own domain is normalised through the same function as the hosts, so a message
+  // naming "site.example:443" matches a Host header of "site.example".
+  const md = normalizeHost(input.messageDomain) ?? ''
   const hosts = (input.allowedHosts?.length
     ? input.allowedHosts
     : [String(input.host ?? '')]
@@ -188,16 +190,21 @@ export function decideSiwe(input: {
   // Nothing recoverable: the strict parser's refusal stands where it matters.
   if (!md) {
     if (lenient && isProd && !input.allowLenient) {
-      return { ok: false, reason: 'message could not be parsed as EIP-4361', lenient }
+      return { ok: false, reason: 'unparseable_message', lenient }
     }
     return { ok: true, lenient }
   }
 
-  if (hosts.length && !domainMatches && !input.allowDomainMismatch) {
-    return { ok: false, reason: 'domain mismatch', lenient }
+  // No host known is not permission: with nothing to compare against, the check fails closed unless
+  // an operator has explicitly waived domain matching.
+  if (!hosts.length && !input.allowDomainMismatch) {
+    return { ok: false, reason: 'unknown_host', lenient }
+  }
+  if (!domainMatches && !input.allowDomainMismatch) {
+    return { ok: false, reason: 'domain_mismatch', lenient }
   }
   if (lenient && !domainMatches && isProd && !input.allowLenient) {
-    return { ok: false, reason: 'message could not be parsed as EIP-4361', lenient }
+    return { ok: false, reason: 'unparseable_message', lenient }
   }
   return { ok: true, lenient }
 }

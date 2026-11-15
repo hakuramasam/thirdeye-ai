@@ -7,6 +7,9 @@
 // or a wallet in-app browser presenting a different location than the request it just made).
 process.env.PGLITE_DIR = 'memory://'
 delete process.env.DATABASE_URL
+delete process.env.DATABASE_URL_UNPOOLED
+// env.ts prefers PREVIEW_DATABASE_URL, so an inherited value would point this suite at a real database.
+delete process.env.PREVIEW_DATABASE_URL
 process.env.NODE_ENV = 'production'
 
 import test, { before } from 'node:test'
@@ -118,10 +121,10 @@ test('a tolerant parse is accepted in production when the domain is one of ours'
 test('a tolerant parse is still refused when the domain is foreign or unknown', () => {
   const foreign = decideSiwe({ messageDomain: 'evil.example', allowedHosts: [HOST], strictParseFailed: true, nodeEnv: 'production' })
   assert.equal(foreign.ok, false)
-  assert.equal(foreign.reason, 'domain mismatch')
+  assert.equal(foreign.reason, 'domain_mismatch')
   const unknown = decideSiwe({ allowedHosts: [HOST], strictParseFailed: true, nodeEnv: 'production' })
   assert.equal(unknown.ok, false)
-  assert.equal(unknown.reason, 'message could not be parsed as EIP-4361')
+  assert.equal(unknown.reason, 'unparseable_message')
 })
 
 test('the older escapes still behave: development, and the explicit opt-ins', () => {
@@ -181,10 +184,10 @@ test('a message naming another site is refused, with the reason, and recorded', 
   const signature = await account.signMessage({ message })
   const r = await verify(app, '203.0.113.15', message, signature)
   assert.equal(r.status, 401)
-  assert.equal(r.body.error.reason, 'domain mismatch')
+  assert.equal(r.body.error.reason, 'domain_mismatch')
   const row = await lastDiagnostic()
   assert.equal(row.outcome, 'rejected')
-  assert.equal(row.reason, 'domain mismatch')
+  assert.equal(row.reason, 'domain_mismatch')
   assert.equal(row.message_domain, 'evil.example')
   assert.equal(row.request_host, HOST)
 })
@@ -221,7 +224,11 @@ test('an unsigned attempt for a foreign domain writes no row, however often it i
     const message = buildSiwe({ nonce, domain: 'evil.example' })
     const signature = await other.signMessage({ message })
     const r = await verify(app, ip, message, signature)
-    assert.equal(r.status, 401)
+    // The signature gate runs first, so an unproven signer gets the generic failure and learns
+    // nothing about which domains we accept.
+    assert.equal(r.status, 400)
+    assert.equal(r.body.error.message, 'Signature verification failed.')
+    assert.equal(r.body.error.reason, undefined)
   }
   const after = await query('SELECT count(*)::int AS n FROM auth_signin_log')
   assert.equal(countOf(after), countOf(before), 'no row may be written without a proven signature')
@@ -233,4 +240,49 @@ test('the diagnostic table is bounded by retention instead of growing forever', 
   await pruneExpiredNonces()
   const rows = await query("SELECT count(*)::int AS n FROM auth_signin_log WHERE reason = 'old'")
   assert.equal(Number((rows.rows ?? rows)[0].n), 0, 'a row past retention should be swept with the nonce prune')
+})
+
+test('a caller cannot choose its own allowed domain with X-Forwarded-Host', async () => {
+  const app = makeApp()
+  // A same-origin fetch can set this header; the Host header it cannot. The nonce endpoint must
+  // therefore ignore a forwarded host that disagrees with Host, or domain binding means nothing.
+  const forged = await app.request('/api/auth/nonce', {
+    headers: { host: HOST, 'x-forwarded-host': 'evil.example', 'x-forwarded-for': '203.0.113.31' },
+  })
+  const { nonce, domain } = (await forged.json()) as { nonce: string; domain: string | null }
+  assert.equal(domain, HOST, 'the forged forwarded host must not become the allowed domain')
+
+  const message = buildSiwe({ nonce, domain: 'evil.example' })
+  const signature = await account.signMessage({ message })
+  const r = await verify(app, '203.0.113.31', message, signature)
+  assert.equal(r.status, 401)
+  assert.equal(r.body.error.reason, 'domain_mismatch')
+})
+
+test('a pinned SIWE_ALLOWED_DOMAINS host is honoured, forwarded or not', async () => {
+  const app = makeApp()
+  process.env.SIWE_ALLOWED_DOMAINS = 'thirdeye.ai'
+  try {
+    const res = await app.request('/api/auth/nonce', { headers: { host: HOST, 'x-forwarded-for': '203.0.113.32' } })
+    const { nonce, domain } = (await res.json()) as { nonce: string; domain: string | null }
+    assert.equal(domain, HOST, 'the request host still wins for the message')
+    // A message naming the pinned domain is accepted even though Host is the vercel alias.
+    const message = buildSiwe({ nonce, domain: 'thirdeye.ai' })
+    const signature = await account.signMessage({ message })
+    const r = await verify(app, '203.0.113.32', message, signature)
+    assert.equal(r.status, 200, JSON.stringify(r.body))
+  } finally {
+    delete process.env.SIWE_ALLOWED_DOMAINS
+  }
+})
+
+test('a message domain carrying a port still matches the host', () => {
+  const d = decideSiwe({ messageDomain: `${HOST}:443`, allowedHosts: [HOST], strictParseFailed: false, nodeEnv: 'production' })
+  assert.equal(d.ok, true)
+})
+
+test('no known host fails closed instead of accepting any domain', () => {
+  const d = decideSiwe({ messageDomain: 'evil.example', allowedHosts: [], strictParseFailed: false, nodeEnv: 'production' })
+  assert.equal(d.ok, false)
+  assert.equal(d.reason, 'unknown_host')
 })

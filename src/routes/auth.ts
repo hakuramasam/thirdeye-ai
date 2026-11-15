@@ -6,7 +6,7 @@ import {
   decideSiwe,
   normalizeSiweText,
   extractSiweDomain,
-  allowedSiweHosts,
+  normalizeHost,
 } from '../lib/security.js'
 import { query, one, dbMode } from '../db/index.js'
 import { env, newId, sha256 } from '../lib/env.js'
@@ -86,13 +86,28 @@ export async function pruneExpiredNonces(): Promise<void> {
   await query(`DELETE FROM auth_signin_log WHERE created_at < now() - ($1 || ' days')::interval`, [String(SIGNIN_LOG_RETENTION_DAYS)])
 }
 
-/** Every hostname this request could legitimately be for, client-facing first. */
+/**
+ * Every hostname this request could legitimately be for, most trustworthy first.
+ *
+ * The Host header comes from the URL a browser cannot choose, so it is the anchor. X-Forwarded-Host
+ * can be set by any same-origin fetch, so honouring it unconditionally would let a caller pick its
+ * own allowed domain for the nonce and then again for the verify. It is honoured only when it
+ * agrees with Host or when the operator has pinned that domain in SIWE_ALLOWED_DOMAINS.
+ */
 export function requestHosts(c: any): string[] {
-  return allowedSiweHosts({
-    forwardedHost: c?.req?.header?.('x-forwarded-host'),
-    host: c?.req?.header?.('host'),
-    allowlist: process.env.SIWE_ALLOWED_DOMAINS,
-  })
+  const host = normalizeHost(c?.req?.header?.('host'))
+  const forwarded = normalizeHost(c?.req?.header?.('x-forwarded-host'))
+  const pinned = String(process.env.SIWE_ALLOWED_DOMAINS ?? '')
+    .split(',')
+    .map((entry) => normalizeHost(entry))
+    .filter((entry): entry is string => Boolean(entry))
+  const out: string[] = []
+  if (host) out.push(host)
+  if (forwarded && (forwarded === host || pinned.includes(forwarded)) && !out.includes(forwarded)) {
+    out.push(forwarded)
+  }
+  for (const domain of pinned) if (!out.includes(domain)) out.push(domain)
+  return out
 }
 
 /**
@@ -207,6 +222,9 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
     // Single-use nonce check
     const nonceRow = await one('SELECT nonce, created_at FROM auth_nonces WHERE nonce = $1', [siweMsg.nonce])
     if (!nonceRow) {
+      // Not recorded in auth_signin_log: without a valid nonce there is nothing to attribute the row
+      // to, and that table is written on a public endpoint. The console line is the record.
+      console.warn('[auth] SIWE rejected: unknown_or_used_nonce')
       return c.json(
         { error: { message: 'Invalid or expired nonce.', type: 'invalid_request', code: 400 } },
         400
@@ -227,6 +245,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
     if (lenient && nonceRow) {
       const nonceAge = Date.now() - new Date(nonceRow.created_at).getTime()
       if (nonceAge > 10 * 60 * 1000) {
+        console.warn('[auth] SIWE rejected: stale_nonce')
         return c.json(
           { error: { message: 'Sign-in request expired, please try again.', type: 'invalid_request', code: 400 } },
           400
@@ -256,6 +275,17 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
       }
     }
 
+    // An unproven signature is answered here, before the domain decision, so a caller who cannot
+    // sign learns nothing about which hosts we accept and no diagnostic row can be attributed to
+    // them. Everything below this line has a real signer behind it.
+    if (!isValid) {
+      console.warn(`[auth] SIWE rejected: bad_signature; domain="${siweMsg.domain ?? ''}"`)
+      return c.json(
+        { error: { message: 'Signature verification failed.', type: 'auth', code: 400 } },
+        400
+      )
+    }
+
     // Domain mismatch check (rejecting, not merely logging). Every hostname this request may
     // legitimately be for is allowed, headers first, plus anything the operator pinned in
     // SIWE_ALLOWED_DOMAINS, so a proxy browser or a custom domain cannot fail us on our own site.
@@ -271,17 +301,14 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
     })
     if (!decision.ok) {
       console.warn(`[auth] SIWE rejected: ${decision.reason}; domain="${siweMsg.domain ?? ''}", host="${hosts.join(',')}"`)
-      // Recorded only now that the signature is proven: the row says a real signer was refused,
-      // which is the case worth knowing about. An unsigned attempt is logged to the console above.
-      if (isValid) {
-        await recordSignInDiagnostic({
-          outcome: 'rejected',
-          reason: decision.reason ?? 'rejected',
-          messageDomain: siweMsg.domain ?? extractSiweDomain(normalized),
-          requestHost: hosts[0] ?? null,
-          lenient,
-        })
-      }
+      // The row says a real signer was refused, which is the case worth knowing about.
+      await recordSignInDiagnostic({
+        outcome: 'rejected',
+        reason: decision.reason ?? 'rejected',
+        messageDomain: siweMsg.domain ?? extractSiweDomain(normalized),
+        requestHost: hosts[0] ?? null,
+        lenient,
+      })
       return c.json(
         {
           error: {
@@ -294,7 +321,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
         401
       )
     }
-    if (lenient && isValid) {
+    if (lenient) {
       // Accepted on the tolerant path: worth a durable row, because it means a wallet or a browser
       // altered our own message and the next user may hit the same thing.
       await recordSignInDiagnostic({
@@ -304,13 +331,6 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
         requestHost: hosts[0] ?? null,
         lenient,
       })
-    }
-
-    if (!isValid) {
-      return c.json(
-        { error: { message: 'Signature verification failed.', type: 'auth', code: 400 } },
-        400
-      )
     }
 
     // Upsert user by lowercase wallet address
