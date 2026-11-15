@@ -386,7 +386,6 @@ export async function auditAgents(opts: {
           }
 
           if (res) {
-            dispatchAttemptRunId = runId
             dispatchReplayed = Boolean(res.replayed) || undefined
             // runAgent resolves { status: 'error' } instead of throwing, so the old code pushed a
             // failed run into `dispatched` and the audit said the findings had reached HERMES when
@@ -396,18 +395,24 @@ export async function auditAgents(opts: {
               dispatched.push(runId)
             } else {
               dispatchError = 'runner_error'
+              // Only a non-success run is an *attempt*: it names the run that failed to answer, so
+              // reporting it on a successful handoff made consumers read a delivered dispatch as a
+              // failed one.
+              dispatchAttemptRunId = runId
             }
           }
 
           // Record which run attempted which alert, so the trail goes both ways whatever the
           // outcome. Kept out of the runner guard: a bookkeeping failure must not change what we
           // report about the run.
-          try {
-            for (const key of keys) {
+          // Each link is attempted independently: one failed UPDATE used to abort the loop and
+          // leave every later alert unlinked, which hid the run from exactly the alerts it answered.
+          for (const key of keys) {
+            try {
               await query(`UPDATE agent_alerts SET dispatch_run_id = $1 WHERE dedupe_key = $2`, [runId, key])
+            } catch {
+              alertLinkError = true
             }
-          } catch {
-            alertLinkError = true
           }
         }
       }

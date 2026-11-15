@@ -58,6 +58,7 @@ describe('audit hands the worst findings to HERMES', () => {
 
     const alert: any = await one(`SELECT dispatch_run_id FROM agent_alerts ORDER BY created_at DESC LIMIT 1`)
     assert.equal(alert.dispatch_run_id, runId, 'the alert records the run that answered it')
+    assert.equal(res.dispatch_attempt_run_id, undefined, 'a delivered handoff is not a failed attempt')
   })
 
   it('replays the same dispatch instead of paying for a second run', async () => {
@@ -138,6 +139,55 @@ describe('audit hands the worst findings to HERMES', () => {
       assert.equal(await hermesRuns(), runsBefore + 1, 'one attempt, and no second charge for a replay')
     } finally {
       await query(`UPDATE agents SET model = 'thirdeye-mock' WHERE id = $1`, [HERMES])
+      await query(`DELETE FROM agent_alerts`)
+    }
+  })
+
+  it('one blocked alert link does not strand the alerts after it', async () => {
+    await query(`DELETE FROM agent_alerts`)
+    // Two fresh high findings, so the dispatch has two links to write. Each runs on its own run id,
+    // and the dedupe key is code plus run id, so the two keys are known before the audit runs.
+    const runA = randomUUID()
+    const runB = randomUUID()
+    for (const [runId, input] of [
+      [runA, 'write the ops guide'],
+      [runB, 'write the incident guide'],
+    ]) {
+      await query(
+        `INSERT INTO agent_runs (id, agent_id, user_id, status, input, output, tool_calls, spend_usd_micros)
+         VALUES ($1, $2, $3, 'success', $4, 'Deployed and shipped ' || $4 || '.', 1, 160)`,
+        [runId, QA, owner.id, input]
+      )
+    }
+    // Block only the first key. The old code wrapped the whole loop in one try, so the throw on the
+    // first UPDATE abandoned the second alert: it stayed unlinked and nothing said so beyond a
+    // single flag.
+    const blocked = `unverified_claim:${runA}`
+    await query(`CREATE OR REPLACE FUNCTION _block_one_link() RETURNS trigger AS $$
+                 BEGIN
+                   IF OLD.dedupe_key = '${blocked}' THEN RAISE EXCEPTION 'link blocked for test'; END IF;
+                   RETURN NEW;
+                 END; $$ LANGUAGE plpgsql`)
+    await query(`CREATE TRIGGER _block_one_link BEFORE UPDATE ON agent_alerts
+                 FOR EACH ROW EXECUTE FUNCTION _block_one_link()`)
+    try {
+      const res = await auditAgents({ hours: 1, dispatch: true })
+
+      assert.equal(res.dispatched.length, 1, 'the orchestrator still answered')
+      assert.equal(res.alert_link_error, true, 'the failure is still reported')
+      assert.equal(res.dispatch_attempt_run_id, undefined, 'a success is not an attempt')
+
+      const linked: any = await query(`SELECT dedupe_key, dispatch_run_id FROM agent_alerts ORDER BY dedupe_key`)
+      const byKey = new Map(linked.rows.map((r: any) => [r.dedupe_key, r.dispatch_run_id]))
+      assert.equal(byKey.get(blocked), null, 'the blocked alert stayed unlinked')
+      assert.equal(
+        byKey.get(`unverified_claim:${runB}`),
+        res.dispatched[0],
+        'the alert after the blocked one is linked anyway'
+      )
+    } finally {
+      await query(`DROP TRIGGER IF EXISTS _block_one_link ON agent_alerts`)
+      await query(`DROP FUNCTION IF EXISTS _block_one_link()`)
       await query(`DELETE FROM agent_alerts`)
     }
   })
