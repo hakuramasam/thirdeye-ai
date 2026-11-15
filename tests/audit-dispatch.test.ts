@@ -71,7 +71,10 @@ describe('audit hands the worst findings to HERMES', () => {
     await query(`DELETE FROM agent_alerts`)
     const second = await auditAgents({ hours: 1, dispatch: true })
     assert.deepEqual(second.dispatched, [runId], 'the same brief maps to the same run id')
-    assert.equal(second.dispatch_skipped, 'replayed')
+    // A replay used to be reported through dispatch_skipped, which cannot be true at the same time
+    // as a populated `dispatched`. It has its own field now.
+    assert.equal(second.dispatch_replayed, true, 'the call is reported as a replay')
+    assert.equal(second.dispatch_skipped, undefined, 'a replay is not a skipped dispatch')
 
     const runs: any = await one(
       `SELECT count(*)::int AS n FROM agent_runs WHERE agent_id = $1 AND input LIKE 'Monitoring raised findings%'`,
@@ -88,6 +91,84 @@ describe('audit hands the worst findings to HERMES', () => {
 
     const runs: any = await one(`SELECT count(*)::int AS n FROM agent_runs WHERE agent_id = 'tdt_missing'`)
     assert.equal(Number(runs.n), 0, 'no run row is invented')
+  })
+
+  it('never reports a failed orchestrator run as a dispatch', async () => {
+    await query(`DELETE FROM agent_alerts`)
+    // A new finding, so the brief hashes to a run id no earlier test has already executed. Without
+    // it the dispatch would replay the stored success from the test above and prove nothing.
+    await query(
+      `INSERT INTO agent_runs (id, agent_id, user_id, status, input, output, tool_calls, spend_usd_micros)
+       VALUES ($1, $2, $3, 'success', 'write the release notes', 'Deployed and shipped the release notes.', 1, 120)`,
+      [randomUUID(), QA, owner.id]
+    )
+    const hermesRuns = async () =>
+      Number(
+        (await one(
+          `SELECT count(*)::int AS n FROM agent_runs WHERE agent_id = $1 AND input LIKE 'Monitoring raised findings%'`,
+          [HERMES]
+        )).n
+      )
+    const runsBefore = await hermesRuns()
+
+    // An unresolvable model is the honest way to make runAgent fail: it resolves
+    // { status: 'error' } with the reason, which is why the monitor's `catch` never saw it and
+    // reported the failure as a successful handoff.
+    await query(`UPDATE agents SET model = 'no-such-model' WHERE id = $1`, [HERMES])
+    try {
+      const res = await auditAgents({ hours: 1, dispatch: true })
+
+      assert.deepEqual(res.dispatched, [], 'a run that failed has not dispatched anything')
+      assert.equal(res.dispatch_error, 'runner_error', 'the failure is named as a failure')
+      assert.ok(res.dispatch_attempt_run_id, 'the attempt keeps an id so its record can be read')
+
+      const run: any = await one(`SELECT status, error FROM agent_runs WHERE id = $1`, [res.dispatch_attempt_run_id])
+      assert.equal(run.status, 'error', 'the stored run agrees that it failed')
+
+      // The trail still points at the attempt: bookkeeping must not be lost because the run failed.
+      const alert: any = await one(`SELECT dispatch_run_id FROM agent_alerts ORDER BY created_at DESC LIMIT 1`)
+      assert.equal(alert.dispatch_run_id, res.dispatch_attempt_run_id)
+
+      // And the same brief cannot be quietly retried into a second charge under the same id.
+      await query(`DELETE FROM agent_alerts`)
+      const again = await auditAgents({ hours: 1, dispatch: true })
+      assert.deepEqual(again.dispatched, [])
+      assert.equal(again.dispatch_error, 'runner_error')
+      assert.equal(again.dispatch_replayed, true, 'a replay of a failed run is still reported as failed')
+      assert.equal(await hermesRuns(), runsBefore + 1, 'one attempt, and no second charge for a replay')
+    } finally {
+      await query(`UPDATE agents SET model = 'thirdeye-mock' WHERE id = $1`, [HERMES])
+      await query(`DELETE FROM agent_alerts`)
+    }
+  })
+
+  it('an alert-link failure cannot conceal a successful run', async () => {
+    await query(`DELETE FROM agent_alerts`)
+    // A third distinct finding, for the same reason: a deterministic run id would otherwise replay
+    // the failed run from the test above rather than exercise a fresh success.
+    await query(
+      `INSERT INTO agent_runs (id, agent_id, user_id, status, input, output, tool_calls, spend_usd_micros)
+       VALUES ($1, $2, $3, 'success', 'write the migrations guide', 'Deployed and shipped the migrations guide.', 1, 140)`,
+      [randomUUID(), QA, owner.id]
+    )
+    await query(`CREATE OR REPLACE FUNCTION _block_alert_link() RETURNS trigger AS $$
+                 BEGIN RAISE EXCEPTION 'link blocked for test'; END; $$ LANGUAGE plpgsql`)
+    await query(`CREATE TRIGGER _block_alert_link BEFORE UPDATE ON agent_alerts
+                 FOR EACH ROW EXECUTE FUNCTION _block_alert_link()`)
+    try {
+      const res = await auditAgents({ hours: 1, dispatch: true })
+
+      assert.equal(res.dispatched.length, 1, 'the run succeeded and must be reported as dispatched')
+      assert.equal(res.dispatch_error, undefined, 'bookkeeping must not be reported as a runner failure')
+      assert.equal(res.alert_link_error, true, 'the linking failure is visible on its own')
+
+      const run: any = await one(`SELECT status FROM agent_runs WHERE id = $1`, [res.dispatched[0]])
+      assert.equal(run.status, 'success')
+    } finally {
+      await query(`DROP TRIGGER IF EXISTS _block_alert_link ON agent_alerts`)
+      await query(`DROP FUNCTION IF EXISTS _block_alert_link()`)
+      await query(`DELETE FROM agent_alerts`)
+    }
   })
 
   it('derives the run id from the findings, in any order', () => {

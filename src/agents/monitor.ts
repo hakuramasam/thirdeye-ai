@@ -242,12 +242,25 @@ export interface AuditResult {
   events: number
   findings: number
   created: number
-  /** Run ids the orchestrator accepted, in dispatch order. Empty when nothing was handed over. */
+  /**
+   * Run ids that were handed to HERMES and actually answered, in dispatch order. A run that
+   * exists but failed is not a dispatch: it appears in `dispatch_attempt_run_id` instead.
+   */
   dispatched: string[]
-  /** Why nothing was handed to HERMES, when a dispatch was asked for. */
-  dispatch_skipped?: 'no_high_findings' | 'hermes_not_found' | 'owner_not_found' | 'replayed'
-  /** Set when the orchestrator could not be run at all. */
-  dispatch_error?: 'runner_failed'
+  /** Why nothing was handed to HERMES at all, when a dispatch was asked for. */
+  dispatch_skipped?: 'no_high_findings' | 'hermes_not_found' | 'owner_not_found'
+  /**
+   * Set when a run was attempted and did not succeed. `runner_failed` means it never started
+   * (the call threw); `runner_error` means it ran and came back unsuccessful, which the runner
+   * reports as a resolved result rather than a throw.
+   */
+  dispatch_error?: 'runner_failed' | 'runner_error'
+  /** The run id of a failed attempt, so its record can still be inspected. */
+  dispatch_attempt_run_id?: string
+  /** True when this call issued nothing because that run id had already been executed. */
+  dispatch_replayed?: boolean
+  /** Alert rows whose linking UPDATE failed. The run itself is unaffected and still reported. */
+  alert_link_error?: boolean
 }
 
 /**
@@ -324,6 +337,9 @@ export async function auditAgents(opts: {
   const dispatched: string[] = []
   let dispatchSkipped: AuditResult['dispatch_skipped']
   let dispatchError: AuditResult['dispatch_error']
+  let dispatchAttemptRunId: string | undefined
+  let dispatchReplayed: boolean | undefined
+  let alertLinkError: boolean | undefined
 
   if (opts.dispatch) {
     const cap = Math.min(opts.maxDispatch ?? 3, 3)
@@ -356,18 +372,42 @@ export async function auditAgents(opts: {
             '',
             'For each: state whether it is a real defect or noise, what the fix is, and who does it. Keep it short.',
           ].join('\n')
+          // Only the orchestrator call is guarded here. Alert linking used to sit inside the same
+          // try, so a failed bookkeeping UPDATE reported a successful run as a runner failure and
+          // dropped its run id entirely.
+          let res: any = null
           try {
             const { runAgent } = await import('./runner.js')
-            const res: any = await runAgent(hermes, brief, owner, { runId })
-            // Record which run answered which alert, so the trail goes both ways.
-            for (const key of keys) {
-              await query(`UPDATE agent_alerts SET dispatch_run_id = $1 WHERE dedupe_key = $2`, [runId, key])
-            }
-            dispatched.push(runId)
-            if (res?.replayed) dispatchSkipped = 'replayed'
+            res = await runAgent(hermes, brief, owner, { runId })
           } catch {
             // The audit still returns its findings; only the handoff is reported as failed.
             dispatchError = 'runner_failed'
+            dispatchAttemptRunId = runId
+          }
+
+          if (res) {
+            dispatchAttemptRunId = runId
+            dispatchReplayed = Boolean(res.replayed) || undefined
+            // runAgent resolves { status: 'error' } instead of throwing, so the old code pushed a
+            // failed run into `dispatched` and the audit said the findings had reached HERMES when
+            // nothing had answered. The run row exists either way, so measure it rather than
+            // trusting the call to have thrown.
+            if (isSuccess(res.status)) {
+              dispatched.push(runId)
+            } else {
+              dispatchError = 'runner_error'
+            }
+          }
+
+          // Record which run attempted which alert, so the trail goes both ways whatever the
+          // outcome. Kept out of the runner guard: a bookkeeping failure must not change what we
+          // report about the run.
+          try {
+            for (const key of keys) {
+              await query(`UPDATE agent_alerts SET dispatch_run_id = $1 WHERE dedupe_key = $2`, [runId, key])
+            }
+          } catch {
+            alertLinkError = true
           }
         }
       }
@@ -382,6 +422,9 @@ export async function auditAgents(opts: {
     dispatched,
     ...(dispatchSkipped ? { dispatch_skipped: dispatchSkipped } : {}),
     ...(dispatchError ? { dispatch_error: dispatchError } : {}),
+    ...(dispatchAttemptRunId ? { dispatch_attempt_run_id: dispatchAttemptRunId } : {}),
+    ...(dispatchReplayed ? { dispatch_replayed: true } : {}),
+    ...(alertLinkError ? { alert_link_error: true } : {}),
   }
 }
 
