@@ -29,11 +29,20 @@ B1, B2, B3, B4, B5 ───────► graduation evidence for conditional 
 
 Workstreams are independent enough for separate PRs; only B1 depends on B2's schema landing first, and even then only at the wiring step.
 
+**Execution order (authoritative): `B3 → B2 → B1 → B4 → B5`, with `B6` read-only throughout.**
+
+- **B3 first.** It needs nothing from the others and it is the branch that removes the ability to write policy, payment, auth and execution files. Opening it first means every later workstream is authored under a boundary that already exists. This is P2, and it is the branch already open.
+- **B2 second.** Attribution is what makes B1's authorization decisions legible, so it lands before the credential split.
+- **B1 third.** It is the only workstream that changes a live entry point, and it needs B2's schema to record who was authorized.
+- **B4, then B5.** B4 needs B3's classification to know what a reviewer must never touch; B5 needs both B2 and B3 for alerts that carry meaning.
+
+The graph above states **dependencies, not sequence**. Where the two appear to disagree, the list in this paragraph is the sequence.
+
 ---
 
 ## 2. Workstreams, files, tests
 
-### B2 — identity and audit attribution (do first)
+### B2 — identity and audit attribution (second, after B3)
 No migration can run in this pass, so the deliverable is code plus a migration file that is reviewed, not applied.
 
 Expected files:
@@ -54,7 +63,7 @@ Tests (`tests/attribution.test.ts`):
 
 Backfill, documented not run: existing rows stay NULL; `NULL` is honestly "unknown" and must never be rendered as `agent`.
 
-### B3 — protected resource classification and write enforcement (safest first branch)
+### B3 — protected resource classification and write enforcement (first: independent, and it hardens the boundary every later workstream is authored under)
 The write boundary already exists in one place, `src/agents/repo-write.ts:validateWritePath`, which is why this is the safest first implementation: it changes a pure function and its call site, adds no schema, and is fully testable offline.
 
 Expected files:
@@ -133,6 +142,11 @@ Deliverable is this document plus a settings proposal; no API call that changes 
 
 No PR mixes payment-path code with authority code. P2 and P3 carry no payment changes at all.
 
+The numbering is authorship order, matching `B3 → B2 → B1 → B4 → B5`. It is not a merge instruction: nothing in this table is authorized to merge in this pass, and "mergeable alone" means only that a PR does not depend on another to be reviewed.
+
+---
+
+
 ---
 
 ## 4. Repository posture: verified now vs proposed
@@ -171,9 +185,20 @@ Conditional merging of eligible low-risk PRs stays disabled until all of the fol
 4. B4 review records bound to head SHA and a demonstrated rejection of self-review and stale-SHA approval;
 5. B5 scoped monitoring emitting on denials, with fail-closed tests;
 6. settings items 1–3 and 7 above applied, with the agent credential no longer `admin`;
-7. a low-risk change actually merged by a non-author under those controls, with the audit trail naming every actor.
+7. a **no-merge rehearsal**: the complete eligibility → authorization → CI → review → audit decision is run against a synthetic low-risk PR, and the merge action is proven to remain disabled until every gate above is true, with the refusal recorded and attributable. The first real low-risk merge can happen only after all gates pass and only under the owner's explicit authorization.
+
+Gate 7 was previously "a low-risk change actually merged", which was circular: it required a merge to prove that merging was safe. The rehearsal replaces it, and it is stronger, because a real merge can only ever show the happy path once, while a rehearsal has to show the refusal on every unmet condition.
 
 Until then: no merge, no self-promotion, no level marked graduated.
+
+### Owner boundary recorded 2026-11-15
+
+The current grant is narrower than the capability this plan describes, and it is written here so no later reader mistakes one for the other:
+
+- **Conditional merging of low-risk PRs is permitted only after every gate above has been independently verified** by someone other than the implementer. It is not permitted now; no gate is met.
+- **High-risk, financial, treasury, wallet, signing and production actions remain outside this grant entirely**, along with production deployment. Nothing in Phase B widens them.
+- **This pass changes no protected owner policy file and no repository setting.** The settings in §4 stay proposals.
+- **Making the grant effective needs a policy-document update for owner review:** `team/policies/authority.md` currently forbids agent merging outright, and it has to be amended to express the conditional gate before any merge capability is real, together with §4 items 1–3 and 7 and the gate record above. Until that document is updated and reviewed, this plan is a proposal and the merge capability does not exist anywhere in the system.
 
 ---
 
