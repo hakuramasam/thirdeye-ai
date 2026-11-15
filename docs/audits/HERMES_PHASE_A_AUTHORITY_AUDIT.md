@@ -426,7 +426,7 @@ execution, transaction policies).
 
 | # | Conflict | Levels | Governance | Also contradicts |
 |---|---|---|---|---|
-| C1 | May HERMES merge autonomously? | L3 only, "unless L3 is separately activated"; low-risk classes only | §1 and §5 grant autonomous merge of eligible PRs outright | `team/policies/authority.md`: "Merging to `main` and deploying to production… Sam's word decides that, not HERMES" |
+| C1 | May HERMES merge autonomously? | L3 only, "unless L3 is separately activated"; low-risk classes only | §1 and §5 grant autonomous merge of eligible PRs outright | `team/policies/authority.md`: "Merging to `main` and deploying to production. A green CI run and Sam's word decide that, not HERMES." |
 | C2 | Who authorises authority itself? | §3: "A human-authorized governance decision must activate each promotion" | §1: "Do not ask the founder for routine issue or PR management decisions" | The two cannot both govern the same actor |
 | C3 | Scope of "low risk" | Enumerated examples (docs, non-sensitive UI, isolated fixes, tests, refactors) | No risk classification; §6 lists exceptions only | Levels' R0–R4 is undefined in Governance, so "eligible" is unfalsifiable under Governance alone |
 | C4 | Issue closure timing | Closure requires integration into the target branch (L1) | Same rule, but permits closing duplicates and abandoned PRs | Compatible; recorded because "duplicate" is undefined |
@@ -473,7 +473,9 @@ evidence is unavailable and CI is green.
 | **L3** Conditional merge | Approve/merge low-risk, post-merge verification | **NOT READY** | No merge code; settings require 0 approvals; token holds admin; money-path refusals miss the money HTTP surface (F-03, F-08). Must not be activated in this state. |
 | **L4** Production & financial | Deploy, migrations, treasury | **NOT READY** | Nothing implemented; merging to `main` auto-deploys production, so L3 without L4 controls would grant production authority by side effect. |
 
-Positive controls verified and worth preserving: `repo_write` refuses `.env`, `.git`,
+Positive controls verified and worth preserving: `pipeline_id` is validated by membership rather than
+property lookup (`src/routes/agents.ts:311-315`), so prototype keys such as `__proto__` are refused;
+the same pattern should be extended to every enum input. `repo_write` refuses `.env`, `.git`,
 `node_modules`, key material, `src/payments/`, billing/settlement/keys modules and `schema.sql`;
 branch names are forced to `agent/<slug>` and `agent/main` is refused; 12 files / 200 KB per PR; a
 credential-shaped-string scan runs on proposed content; delegation depth is capped at 3; the
@@ -499,9 +501,8 @@ UNVERIFIED (could not be proven read-only).
 | F-07 | High | VERIFIED | GitHub capability | No PR review/approve client exists | `src/agents/repo-write.ts:183-188` (stops at PR creation) | L2 is impossible today | As F-06, plus reviewer identity |
 | F-08 | High | VERIFIED | Write boundary | Money-path refusals miss the money HTTP surface and security/config code; `.github/` and `team/` are writable | `src/agents/repo-write.ts:25` (allowlist includes `team/`, `.github/`), `:28-33` (`MONEY_PATHS` lacks `src/routes/credits.ts`, `src/lib/env.ts`, `src/lib/session.ts`, `src/routes/auth.ts`), `:35-42` (denied list) | An agent can propose changes to its own policies, CI workflows and the credit routes; the review gate that would catch it is F-03 | Extend `MONEY_PATHS` to the credits/auth/env/session routes, treat `.github/` and `team/` as human-signature paths, and require owner review for them by CODEOWNERS |
 | F-09 | High | VERIFIED | Monitoring | The audit that detects misbehaving runs is only reachable with the master key and is not scheduled; `vercel.json` schedules only `/api/cron/agents` | `src/agents/monitor.ts:80,253`; `src/routes/admin.ts:164`; `vercel.json` crons | Failed or privileged runs raise no alert by default | Schedule `auditAgents` on its own cron with a scoped credential, and emit an alert event on findings |
-| F-10 | Medium | VERIFIED | Indirect invocation | `http_fetch` accepts any URL/method/body with automatic x402 payment and no origin allowlist | `src/agents/runner.ts:203-216,208` | A leaked bearer anywhere in agent-reachable content converts into team control; also an SSRF surface | Host allowlist, refuse the deployment's own origin and RFC1918/metadata ranges, cap spend per call |
+| F-10 | Low | VERIFIED (narrowed) | Indirect invocation | `http_fetch` exists only when `x402_enabled`, takes url/method(`GET`,`POST`)/body and has no header parameter, and passes `assertPublicUrl` before any payment; the residual risk is public egress, not private-target reach | `src/agents/runner.ts:205-216,474,576-577`; `src/agents/x402.ts:86`; `src/lib/ssrf.ts:175` | An agent can POST chosen data to any public host, which is an exfiltration channel, and can reach this deployment's own public unauthenticated endpoints; it cannot present a bearer or `x-master-key` because it cannot set headers, and localhost, private and metadata targets are refused | Keep the guard; add an egress allowlist and refuse the deployment's own origin; do not add header passthrough |
 | F-11 | Medium | VERIFIED | Replay | Ops mode is not deduplicated unless the caller volunteers an idempotency key | `src/routes/agents.ts:321-328` | A captured privileged request replays indefinitely | Make the key mandatory, add per-caller rate and spend caps |
-| F-12 | Medium | VERIFIED | Pipeline scoping | `pipeline_id` is validated by membership, not property lookup — a positive control | `src/routes/agents.ts:311-315` | Prevents prototype-key bypass | Keep; extend the same pattern to every enum input |
 | F-13 | Medium | VERIFIED | Visibility | Repository is public | `/repos/{r}` → `private:false` | Every proposed change, issue and doc is world-readable; `repo_read` is not a confidentiality boundary | Decide deliberately; if the repo stays public, treat all agent-visible content as publishable |
 | F-14 | Medium | VERIFIED | Schedule semantics | Due-ness uses a 26-hour lookback on the last successful run | `src/routes/agents.ts:270` | A late tick can execute a slot up to a day stale, using a current brief | Acceptable trade; record it so "why did it run now" is answerable |
 | F-15 | Low | VERIFIED | Review config | No CODEOWNERS file exists | repo tree; `.github/` has `workflows` only | Code-owner review cannot be enabled | Add CODEOWNERS covering sensitive paths |
@@ -524,9 +525,8 @@ UNVERIFIED (could not be proven read-only).
  {"id":"F-07","severity":"high","status":"verified","type":"capability_gap","evidence":["src/agents/repo-write.ts:183-188"],"level_impact":["L2"]},
  {"id":"F-08","severity":"high","status":"verified","type":"write_boundary","evidence":["src/agents/repo-write.ts:25","src/agents/repo-write.ts:28-33","src/agents/repo-write.ts:35-42"],"level_impact":["L2","L3"]},
  {"id":"F-09","severity":"high","status":"verified","type":"monitoring","evidence":["src/agents/monitor.ts:80","src/agents/monitor.ts:253","src/routes/admin.ts:164","vercel.json"],"level_impact":["L0","L4"]},
- {"id":"F-10","severity":"medium","status":"verified","type":"indirect_invocation","evidence":["src/agents/runner.ts:203-216"],"level_impact":["L1","L2","L3","L4"]},
+ {"id":"F-10","severity":"low","status":"verified_narrowed","type":"indirect_invocation","evidence":["src/agents/runner.ts:205-216","src/agents/runner.ts:474","src/agents/runner.ts:576-577","src/agents/x402.ts:86","src/lib/ssrf.ts:175"],"level_impact":[]},
  {"id":"F-11","severity":"medium","status":"verified","type":"replay","evidence":["src/routes/agents.ts:321-328"],"level_impact":["L1","L2"]},
- {"id":"F-12","severity":"medium","status":"verified","type":"positive_control","evidence":["src/routes/agents.ts:311-315"],"level_impact":[]},
  {"id":"F-13","severity":"medium","status":"verified","type":"visibility","evidence":["GET /repos/hakuramasam/thirdeye-ai -> private:false"],"level_impact":["L0","L1"]},
  {"id":"F-14","severity":"medium","status":"verified","type":"schedule_semantics","evidence":["src/routes/agents.ts:270"],"level_impact":[]},
  {"id":"F-15","severity":"low","status":"verified","type":"review_config","evidence":["repo tree: no CODEOWNERS"],"level_impact":["L3"]},
@@ -541,6 +541,10 @@ UNVERIFIED (could not be proven read-only).
 ---
 
 ## 13. Unverified areas and access limitations
+
+Three findings in the register are UNVERIFIED (F-17, F-18, F-19). The bullets below also record four
+areas this audit did not test at all; those are stated limits, not findings, and they are counted
+separately so the two lists cannot be confused.
 
 - **Merge capability of the integration token (F-18).** Proving it requires performing a merge, which
   the read-only mandate forbids. The token's `permissions.admin: true` makes it likely; treat it as
@@ -588,7 +592,7 @@ UNVERIFIED (could not be proven read-only).
 **P2 — capability building, only after P0/P1**
 
 8. Issue lifecycle capability, then review capability, each behind the authority check (F-06, F-07).
-9. `http_fetch` host allowlist and self-origin refusal (F-10).
+9. `http_fetch` egress allowlist and self-origin refusal (F-10, residual after review).
 10. Decide repository visibility deliberately (F-13).
 
 ---
@@ -623,9 +627,10 @@ source, tests, skill packs, docs, specifications, GitHub settings via API, crede
 only, and the ten CRON_SECRET questions answered with file and line references. The gaps in the
 preliminary pass are closed: `monitor.ts`, the twelve `SKILL.md` packs, the delegation and
 repository-write modules, the auth middleware, the cron handlers and the independence test were all
-read, and the GitHub API was queried rather than assumed. Twenty findings are recorded with
-severity, evidence, impact, remediation and verification status; four items remain explicitly
-UNVERIFIED because proving them would have required acting.
+read, and the GitHub API was queried rather than assumed. Nineteen findings are recorded in the
+register with severity, evidence, impact, remediation and verification status. F-12 was reclassified
+as a positive control after review rather than counted as a defect, and exactly three findings are
+UNVERIFIED (F-17–F-19) because proving those required acting.
 
 **Phase A does not pass.** The readiness matrix stands as follows, and nothing was promoted:
 
