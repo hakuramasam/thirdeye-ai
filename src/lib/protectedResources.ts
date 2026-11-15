@@ -53,7 +53,10 @@ export const RESOURCE_CLASSES: ResourceClass[] = [
   {
     id: 'secrets',
     label: 'credentials and secrets',
-    match: /(^|\/)\.env(\.[^/]*)?$|\.(pem|key|p12|pfx|keystore)$|(^|\/)id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$|(^|\/)\.npmrc$|(^|\/)\.vercel\//,
+    // src/providers/** decrypts BYOK and platform provider credentials, so a normal-looking source
+    // edit there is a credential-exfiltration path rather than a feature change.
+    match:
+      /(^|[/])\.env(\.[^/]*)?$|[.](pem|key|p12|pfx|keystore)$|(^|[/])id_(rsa|dsa|ecdsa|ed25519)([.]pub)?$|(^|[/])[.]npmrc$|(^|[/])[.]vercel[/]|^src[/]providers[/]/,
     approver: 'owner',
   },
   {
@@ -104,7 +107,11 @@ export const RESOURCE_CLASSES: ResourceClass[] = [
     label: 'agent execution, authorization or audit control plane',
     // src/agents/** includes repo-write.ts, the enforcement point itself: an agent that may edit it
     // can remove the check. src/index.ts registers the middleware that authenticates every route.
-    match: /^src\/agents\/|^src\/routes\/|^src\/inngest\/|^src\/index\.ts$|^api\/|^src\/middleware/,
+    // src/app.ts installs configGuard and registers every route; src/team validates inter-agent
+    // messages; src/telemetry is the run-tracing path. All three can change who may act or what is
+    // recorded, so all three are control plane.
+    match:
+      /^src[/]agents[/]|^src[/]routes[/]|^src[/]inngest[/]|^src[/]index[.]ts$|^src[/]app[.]ts$|^api[/]|^src[/]middleware|^src[/]team[/]|^src[/]telemetry[/]/,
     approver: 'owner',
   },
   {

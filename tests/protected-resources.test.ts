@@ -48,12 +48,16 @@ const CONTROL_PLANE_FILES = [
   'src/lib/config-guard.ts',
   'src/lib/ssrf.ts',
   'src/index.ts',
+  'src/app.ts',
   'src/inngest/functions.ts',
+  'src/team/validate.ts',
+  'src/telemetry/langfuse.ts',
 ]
 
 /** The protected sample set used for the actor matrix. */
 const PROTECTED_SAMPLES = [
   '.env',
+  'src/providers/index.ts',
   'src/db/schema.sql',
   'src/routes/credits.ts',
   'src/routes/redeem.ts',
@@ -331,7 +335,16 @@ describe('batch writes', () => {
     const { validateWriteBatch } = await import('../src/agents/repo-write.js')
     const files = Array.from({ length: 11 }, (_, i) => ({ path: `docs/page-${i}.md`, content: '# page' }))
     files.push({ path: 'src/agents/runner.ts', content: 'export const x = 1' })
-    assert.throws(() => validateWriteBatch(files as any), /control-plane|owner/)
+    let message = ''
+    try {
+      validateWriteBatch(files as any)
+    } catch (e: any) {
+      message = String(e?.message || '')
+    }
+    // Pin both facts: the named file caused it, and the reason is the owner-only class rather than
+    // an unrelated prefix or size refusal.
+    assert.match(message, /src\/agents\/runner\.ts/)
+    assert.match(message, /owner's approval/)
   })
 
   it('refuses a batch whose member is a dot-segment disguise of a protected file', async () => {
