@@ -9,9 +9,18 @@ const {
   WRITE_MAX_FILES,
 } = await import('../src/agents/repo-write.js')
 
-test('writable paths inside the allowlist pass', () => {
-  for (const p of ['src/agents/x.ts', 'web/src/a.tsx', 'tests/t.test.ts', 'docs/a.md', 'team/policies/a.md', '.github/workflows/ci.yml']) {
+test('ordinary paths inside the allowlist pass', () => {
+  for (const p of ['src/agents/x.ts', 'web/src/a.tsx', 'tests/t.test.ts', 'docs/a.md', 'src/lib/format.ts']) {
     assert.equal(validateWritePath(p), p)
+  }
+})
+
+// Tightened deliberately: team policy and CI workflows used to be writable by an agent because they
+// sat under an allowed prefix. Both are now owner-only classes in src/lib/protectedResources.ts,
+// which is the whole point of centralising the decision.
+test('team policy and CI workflows are no longer agent-writable', () => {
+  for (const p of ['team/policies/a.md', '.github/workflows/ci.yml', 'team/agents/qa/SKILL.md']) {
+    assert.throws(() => validateWritePath(p), /Refusing/)
   }
 })
 

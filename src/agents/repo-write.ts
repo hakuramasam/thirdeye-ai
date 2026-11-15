@@ -7,15 +7,17 @@
  *      `agent/`-prefixed branch. There is no code path that commits to main.
  *   2. A merge is never performed. The tool opens a pull request and stops. A human or a
  *      green CI run decides what happens next.
- *   3. Paths are allowlisted to source, web, tests, docs, team and CI config. Money paths
- *      (src/payments, src/lib/billing|settle|profit|reconcile|keycredit) are refused outright
- *      even inside the allowlist, because those need a named human's signature.
+ *   3. Paths are allowlisted to source, web, tests, docs, team and CI config, and every path is then
+ *      classified by `src/lib/protectedResources.ts`. Money, auth, secrets, schema, workflows, team
+ *      policy, deployment config and wallet paths need the owner's approval even inside the
+ *      allowlist, because those need a named human's signature rather than an agent's.
  *
  * Every write is capped in file count and bytes, and content is scanned for credential-shaped
  * strings before it leaves the process. A refusal returns an instruction, not an exception, so
  * the agent can correct itself instead of retrying blindly.
  */
 
+import { authorizeWrite } from '../lib/protectedResources.js'
 import { env } from '../lib/env.js'
 
 export const WRITE_MAX_FILES = 12
@@ -24,13 +26,6 @@ export const WRITE_MAX_BYTES = 200_000
 /** Directories an agent may touch. Everything else is refused. */
 const ALLOWED_PREFIXES = ['src/', 'web/', 'tests/', 'docs/', 'team/', '.github/']
 
-/** Within the allowlist, these still require a human because they move money or keys. */
-const MONEY_PATHS = [
-  /^src\/payments\//,
-  /^src\/lib\/(billing|settle|reconcile|profit|keycredit|keybudget|creditPolicy)\.ts$/,
-  /^src\/lib\/keys\.ts$/,
-  /^src\/db\/schema\.sql$/,
-]
 
 const DENIED = [
   /(^|\/)\.env(\..*)?$/i,
@@ -50,8 +45,12 @@ export function validateWritePath(raw: unknown): string {
   if (!ALLOWED_PREFIXES.some((pre) => p.startsWith(pre))) {
     throw new Error(`Refusing to write ${p}: only ${ALLOWED_PREFIXES.join(', ')} are writable`)
   }
-  if (MONEY_PATHS.some((re) => re.test(p))) {
-    throw new Error(`Refusing to write ${p}: money and key paths need a named human's signature, not an agent's`)
+  // The write boundary, and the only place the decision is made. Every protected class lives in one
+  // policy module so a path cannot be writable here merely because nobody remembered to add it to a
+  // second list: the credits route, auth, env, workflows and team policy used to be writable that way.
+  const decision = authorizeWrite(p, { type: 'agent' })
+  if (!decision.allowed) {
+    throw new Error(`Refusing to write ${p}: ${decision.reason}`)
   }
   return p
 }
