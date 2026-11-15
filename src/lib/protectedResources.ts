@@ -132,76 +132,86 @@ export type WriteDecision = {
 
 const MAX_PATH = 300
 
-/** True for the named public content pages, which are ordinary application paths. */
-export function isContentRoute(raw: unknown): boolean {
-  const p = normalizePath(raw).toLowerCase()
-  return CONTENT_ROUTE_ALLOWLIST.includes(p)
-}
+export type PathCheck = { ok: true; path: string } | { ok: false; reason: string }
 
 /**
- * Refuse anything whose meaning depends on how it is decoded.
+ * Validate a path and return the exact string that may be written, or the reason it cannot be.
  *
- * The writer commits through GitHub's contents API, where the path arrives percent-encoded once. A
- * second layer of encoding (`%252e%252e%252f`), a malformed escape (`%zz`), or a bare `%` left after
- * decoding all mean the path has two possible readings, and the request that reaches GitHub may not
- * be the path that was classified here. There is no safe guess, so these are refused rather than
- * normalized.
+ * The invariant this function exists to hold: the string that is authorized is the string that is
+ * sent to GitHub, byte for byte. Anything whose meaning could change between here and the GitHub
+ * contents API is refused instead of repaired. That matters because the API receives the path inside
+ * a URL, and URL parsing resolves `./` and `..` segments and stops at `?` and `#`. A path like
+ * `src/./routes/credits.ts` would be authorized as one string and then land on a different file.
+ *
+ * The only thing removed is a single leading `./`, which cannot mean anything else; the stripped
+ * form is what gets authorized and returned, so the invariant still holds. Every other rewrite is a
+ * refusal.
  */
-export function pathRejection(raw: unknown): string | null {
-  if (typeof raw !== 'string') return 'A path must be a string'
-  const original = raw
-  if (!original.trim()) return 'An empty path is not writable'
-  if (original.length > MAX_PATH * 3) return 'Path is too long'
+export function checkPath(raw: unknown): PathCheck {
+  if (typeof raw !== 'string') return { ok: false, reason: 'A path must be a string' }
+  if (!raw.trim()) return { ok: false, reason: 'An empty path is not writable' }
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(original)) return 'A path may not contain control characters'
+  if (/[\u0000-\u001f\u007f]/.test(raw)) return { ok: false, reason: 'A path may not contain control characters' }
+  if (/\s/.test(raw)) return { ok: false, reason: 'A path may not contain whitespace' }
+  if (raw.length > MAX_PATH + 2) return { ok: false, reason: 'Path is too long' }
 
-  let decoded = original
-  if (original.includes('%')) {
-    if (/%(?![0-9a-fA-F]{2})/.test(original)) return 'A malformed percent escape is ambiguous'
+  if (raw.includes('%')) {
+    if (/%(?![0-9a-fA-F]{2})/.test(raw)) return { ok: false, reason: 'A malformed percent escape is ambiguous' }
+    let decoded = raw
     try {
-      decoded = decodeURIComponent(original)
+      decoded = decodeURIComponent(raw)
     } catch {
-      return 'An undecodable percent escape is ambiguous'
+      return { ok: false, reason: 'An undecodable percent escape is ambiguous' }
     }
-    // A percent sequence surviving one decode means the input was encoded more than once.
-    if (/%[0-9a-fA-F]{2}/.test(decoded)) return 'Double-encoded paths are ambiguous'
-    if (decoded.includes('%')) return 'A bare percent sign in a path is ambiguous'
+    // A percent sequence surviving one decode means the input was encoded more than once, and a
+    // single encoding still means two possible readings. Both are refused rather than resolved.
+    if (/%[0-9a-fA-F]{2}/.test(decoded)) return { ok: false, reason: 'Double-encoded paths are ambiguous' }
+    return { ok: false, reason: 'Percent-encoded paths are ambiguous' }
   }
 
-  const p = decoded.replace(/\\/g, '/')
-  if (p.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(p)) return 'Absolute paths are not writable'
-  const segments = p.split('/')
-  if (segments.some((s) => s === '..')) return 'Path traversal is not allowed'
-  if (p.length > MAX_PATH) return 'Path is too long'
-  return null
+  if (/[?#]/.test(raw)) return { ok: false, reason: 'A query or fragment delimiter is ambiguous' }
+  if (raw.includes('\\')) return { ok: false, reason: 'Backslash separators are ambiguous' }
+  if (/[\u2215\u2044\uff0f\uff3c\uff0e\u2024\u2027\u200b-\u200d\u2060\ufeff]/.test(raw)) {
+    return { ok: false, reason: 'A non-ASCII separator or invisible character is ambiguous' }
+  }
+  if (raw.normalize('NFC') !== raw) return { ok: false, reason: 'A decomposed character sequence is ambiguous' }
+  if (raw.startsWith('/') || /^[A-Za-z]:/.test(raw)) return { ok: false, reason: 'Absolute paths are not writable' }
+
+  const stripped = raw.startsWith('./') ? raw.slice(2) : raw
+  if (!stripped) return { ok: false, reason: 'An empty path is not writable' }
+  if (stripped.length > MAX_PATH) return { ok: false, reason: 'Path is too long' }
+
+  const segments = stripped.split('/')
+  if (segments.some((seg) => seg === '')) {
+    return { ok: false, reason: 'A repeated or trailing slash is ambiguous' }
+  }
+  if (segments.some((seg) => seg === '..')) return { ok: false, reason: 'Path traversal is not allowed' }
+  if (segments.some((seg) => seg === '.')) {
+    return { ok: false, reason: 'A dot segment (.) is not allowed: it would resolve to a different file' }
+  }
+  return { ok: true, path: stripped }
+}
+
+/** The refusal reason for a path, or null when it is writable in principle. */
+export function pathRejection(raw: unknown): string | null {
+  const check = checkPath(raw)
+  return check.ok ? null : check.reason
 }
 
 /**
- * Fold every cheap disguise of the same target into one form. Only called on input that
- * `pathRejection` accepted, so the folding here decides classification, never legality.
+ * Kept for callers that want a plain string. It no longer invents a path: an input that is not
+ * already canonical returns '', because a silent rewrite is exactly the bug this replaced.
  */
 export function normalizePath(raw: unknown): string {
-  let p = String(raw ?? '').trim()
-  p = p
-    .normalize('NFC')
-    // Homoglyph separators and dots fold to ASCII. This can only cause a false refusal, never a
-    // false allow, which is the correct direction for a security boundary.
-    .replace(/[\u2215\u2044\uff0f\uff3c]/g, '/')
-    .replace(/[\uff0e\u2024\u2027]/g, '.')
-    // Zero-width characters are invisible in review and meaningless in a repository path.
-    .replace(/[\u200b-\u200d\u2060\ufeff]/g, '')
-    .replace(/\\/g, '/')
-  while (p.startsWith('./')) p = p.slice(2)
-  p = p.replace(/\/{2,}/g, '/')
-  if (p.startsWith('/')) p = p.slice(1)
-  p = p.replace(/\/+$/, '')
-  return p.replace(/(^|\/)\.(?=\/|$)/g, '$1')
+  const check = checkPath(raw)
+  return check.ok ? check.path : ''
 }
 
 /** The protected class a path belongs to, or null for an ordinary application file. */
 export function classifyResource(raw: unknown): Classification | null {
-  const normalized = normalizePath(raw)
-  const p = normalized.toLowerCase()
+  const check = checkPath(raw)
+  if (!check.ok) return null
+  const p = check.path.toLowerCase()
   if (!p) return null
   if (CONTENT_ROUTE_ALLOWLIST.includes(p)) return null
   for (const c of RESOURCE_CLASSES) {
@@ -216,14 +226,11 @@ export function classifyResource(raw: unknown): Classification | null {
  * Phase B's scoped operator credential exists with its own policy version.
  */
 export function authorizeWrite(raw: unknown, actor: { type: ActorType } = { type: 'agent' }): WriteDecision {
-  const rejection = pathRejection(raw)
-  const normalized = rejection ? String(raw ?? '') : normalizePath(raw)
-  if (!rejection && !normalized) {
-    return { allowed: false, resourceId: null, requires: null, reason: 'An empty path is not writable', normalized }
+  const check = checkPath(raw)
+  if (!check.ok) {
+    return { allowed: false, resourceId: null, requires: null, reason: check.reason, normalized: String(raw ?? '') }
   }
-  if (rejection) {
-    return { allowed: false, resourceId: null, requires: null, reason: rejection, normalized }
-  }
+  const normalized = check.path
   const cls = classifyResource(normalized)
   if (!cls) return { allowed: true, resourceId: null, requires: null, reason: null, normalized }
   if (actor.type === 'owner') {

@@ -17,7 +17,7 @@
  * the agent can correct itself instead of retrying blindly.
  */
 
-import { authorizeWrite } from '../lib/protectedResources.js'
+import { authorizeWrite, checkPath } from '../lib/protectedResources.js'
 import { env } from '../lib/env.js'
 
 export const WRITE_MAX_FILES = 12
@@ -37,10 +37,11 @@ const DENIED = [
 ]
 
 export function validateWritePath(raw: unknown): string {
-  const p = String(raw ?? '').trim().replace(/^\.\//, '').replace(/^\/+/, '')
-  if (!p) throw new Error('An empty path is not writable')
-  if (p.includes('..')) throw new Error('Path traversal is not allowed')
-  if (p.includes('\0') || p.length > 300) throw new Error('Invalid path')
+  // Validate the path as given and refuse anything ambiguous. This function deliberately no longer
+  // trims or strips prefixes: a silent rewrite here would authorize one string and send another.
+  const check = checkPath(raw)
+  if (!check.ok) throw new Error(`Refusing to write ${String(raw ?? '')}: ${check.reason}`)
+  const p = check.path
   if (DENIED.some((re) => re.test(p))) throw new Error(`Refusing to write ${p}: credentials and internals are off limits`)
   if (!ALLOWED_PREFIXES.some((pre) => p.startsWith(pre))) {
     throw new Error(`Refusing to write ${p}: only ${ALLOWED_PREFIXES.join(', ')} are writable`)
@@ -169,7 +170,11 @@ export async function runRepoWrite(args: Record<string, any>, override: Cfg = {}
       body: JSON.stringify({ ref: `refs/heads/${branch}`, sha }),
     })
     for (const f of files) {
-      await gh(`/repos/${repo}/contents/${encodeURI(f.path)}`, {
+      // Encode one segment at a time. validateWritePath has already refused dot segments, query and
+      // fragment delimiters, encoded bytes and repeated slashes, so the path GitHub resolves is the
+      // exact path that was authorized: no URL normalization can move the write to another file.
+      const contentsPath = f.path.split('/').map(encodeURIComponent).join('/')
+      await gh(`/repos/${repo}/contents/${contentsPath}`, {
         method: 'PUT',
         token,
         body: JSON.stringify({

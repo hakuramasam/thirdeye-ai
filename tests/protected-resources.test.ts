@@ -1,27 +1,31 @@
 /**
  * Protected-resource policy regressions (Phase B, B3).
  *
- * Two defects are pinned here.
+ * Three defects are pinned here.
  *
  * 1. The original writer held one hand-kept money-path list, so everything else sensitive was
  *    agent-writable as long as it sat under an allowed prefix: src/routes/credits.ts, src/lib/env.ts,
  *    src/lib/session.ts, src/routes/auth.ts, .github/workflows/** and team/policies/**.
  * 2. The first version of this policy left src/agents/** ordinary, which made the guard
- *    self-defeating. repo-write.ts is the enforcement point, so an agent permitted to edit it could
- *    delete the check and then write anything. The control-plane class and the self-modification
- *    cases below exist for that reason.
+ *    self-defeating: repo-write.ts is the enforcement point, so an agent permitted to edit it could
+ *    delete the check and then write anything.
+ * 3. The second version rewrote paths before authorizing them. `src/./routes/credits.ts` normalized
+ *    to `src//routes/credits.ts`, classified as ordinary, and then GitHub's URL parsing resolved the
+ *    dot segment back to the protected `src/routes/credits.ts`. The string authorized was not the
+ *    string delivered.
  *
- * Every disguise case is a one-character or one-escape variant of a path that must be refused,
- * because a path check that only reads the raw string is a path check that can be spelled around.
+ * The invariant the canonical-path tests protect: what is authorized is byte-identical to what is
+ * sent. Anything ambiguous is refused instead of repaired.
  */
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-const { authorizeWrite, classifyResource, normalizePath, pathRejection, RESOURCE_CLASSES } = await import(
+const { authorizeWrite, classifyResource, checkPath, normalizePath, pathRejection, RESOURCE_CLASSES } = await import(
   '../src/lib/protectedResources.js'
 )
 
 const agent = { type: 'agent' as const }
+const operator = { type: 'operator' as const }
 
 /** Every enforcement or execution boundary named in the B3 correction. */
 const CONTROL_PLANE_FILES = [
@@ -46,6 +50,39 @@ const CONTROL_PLANE_FILES = [
   'src/index.ts',
   'src/inngest/functions.ts',
 ]
+
+/** The protected sample set used for the actor matrix. */
+const PROTECTED_SAMPLES = [
+  '.env',
+  'src/db/schema.sql',
+  'src/routes/credits.ts',
+  'src/routes/redeem.ts',
+  'src/lib/env.ts',
+  'team/policies/authority.md',
+  '.github/workflows/ci.yml',
+  'vercel.json',
+  'contracts/Thirdeye.sol',
+  ...CONTROL_PLANE_FILES,
+]
+
+/**
+ * Resolve a path the way the GitHub contents URL now receives it: one segment at a time, so nothing
+ * in a segment can be read as a URL delimiter or a dot segment.
+ */
+function urlResolvedPath(p: string): string {
+  const encoded = p.split('/').map(encodeURIComponent).join('/')
+  const url = new URL('https://api.github.com/repos/o/r/contents/' + encoded)
+  return decodeURIComponent(url.pathname.replace('/repos/o/r/contents/', ''))
+}
+
+/**
+ * Resolve a path the way the previous code sent it: the whole path through encodeURI. This is the
+ * divergence the fix exists for, and it is asserted so the reason for the refusal stays visible.
+ */
+function legacyResolvedPath(p: string): string {
+  const url = new URL('https://api.github.com/repos/o/r/contents/' + encodeURI(p))
+  return decodeURIComponent(url.pathname.replace('/repos/o/r/contents/', ''))
+}
 
 describe('control plane', () => {
   it('refuses every enforcement and execution file to an agent', () => {
@@ -102,15 +139,42 @@ describe('control plane', () => {
   })
 })
 
+describe('payments classification', () => {
+  it('classifies the redeem and settlement routes as payments, not the control-plane catch-all', () => {
+    for (const p of ['src/routes/redeem.ts', 'src/routes/credits.ts', 'src/routes/profit.ts', 'src/routes/admin.ts']) {
+      const d = authorizeWrite(p, agent)
+      assert.equal(d.resourceId, 'payments', `${p} must carry the payments boundary`)
+      assert.equal(d.requires, 'owner')
+      assert.equal(d.allowed, false)
+    }
+  })
+
+  it('keeps the payments class ahead of the control-plane matcher in the policy order', () => {
+    const ids = RESOURCE_CLASSES.map((c) => c.id)
+    assert.ok(ids.indexOf('payments') < ids.lastIndexOf('control-plane'), 'payments must precede the catch-all')
+  })
+})
+
+describe('operator actor', () => {
+  it('is refused for every protected class exactly as an agent is', () => {
+    for (const p of PROTECTED_SAMPLES) {
+      const d = authorizeWrite(p, operator)
+      assert.equal(d.allowed, false, `${p} must not be operator-writable`)
+      assert.ok(d.resourceId, `${p} must classify`)
+      assert.match(String(d.reason), /owner/)
+    }
+  })
+
+  it('stays allowed only on ordinary application paths', () => {
+    for (const p of ['web/src/a.tsx', 'docs/a.md', 'tests/x.test.ts']) {
+      assert.equal(authorizeWrite(p, operator).allowed, true, `${p} stays writable`)
+    }
+  })
+})
+
 describe('ordinary application paths', () => {
   it('stay writable, so the guard does not stop all work', () => {
-    for (const p of [
-      'web/src/pages1.tsx',
-      'tests/x.test.ts',
-      'docs/a.md',
-      'src/lib/format.ts',
-      'web/src/components/Hero.tsx',
-    ]) {
+    for (const p of ['web/src/pages1.tsx', 'tests/x.test.ts', 'docs/a.md', 'src/lib/format.ts', 'web/src/components/Hero.tsx']) {
       const d = authorizeWrite(p, agent)
       assert.equal(d.allowed, true, `${p} must stay writable`)
       assert.equal(d.resourceId, null)
@@ -134,61 +198,121 @@ describe('ordinary application paths', () => {
   })
 })
 
-describe('path disguises', () => {
-  it('collapses traversal, including into the control plane', () => {
+describe('path canonicalization', () => {
+  it('refuses internal dot segments instead of resolving them', () => {
+    // The reported bypass: authorized as ordinary, resolved by URL parsing to the protected file.
+    for (const p of [
+      'src/./routes/credits.ts',
+      'src/./agents/repo-write.ts',
+      'src/routes/./credits.ts',
+      'src/agents/./audit-log.ts',
+    ]) {
+      const d = authorizeWrite(p, agent)
+      assert.equal(d.allowed, false, `${p} must be refused`)
+      assert.match(String(d.reason), /dot segment/)
+      // Proof the refusal is necessary: sent the old way, the URL resolves to a different file.
+      assert.notEqual(legacyResolvedPath(p), p, `${p} resolves elsewhere under URL parsing`)
+    }
+  })
+
+  it('refuses parent traversal anywhere in the path', () => {
     for (const p of [
       'src/agents/../../src/payments/swap.ts',
       'src/agents/../payments/swap.ts',
-      'src/lib/../agents/repo-write.ts',
       'src/routes/../agents/audit-log.ts',
-      './src/../src/agents/runner.ts',
+      '../etc/passwd',
     ]) {
+      const d = authorizeWrite(p, agent)
+      assert.equal(d.allowed, false, `${p} must be refused`)
+      assert.match(String(d.reason), /traversal/)
+    }
+  })
+
+  it('refuses query and fragment delimiters that URL parsing would silently drop', () => {
+    for (const p of ['src/routes/credits.ts?ref=main', 'src/routes/credits.ts#frag', 'web/src/a.tsx?x=1']) {
+      const d = authorizeWrite(p, agent)
+      assert.equal(d.allowed, false, `${p} must be refused`)
+      assert.match(String(d.reason), /query or fragment/)
+      assert.notEqual(legacyResolvedPath(p), p, `${p} would be truncated by URL parsing`)
+    }
+  })
+
+  it('refuses repeated, trailing and leading slashes rather than collapsing them', () => {
+    for (const p of ['src//routes/credits.ts', 'src/agents//repo-write.ts', 'src/agents/x.ts/', '/src/agents/x.ts']) {
       const d = authorizeWrite(p, agent)
       assert.equal(d.allowed, false, `${p} must be refused`)
     }
   })
 
-  it('refuses single, double and malformed percent encoding instead of decoding twice', () => {
-    assert.equal(authorizeWrite('..%2fsrc%2fagents%2frepo-write.ts', agent).allowed, false)
-    assert.equal(authorizeWrite('%252e%252e%252fsrc%252fagents%252frunner.ts', agent).allowed, false)
-    assert.equal(pathRejection('%252e%252e%252f'), 'Double-encoded paths are ambiguous')
+  it('refuses encoding in every form: malformed, double and single', () => {
     assert.equal(pathRejection('src/payments/x%2.ts'), 'A malformed percent escape is ambiguous')
-    assert.equal(pathRejection('src/payments/100%.ts'), 'A malformed percent escape is ambiguous')
     assert.equal(pathRejection('%zzsrc/agents/runner.ts'), 'A malformed percent escape is ambiguous')
+    assert.equal(pathRejection('%252e%252e%252fsrc%252fagents%252frunner.ts'), 'Double-encoded paths are ambiguous')
+    assert.equal(pathRejection('src%2fagents%2frepo-write.ts'), 'Percent-encoded paths are ambiguous')
+    assert.equal(pathRejection('..%2fsrc%2fagents%2frepo-write.ts'), 'Percent-encoded paths are ambiguous')
   })
 
-  it('refuses control characters rather than stripping them into a different path', () => {
-    assert.equal(pathRejection('src/agents/run\u0000ner.ts'), 'A path may not contain control characters')
-    assert.equal(authorizeWrite('src/agents/run\u0007ner.ts', agent).allowed, false)
-    assert.equal(authorizeWrite('src/agents/run\u0000ner.ts', agent).allowed, false)
-  })
-
-  it('does not let case change the class', () => {
-    for (const p of ['SRC/Agents/REPO-WRITE.ts', 'Src/Routes/Agents.ts', 'SRC/PAYMENTS/swap.ts', '.ENV']) {
-      assert.equal(authorizeWrite(p, agent).allowed, false, `${p} must be refused`)
-    }
-  })
-
-  it('normalizes separators, duplicate slashes, dot prefixes and padding', () => {
+  it('refuses separators, invisible characters and control characters that disguise the target', () => {
     for (const p of [
       '.\\src\\agents\\repo-write.ts',
-      'src//agents///runner.ts',
-      '  ./src/agents/cron.ts  ',
       'src\\agents\\audit-log.ts',
-      'src/\u2215agents\u2215pipeline.ts',
+      'src\u2215agents\u2215pipeline.ts',
+      'src/agents/repo\u200b-write.ts',
+      'src/agents/run\u0000ner.ts',
+      '  src/agents/cron.ts',
+      'src/agents/cron.ts ',
     ]) {
-      const d = authorizeWrite(p, agent)
-      assert.equal(d.allowed, false, `${p} must be refused`)
-      assert.equal(d.resourceId, 'control-plane', `${p} must classify as control-plane`)
+      assert.equal(authorizeWrite(p, agent).allowed, false, `${JSON.stringify(p)} must be refused`)
     }
   })
 
-  it('refuses absolute, empty and over-long paths instead of guessing', () => {
-    assert.equal(authorizeWrite('', agent).allowed, false)
-    assert.equal(authorizeWrite('./', agent).allowed, false)
+  it('refuses absolute paths, drive letters, empty and over-long paths', () => {
     assert.equal(pathRejection('/src/agents/runner.ts'), 'Absolute paths are not writable')
-    assert.equal(pathRejection('C:\\src\\agents\\runner.ts'), 'Absolute paths are not writable')
+    assert.equal(pathRejection('C:/src/agents/runner.ts'), 'Absolute paths are not writable')
+    assert.equal(pathRejection(''), 'An empty path is not writable')
+    assert.equal(pathRejection('./'), 'An empty path is not writable')
     assert.equal(authorizeWrite('src/' + 'a/'.repeat(200) + 'x.ts', agent).allowed, false)
+  })
+
+  it('accepts a single leading ./ and returns the stripped path as the one to send', () => {
+    assert.deepEqual(checkPath('./web/src/a.tsx'), { ok: true, path: 'web/src/a.tsx' })
+    const d = authorizeWrite('./web/src/a.tsx', agent)
+    assert.equal(d.allowed, true)
+    assert.equal(d.normalized, 'web/src/a.tsx')
+    assert.equal(authorizeWrite('./src/routes/public.ts', agent).allowed, true)
+    assert.equal(authorizeWrite('./src/routes/credits.ts', agent).allowed, false)
+  })
+
+  it('never reports a path it did not validate: normalizePath returns empty instead of rewriting', () => {
+    assert.equal(normalizePath('src/./routes/credits.ts'), '')
+    assert.equal(normalizePath('src//routes/credits.ts'), '')
+    assert.equal(normalizePath('web/src/a.tsx'), 'web/src/a.tsx')
+  })
+
+  it('proves no protected destination is reachable through URL normalization', () => {
+    const attempts = [
+      'src/./routes/credits.ts',
+      'src/./agents/repo-write.ts',
+      'src/routes/./agents.ts',
+      'src/routes/credits.ts?x=1',
+      'src/routes/credits.ts#x',
+      'src//routes/credits.ts',
+      'src/agents/../routes/credits.ts',
+      'src%2froutes%2fcredits.ts',
+      '.hidden/../src/routes/credits.ts',
+    ]
+    for (const p of attempts) {
+      const d = authorizeWrite(p, agent)
+      // Either the policy refuses it, or the string it authorizes resolves to itself. Both are safe;
+      // an authorization whose URL target differs from the authorized path is the bug, and it cannot
+      // occur here.
+      if (d.allowed) assert.equal(urlResolvedPath(d.normalized), d.normalized, `${p} authorized a path that moves`)
+      else assert.equal(d.allowed, false)
+    }
+    // And every ordinary path that is allowed round-trips through URL parsing unchanged.
+    for (const p of ['web/src/a.tsx', 'docs/a.md', 'src/lib/format.ts', 'src/routes/public.ts']) {
+      assert.equal(urlResolvedPath(p), p, `${p} must round-trip`)
+    }
   })
 })
 
@@ -209,13 +333,23 @@ describe('batch writes', () => {
     files.push({ path: 'src/agents/runner.ts', content: 'export const x = 1' })
     assert.throws(() => validateWriteBatch(files as any), /control-plane|owner/)
   })
+
+  it('refuses a batch whose member is a dot-segment disguise of a protected file', async () => {
+    const { validateWriteBatch } = await import('../src/agents/repo-write.js')
+    const files = [
+      { path: 'docs/page.md', content: '# page' },
+      { path: 'src/./routes/credits.ts', content: 'export const y = 2' },
+    ]
+    assert.throws(() => validateWriteBatch(files as any), /dot segment/)
+  })
 })
 
 describe('classification stability', () => {
-  it('classifies on the normalized form', () => {
-    assert.equal(normalizePath('./src//agents/x.ts'), 'src/agents/x.ts')
+  it('classifies on the validated path', () => {
+    assert.deepEqual(checkPath('src/agents/x.ts'), { ok: true, path: 'src/agents/x.ts' })
     assert.equal(classifyResource('src/agents/x.ts')?.resourceId, 'control-plane')
     assert.equal(classifyResource('src/lib/format.ts'), null)
     assert.equal(classifyResource('src/routes/public.ts'), null)
+    assert.equal(classifyResource('src/./routes/credits.ts'), null, 'an invalid path is not classified at all')
   })
 })
