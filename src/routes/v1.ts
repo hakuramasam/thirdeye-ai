@@ -15,10 +15,18 @@ import { recordUsage } from '../lib/usage.js'
 import { createStreamAccountant } from '../lib/streamAccounting.js'
 import { normalizeUsage } from '../lib/tokenUsage.js'
 import { computeCostMicrosDetailed } from '../lib/pricing.js'
+import type { ModelRow } from '../lib/pricing.js'
+import { cheapestAvailable, isAutoAlias, modelAvailability } from '../lib/availability.js'
 
 /** Bumped when catalogue prices change, so historical rows stay explainable. */
 const RATE_CARD_VERSION = process.env.RATE_CARD_VERSION || 'catalog-2026-11'
-import { getModelRow, resolveProvider, UpstreamError } from '../providers/index.js'
+import {
+  getModelRow,
+  listEnabledModels,
+  resolveAutoModel,
+  resolveProvider,
+  UpstreamError,
+} from '../providers/index.js'
 
 export function registerV1Routes(app: Hono<AppEnv>): void {
   // CORS middleware for /api/v1/*
@@ -34,17 +42,55 @@ export function registerV1Routes(app: Hono<AppEnv>): void {
   // GET /api/v1/models
   app.get('/api/v1/models', apiKeyAuth(), async (c) => {
     const res = await query('SELECT * FROM models_catalog WHERE enabled = true')
-    const data = res.rows.map((row: any) => ({
-      id: row.model,
-      object: 'model',
-      created: 1700000000,
-      owned_by: 'thirdeye-ai',
-      owned_by_upstream: row.provider,
-      pricing: {
-        prompt: (Number(row.price_in_1m_usd_micros) / 1e6).toString(),
-        completion: (Number(row.price_out_1m_usd_micros) / 1e6).toString(),
-      },
-    }))
+    const rows = (res.rows ?? []) as ModelRow[]
+
+    // `available` is the flag that was missing. The catalogue used to list every priced model
+    // identically, so a caller could not tell a model we serve on platform credit from one that
+    // needs its own provider key, and the refusal it eventually received read like a demand for
+    // a key. Availability comes from the same key lookup the resolver uses.
+    const data: any[] = rows.map((row: any) => {
+      const availability = modelAvailability(row, env.providerKeys)
+      return {
+        id: row.model,
+        object: 'model',
+        created: 1700000000,
+        owned_by: 'thirdeye-ai',
+        owned_by_upstream: row.provider,
+        pricing: {
+          prompt: (Number(row.price_in_1m_usd_micros) / 1e6).toString(),
+          completion: (Number(row.price_out_1m_usd_micros) / 1e6).toString(),
+        },
+        available: availability.available,
+        byok_supported: availability.byok_supported,
+        provider_key_var: `PROV_${availability.provider.toUpperCase()}_API_KEY`,
+        ...(availability.unavailable_reason
+          ? { unavailable_reason: availability.unavailable_reason }
+          : {}),
+      }
+    })
+
+    // `auto` is listed so a client that picks from this list never has to read our catalogue:
+    // it resolves to the cheapest model servable at the moment of the call. Its quoted price is
+    // the price of the model it currently resolves to, so the figure is not a fiction.
+    const autoRow = cheapestAvailable(rows, env.providerKeys)
+    if (autoRow) {
+      data.unshift({
+        id: 'auto',
+        object: 'model',
+        created: 1700000000,
+        owned_by: 'thirdeye-ai',
+        owned_by_upstream: 'auto',
+        pricing: {
+          prompt: (Number(autoRow.price_in_1m_usd_micros) / 1e6).toString(),
+          completion: (Number(autoRow.price_out_1m_usd_micros) / 1e6).toString(),
+        },
+        available: true,
+        byok_supported: false,
+        resolves_to: autoRow.model,
+        description: 'Cheapest model servable on platform credit right now.',
+      })
+    }
+
     return c.json({ object: 'list', data })
   })
 
@@ -72,14 +118,41 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
     )
   }
 
-  // 1. Validate model
-  const modelRow = await getModelRow(requestedModel)
+  // 1. Validate model. `auto` is resolved here, before the check, so downstream it is an
+  // ordinary catalogue row: same pricing, same headers, same usage row. It resolves only to a
+  // model the platform can actually serve, so it can never turn into a 402 further down.
+  let resolved: ModelRow | null
+  if (isAutoAlias(requestedModel)) {
+    resolved = await resolveAutoModel()
+    if (!resolved) {
+      return c.json(
+        {
+          error: {
+            message:
+              'No model is currently servable on platform credit. Add your own provider key (BYOK) and call a model id from GET /api/v1/models, or retry later.',
+            type: 'unavailable',
+            code: 'no_model_available',
+            hint: 'byok_required',
+          },
+        },
+        503
+      )
+    }
+  } else {
+    resolved = await getModelRow(requestedModel)
+  }
+  const modelRow = resolved
   if (!modelRow || !modelRow.enabled) {
     return c.json(
       { error: { message: `Model '${requestedModel}' not found or disabled.`, type: 'not_found', code: 404 } },
       404
     )
   }
+
+  // The ledger and the price are the resolved model's; the echo header keeps what the caller
+  // asked for, so `auto` and a branded alias both stay traceable to the request that caused them.
+  const billableModel = modelRow.model
+  if (billableModel !== requestedModel) c.header('X-Thirdeye-Model-Resolved', billableModel)
 
   const apiKey = c.get('apiKey')!
   const user = c.get('user')!
@@ -110,7 +183,7 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
     await recordUsage({
       user_id: user.id,
       api_key_id: apiKey.id,
-      model: requestedModel,
+      model: billableModel,
       provider: modelRow.provider,
       byok: false,
       prompt_tokens: estTokens,
@@ -199,7 +272,7 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
         wallet: user.wallet,
         apiKey,
         modelRow,
-        requestedModel,
+        requestedModel: billableModel,
         provider: modelRow.provider,
         byok: providerCall.byok,
         marginPct: env.platformMarginPct,
@@ -239,7 +312,7 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
       await recordUsage({
         user_id: user.id,
         api_key_id: apiKey.id,
-        model: requestedModel,
+        model: billableModel,
         provider: modelRow.provider,
         byok: providerCall.byok,
         prompt_tokens: estTokens,
@@ -284,7 +357,7 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
       await recordUsage({
         user_id: user.id,
         api_key_id: apiKey.id,
-        model: requestedModel,
+        model: billableModel,
         provider: modelRow.provider,
         byok: providerCall.byok,
         prompt_tokens: pt,
@@ -312,7 +385,7 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
         id: chatId,
         object: 'chat.completion',
         created,
-        model: requestedModel,
+        model: billableModel,
         choices: [
           {
             index: 0,
@@ -345,7 +418,7 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
       await recordUsage({
         user_id: user.id,
         api_key_id: apiKey.id,
-        model: requestedModel,
+        model: billableModel,
         provider: modelRow.provider,
         byok: providerCall.byok,
         prompt_tokens: estTokens,
