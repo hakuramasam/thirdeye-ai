@@ -1,5 +1,5 @@
 import { newId } from '../lib/env.js'
-import { UpstreamError } from './index.js'
+import { UpstreamError, mapTimeoutError, requestSignal } from './index.js'
 
 export function convertOpenAIToAnthropicParams(params: Record<string, any>): Record<string, any> {
   const systemMsgs: string[] = []
@@ -95,9 +95,12 @@ export function convertOpenAIToAnthropicParams(params: Record<string, any>): Rec
 export async function callAnthropicChat({
   apiKey,
   params,
+  timeoutMs,
 }: {
   apiKey: string
   params: Record<string, any>
+  /** Abort after this long, the same budget an OpenAI-compatible call gets. */
+  timeoutMs?: number
 }): Promise<{
   content: string
   prompt_tokens: number
@@ -106,23 +109,43 @@ export async function callAnthropicChat({
   raw?: any
 }> {
   const payload = convertOpenAIToAnthropicParams(params)
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  })
+  // One timer per request: computing this twice discarded the first AbortSignal.
+  const signal = requestSignal(timeoutMs)
+  let res: Response
+  try {
+    res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      ...(signal ? { signal } : {}),
+    })
+  } catch (e: any) {
+    mapTimeoutError(e, timeoutMs)
+  }
 
   if (!res.ok) {
-    const errBody = await res.json().catch(() => null)
+    // A refusal body is not a verdict, but an abort while reading it is our own deadline and must
+    // not be swallowed as "no reason given": the caller has to see why nothing came back.
+    let errBody: any = null
+    try {
+      errBody = await res.json()
+    } catch (e: any) {
+      if (e?.name === 'TimeoutError' || e?.name === 'AbortError') mapTimeoutError(e, timeoutMs)
+    }
     const msg = errBody?.error?.message || `Anthropic upstream error: ${res.statusText || res.status}`
     throw new UpstreamError(msg, res.status, errBody || { error: { message: msg, type: 'upstream', code: res.status } })
   }
 
-  const data: any = await res.json()
+  let data: any
+  try {
+    data = await res.json()
+  } catch (e: any) {
+    mapTimeoutError(e, timeoutMs)
+  }
   let contentText = ''
   let toolCalls: any[] | undefined
 

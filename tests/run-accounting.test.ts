@@ -92,6 +92,61 @@ describe('run accounting survives a crash', () => {
     )
   })
 
+  it('records what a rate-limited run already spent, and names the meter', async () => {
+    const agent = (await one(
+      `INSERT INTO agents (id, user_id, name, system_prompt, model, can_delegate, repo_access,
+                           budget_usd_micros, max_steps, credit_usd_micros)
+       VALUES ($1, $2, 'THROTTLED', 'work', $3, false, 'none', 100000, 4, 1000) RETURNING *`,
+      [`tdt_rl_${randomUUID().slice(0, 6)}`, user.id, PRICED_MODEL]
+    )) as AgentRow
+
+    const res = await runAgent(agent, 'do some work', user, {
+      // One paid step, then the provider's meter refuses the next one. Two independent facts have
+      // to survive together: which step was billed (the progress counters) and why the run stopped
+      // (the meter, not a crash). They are written by the same crash path, so this is the case
+      // where the two fixes can silently undo each other.
+      llm: scriptedLlm([
+        { tool_calls: [toolCall('repo_read', { op: 'list', path: '' })] },
+        {
+          throws:
+            'Rate limit reached for model `openai/gpt-oss-120b` in organization `org_x` on tokens per minute (TPM). Please try again in 12.5s.',
+        },
+      ]),
+      retryWaitMs: 1_000,
+    })
+
+    assert.equal(res.status, 'error')
+    assert.equal(res.rateLimited, true, 'the meter is named, not reported as a crash')
+    assert.match(String(res.error), /^rate_limited:/)
+    assert.equal(res.tool_calls, 1, 'the tool call happened before the refusal')
+    assert.ok(res.spend_usd_micros > 0, 'the paid step must still be counted')
+
+    const row: any = await one(
+      `SELECT status, error, tool_calls, spend_usd_micros FROM agent_runs WHERE id = $1`,
+      [res.runId]
+    )
+    assert.match(row.error, /^rate_limited:/)
+    assert.equal(Number(row.tool_calls), 1, 'the row carries the tool count, not zero')
+    assert.equal(Number(row.spend_usd_micros), res.spend_usd_micros, 'the row carries the spend')
+
+    const pot: any = await one(`SELECT credit_usd_micros FROM agents WHERE id = $1`, [agent.id])
+    assert.equal(
+      1000 - Number(pot.credit_usd_micros),
+      Number(row.spend_usd_micros),
+      'the pot moved by exactly the spend the run recorded'
+    )
+
+    // The audit trail has to agree with the row, including the counters.
+    const event: any = await one(
+      `SELECT error_code, metadata FROM agent_audit_events
+        WHERE run_id = $1 AND event_type = 'run.failed'`,
+      [res.runId]
+    )
+    assert.equal(event.error_code, 'rate_limited', 'the trail names the meter too')
+    assert.equal(Number(event.metadata.spend_usd_micros), Number(row.spend_usd_micros), 'and the same spend')
+    assert.equal(Number(event.metadata.tool_calls), 1)
+  })
+
   it('stores a successful delegation as a call that worked, not as a refusal', async () => {
     const parent = (await one(
       `INSERT INTO agents (id, user_id, name, system_prompt, model, can_delegate, repo_access,
