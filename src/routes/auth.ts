@@ -77,8 +77,13 @@ export function clientBucket(kind: 'nonce' | 'verify' | 'feedback' | 'agent_regi
 }
 
 /** Best-effort sweep so issued-but-unused nonces cannot accumulate forever. */
+/** Diagnostics older than this are deleted: the table answers "what happened lately", it is not an archive. */
+export const SIGNIN_LOG_RETENTION_DAYS = 30
+
 export async function pruneExpiredNonces(): Promise<void> {
   await query(`DELETE FROM auth_nonces WHERE created_at < now() - ($1 || ' minutes')::interval`, [String(NONCE_TTL_MINUTES)])
+  // Same sweep keeps auth_signin_log bounded, so it cannot grow forever on a public endpoint.
+  await query(`DELETE FROM auth_signin_log WHERE created_at < now() - ($1 || ' days')::interval`, [String(SIGNIN_LOG_RETENTION_DAYS)])
 }
 
 /** Every hostname this request could legitimately be for, client-facing first. */
@@ -229,6 +234,28 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
       }
     }
 
+    // Signature verification, deliberately BEFORE the domain decision and before any diagnostic
+    // row is written. The endpoint is public, so a write that precedes proof of a signature would
+    // let anyone holding a fresh nonce fill an indexed table with rows of their choosing.
+    const address = siweMsg.address as `0x${string}`
+    const sig = signature as `0x${string}`
+    let isValid = false
+    try {
+      isValid = await verifyMessage({ address, message, signature: sig })
+    } catch (e: any) {
+      isValid = false
+    }
+    // A wallet that re-serialised the message before signing (newline normalisation is the common
+    // one) produces a signature over the normalised text. Check it too, but only over text derived
+    // from the same message by our own normaliser, so nothing else can be substituted.
+    if (!isValid && normalized !== message) {
+      try {
+        isValid = await verifyMessage({ address, message: normalized, signature: sig })
+      } catch (e: any) {
+        isValid = false
+      }
+    }
+
     // Domain mismatch check (rejecting, not merely logging). Every hostname this request may
     // legitimately be for is allowed, headers first, plus anything the operator pinned in
     // SIWE_ALLOWED_DOMAINS, so a proxy browser or a custom domain cannot fail us on our own site.
@@ -244,13 +271,17 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
     })
     if (!decision.ok) {
       console.warn(`[auth] SIWE rejected: ${decision.reason}; domain="${siweMsg.domain ?? ''}", host="${hosts.join(',')}"`)
-      await recordSignInDiagnostic({
-        outcome: 'rejected',
-        reason: decision.reason ?? 'rejected',
-        messageDomain: siweMsg.domain ?? extractSiweDomain(normalized),
-        requestHost: hosts[0] ?? null,
-        lenient,
-      })
+      // Recorded only now that the signature is proven: the row says a real signer was refused,
+      // which is the case worth knowing about. An unsigned attempt is logged to the console above.
+      if (isValid) {
+        await recordSignInDiagnostic({
+          outcome: 'rejected',
+          reason: decision.reason ?? 'rejected',
+          messageDomain: siweMsg.domain ?? extractSiweDomain(normalized),
+          requestHost: hosts[0] ?? null,
+          lenient,
+        })
+      }
       return c.json(
         {
           error: {
@@ -263,7 +294,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
         401
       )
     }
-    if (lenient) {
+    if (lenient && isValid) {
       // Accepted on the tolerant path: worth a durable row, because it means a wallet or a browser
       // altered our own message and the next user may hit the same thing.
       await recordSignInDiagnostic({
@@ -273,26 +304,6 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
         requestHost: hosts[0] ?? null,
         lenient,
       })
-    }
-
-    // Signature verification using viem
-    let isValid = false
-    const address = siweMsg.address as `0x${string}`
-    const sig = signature as `0x${string}`
-    try {
-      isValid = await verifyMessage({ address, message, signature: sig })
-    } catch (e: any) {
-      isValid = false
-    }
-    // A wallet that re-serialised the message before signing (newline normalisation is the common
-    // one) produces a signature over the normalised text. Check it too, but only over text derived
-    // from the same message by our own normaliser, so nothing else can be substituted.
-    if (!isValid && normalized !== message) {
-      try {
-        isValid = await verifyMessage({ address, message: normalized, signature: sig })
-      } catch (e: any) {
-        isValid = false
-      }
     }
 
     if (!isValid) {

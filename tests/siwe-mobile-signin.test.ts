@@ -16,7 +16,7 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 
 const { migrate, query } = await import('../src/db/index.js')
 const { env } = await import('../src/lib/env.js')
-const { registerAuthRoutes } = await import('../src/routes/auth.js')
+const { registerAuthRoutes, SIGNIN_LOG_RETENTION_DAYS, pruneExpiredNonces } = await import('../src/routes/auth.js')
 import type { AppEnv } from '../src/lib/types.js'
 const { normalizeSiweText, extractSiweDomain, normalizeHost, allowedSiweHosts, decideSiwe } = await import(
   '../src/lib/security.js'
@@ -208,4 +208,29 @@ test('the diagnostic table carries no nonce, address or signature', async () => 
 
 test('the deployment really is in production mode, so these tests prove the production rule', () => {
   assert.equal(env.nodeEnv, 'production')
+})
+
+test('an unsigned attempt for a foreign domain writes no row, however often it is repeated', async () => {
+  const app = makeApp()
+  const before = await query('SELECT count(*)::int AS n FROM auth_signin_log')
+  const countOf = (r: any) => Number((r.rows ?? r)[0].n)
+  const other = privateKeyToAccount(generatePrivateKey())
+  for (const ip of ['203.0.113.21', '203.0.113.22']) {
+    const { nonce } = await issueNonce(app, ip)
+    // Signed by a key that is not the address in the message: the refusal is real, the signature is not.
+    const message = buildSiwe({ nonce, domain: 'evil.example' })
+    const signature = await other.signMessage({ message })
+    const r = await verify(app, ip, message, signature)
+    assert.equal(r.status, 401)
+  }
+  const after = await query('SELECT count(*)::int AS n FROM auth_signin_log')
+  assert.equal(countOf(after), countOf(before), 'no row may be written without a proven signature')
+})
+
+test('the diagnostic table is bounded by retention instead of growing forever', async () => {
+  assert.ok(SIGNIN_LOG_RETENTION_DAYS > 0 && SIGNIN_LOG_RETENTION_DAYS <= 90)
+  await query("INSERT INTO auth_signin_log (outcome, reason, created_at) VALUES ('rejected', 'old', now() - interval '400 days')")
+  await pruneExpiredNonces()
+  const rows = await query("SELECT count(*)::int AS n FROM auth_signin_log WHERE reason = 'old'")
+  assert.equal(Number((rows.rows ?? rows)[0].n), 0, 'a row past retention should be swept with the nonce prune')
 })
