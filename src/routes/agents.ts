@@ -7,6 +7,7 @@ import type { SessionApp } from '../lib/session.js'
 import { requireUser } from '../lib/session.js'
 import { parseCron, isCronDue } from '../agents/cron.js'
 import { runAgent, type AgentRow } from '../agents/runner.js'
+import { getPipeline, pipelineIds } from '../agents/pipeline.js'
 import { acquireScheduleLock, finishScheduleLock, cronSlotKey } from '../agents/schedule-lock.js'
 
 type McpServerIn = { name?: string; url?: string; headers?: Record<string, string> }
@@ -315,7 +316,13 @@ export function registerCronRoute(app: SessionApp): void {
         }
       }
 
-      const r = await runAgent(row as AgentRow, input.slice(0, 4000), user, lock ? { runId: lock.runId } : {})
+      // An ops job may name the pipeline it follows. Only a declared pipeline id is accepted, so a typo
+      // or a hostile value cannot switch enforcement off by being unrecognised: it is refused instead.
+      const pipelineId = body?.pipeline_id ? String(body.pipeline_id).toLowerCase() : null
+      if (pipelineId && !getPipeline(pipelineId)) {
+        return c.json({ error: { message: `Unknown pipeline_id "${pipelineId.slice(0, 40)}". Declared: ${pipelineIds().join(', ')}`, type: 'invalid_request' } }, 400)
+      }
+      const r = await runAgent(row as AgentRow, input.slice(0, 4000), user, { ...(lock ? { runId: lock.runId } : {}), ...(pipelineId ? { pipelineId } : {}) })
       if (lock) await finishScheduleLock(lock.id, lock.runId, r.status === 'success' ? 'COMPLETED' : 'FAILED')
       return c.json({ triggered: [opsRun], results: [{ agent_id: opsRun, ...r }] })
     }

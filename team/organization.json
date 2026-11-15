@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "updated": "2026-11-15",
+  "summary": "The operating chart for the Thirdeye AI development team: one orchestrator, specialist units, and five enforcement services that are code rather than agent judgement. Every unit has one mandate, named deliverables and a next owner, so work moves along a chain instead of several agents attempting the same task in parallel.",
+  "orchestrator": "tdt_hermes",
+  "units": [
+    {
+      "id": "tdt_hermes",
+      "name": "HERMES - Chief Orchestrator",
+      "reports_to": null,
+      "mandate": "Task intake, planning, assignment, coordination and final acceptance.",
+      "must_deliver": [
+        "a plan that names the owning unit for each stage before any unit is dispatched",
+        "an acceptance decision that cites the evidence it accepted, not the report it received",
+        "an escalation to the owner whenever a stage needs money, merge, deploy, deletion or a public claim"
+      ],
+      "owns_paths": [
+        "src/agents/pipeline.ts",
+        "team/pipelines"
+      ],
+      "handoff_to": [
+        "tdt_product",
+        "tdt_architect"
+      ],
+      "dispatches": true
+    },
+    {
+      "id": "tdt_product",
+      "name": "Product & Research",
+      "reports_to": "tdt_hermes",
+      "mandate": "Requirements, scope, priorities and acceptance criteria.",
+      "must_deliver": [
+        "acceptance criteria written as observations a tester can check",
+        "an explicit out-of-scope line so the build cannot grow silently",
+        "a priority call when two requests compete for the same budget"
+      ],
+      "owns_paths": [
+        "team/pipelines"
+      ],
+      "handoff_to": [
+        "tdt_architect"
+      ]
+    },
+    {
+      "id": "tdt_architect",
+      "name": "System Architect",
+      "reports_to": "tdt_hermes",
+      "mandate": "Architecture, APIs, dependencies and integration decisions.",
+      "must_deliver": [
+        "the component and data-model decision, with the failure modes it accepts",
+        "the API surface another unit can build against without asking again",
+        "a recorded decision, not a wishlist, when two designs are possible"
+      ],
+      "owns_paths": [
+        "src/lib/types.ts",
+        "src/db/schema.sql",
+        "team/policies"
+      ],
+      "handoff_to": [
+        "tdt_backend",
+        "tdt_frontend",
+        "tdt_blockchain"
+      ]
+    },
+    {
+      "id": "tdt_backend",
+      "name": "Backend Engineer",
+      "reports_to": "tdt_hermes",
+      "mandate": "Backend, database, APIs, agents and workflows.",
+      "must_deliver": [
+        "a change behind a pull request on a branch, never on main",
+        "a failing test that reproduces the defect before the fix, and the passing run after it",
+        "the exact request that proves the change on the deployed path"
+      ],
+      "owns_paths": [
+        "src/routes",
+        "src/agents",
+        "src/db"
+      ],
+      "handoff_to": [
+        "tdt_qa",
+        "tdt_sentinel"
+      ]
+    },
+    {
+      "id": "tdt_frontend",
+      "name": "Frontend Engineer",
+      "reports_to": "tdt_hermes",
+      "mandate": "Dashboard, UI, user experience and API integration.",
+      "must_deliver": [
+        "the rendered element that changed, named by route and selector",
+        "copy that states what the platform actually does, including cadence and cost",
+        "a UI state for every refusal the API can return, not only the success path"
+      ],
+      "owns_paths": [
+        "web/src"
+      ],
+      "handoff_to": [
+        "tdt_qa"
+      ]
+    },
+    {
+      "id": "tdt_blockchain",
+      "name": "Wallet & Finance Specialist",
+      "reports_to": "tdt_hermes",
+      "mandate": "Wallets, payments, treasury, ledger and reconciliation.",
+      "must_deliver": [
+        "the balance movement proved against the chain and against our own ledger",
+        "a signer or policy requirement stated before any transaction is prepared",
+        "a reconciliation line for every debit, including failed runs"
+      ],
+      "owns_paths": [
+        "src/payments",
+        "src/lib/billing.ts",
+        "src/lib/settle.ts",
+        "src/lib/reconcile.ts"
+      ],
+      "handoff_to": [
+        "tdt_sentinel",
+        "tdt_qa"
+      ],
+      "escalates_money": true
+    },
+    {
+      "id": "tdt_intelligence",
+      "name": "Data Intelligence Specialist",
+      "reports_to": "tdt_hermes",
+      "mandate": "Providers, ingestion, research, normalization and analytics.",
+      "must_deliver": [
+        "the provider behaviour measured on the production path with the request and headers quoted",
+        "normalized figures that state their source and timestamp",
+        "a stated uncertainty wherever a number is inferred rather than observed"
+      ],
+      "owns_paths": [
+        "src/providers",
+        "web/src/pages3.tsx"
+      ],
+      "handoff_to": [
+        "tdt_architect"
+      ]
+    },
+    {
+      "id": "tdt_agent-engineer",
+      "name": "Agent Runtime Engineer",
+      "reports_to": "tdt_hermes",
+      "mandate": "Agent runtime, tool contracts, scheduling and execution accounting.",
+      "must_deliver": [
+        "a runtime change proved against a real run, not only a unit test",
+        "the spend and tool counts on the run row after the change",
+        "a named failure mode for every new retry, timeout or abort path"
+      ],
+      "owns_paths": [
+        "src/agents/runner.ts",
+        "src/agents/retry.ts",
+        "src/agents/schedule-lock.ts",
+        "src/agents/cron.ts"
+      ],
+      "handoff_to": [
+        "tdt_qa",
+        "tdt_devops"
+      ]
+    },
+    {
+      "id": "tdt_qa",
+      "name": "QA & Testing",
+      "reports_to": "tdt_hermes",
+      "mandate": "Reproduction, testing, regression and evidence.",
+      "must_deliver": [
+        "the failing command and its output before the fix, captured verbatim",
+        "every acceptance criterion marked met or unmet, each with the evidence that decided it",
+        "the suite count after the change"
+      ],
+      "owns_paths": [
+        "tests"
+      ],
+      "handoff_to": [
+        "tdt_sentinel"
+      ],
+      "independent_verification": true
+    },
+    {
+      "id": "tdt_sentinel",
+      "name": "Security Sentinel",
+      "reports_to": "tdt_hermes",
+      "mandate": "Threat analysis, access controls and security reviews.",
+      "must_deliver": [
+        "a finding with severity and the exploit path, or an explicit statement that there is none",
+        "the authority check that failed, not only the symptom",
+        "a negative test proving the refusal reaches the caller"
+      ],
+      "owns_paths": [
+        "src/lib/ssrf.ts",
+        "src/lib/security.ts",
+        "src/lib/session.ts"
+      ],
+      "handoff_to": [
+        "tdt_hermes"
+      ],
+      "independent_verification": true
+    },
+    {
+      "id": "tdt_devops",
+      "name": "DevOps & Release",
+      "reports_to": "tdt_hermes",
+      "mandate": "CI/CD, infrastructure, monitoring and recovery.",
+      "must_deliver": [
+        "the deployment id and the commit it was built from, matching HEAD",
+        "the health check and the probe that proves the change is live",
+        "a recovery step for every failure that leaves production unhealthy"
+      ],
+      "owns_paths": [
+        ".github",
+        "vercel.json",
+        "api"
+      ],
+      "handoff_to": [
+        "tdt_hermes"
+      ]
+    },
+    {
+      "id": "tdt_docs",
+      "name": "Documentation",
+      "reports_to": "tdt_hermes",
+      "mandate": "Technical guides, API docs, changelog and reports.",
+      "must_deliver": [
+        "a changelog entry whose every number traces to a measurement",
+        "the current behaviour described, including what is deliberately not built",
+        "a correction in place when an earlier published claim was wrong"
+      ],
+      "owns_paths": [
+        "docs",
+        "README.md"
+      ],
+      "handoff_to": [
+        "tdt_hermes"
+      ]
+    }
+  ],
+  "recommended_structure_map": {
+    "hermes": "tdt_hermes",
+    "product": "tdt_product",
+    "architect": "tdt_architect",
+    "backend": "tdt_backend",
+    "frontend": "tdt_frontend",
+    "wallet_finance": "tdt_blockchain",
+    "data_intelligence": "tdt_intelligence",
+    "qa": "tdt_qa",
+    "sentinel": "tdt_sentinel",
+    "devops": "tdt_devops",
+    "docs": "tdt_docs",
+    "platform_runtime": "tdt_agent-engineer"
+  },
+  "recommended_structure_notes": "The recommended chart names Frontend, Wallet & Finance and Data Intelligence as new roles. All three already exist in the roster under their live ids: Wallet & Finance is tdt_blockchain and Data Intelligence is tdt_intelligence, so the chart is a naming and ownership decision rather than three new agents. tdt_agent-engineer is not on the chart and is kept explicitly as the platform runtime owner so no unit is unowned.",
+  "policy_services": [
+    {
+      "id": "transaction_authorization",
+      "rule": "No money moves without a signed, scoped authorization.",
+      "enforced_in": "src/agents/payments-policy.ts",
+      "owner": "code"
+    },
+    {
+      "id": "identity_permissions",
+      "rule": "A caller acts only as the identity its session or key proves.",
+      "enforced_in": "src/lib/keys.ts",
+      "owner": "code"
+    },
+    {
+      "id": "budget_enforcement",
+      "rule": "A run is refused before it spends past its key, agent or account bound.",
+      "enforced_in": "src/lib/billing.ts",
+      "owner": "code"
+    },
+    {
+      "id": "audit_integrity",
+      "rule": "Every tool call and ledger movement is recorded and can be re-derived.",
+      "enforced_in": "src/agents/audit-log.ts",
+      "owner": "code"
+    },
+    {
+      "id": "production_release",
+      "rule": "A production change needs the owner's approval, never an agent's alone.",
+      "enforced_in": "src/agents/pipeline.ts",
+      "owner": "code"
+    }
+  ],
+  "shared_system": {
+    "tasks": {
+      "contract": "A task carries an id, the owning pipeline stage, the acceptance criteria it must satisfy and its dependency. Only the owning unit writes its status.",
+      "schema": "src/team/schemas/task.schema.json",
+      "validator": "src/team/validate.ts",
+      "status": "validated at the delegation boundary; durable task rows are not yet stored, so status lives inside the run record"
+    },
+    "artifacts": {
+      "contract": "A stage hands its successor an addressable artifact, not prose in a report, so fidelity survives more than one hop.",
+      "implementation": "src/agents/artifacts.ts",
+      "status": "implemented and content-hashed; delegation still passes report text alongside the artifact id"
+    },
+    "verification": {
+      "rule": "The unit that builds is never the unit that accepts. QA verifies against criteria, SENTINEL reviews the design and the diff, and HERMES accepts only on their evidence.",
+      "enforced_by": "tests/organization.test.ts"
+    }
+  }
+}

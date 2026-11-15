@@ -188,4 +188,15 @@ export function registerAdminRoutes(app: SessionApp) {
     if (!row) return c.json({ error: { message: 'Alert not found', type: 'invalid', code: 404 } }, 404)
     return c.json({ ok: true, ...row })
   })
+
+  /**
+   * GET /api/admin/agents/scorecard?hours=168 — is the team improving, measured from the ledger.
+   * Measures that the ledger cannot support come back as not_measurable with the reason, never as a
+   * flattering zero. There is deliberately no volume figure here.
+   */
+  app.get('/api/admin/agents/scorecard', async (c) => {
+    if (c.req.header('x-master-key') !== env.masterKey) return c.json({ error: { message: 'Forbidden', type: 'auth', code: 403 } }, 403)
+    const { scorecardReport } = await import('../agents/scorecard.js')
+    return c.json({ ok: true, ...(await scorecardReport(Number(c.req.query('hours') ?? 168))) })
+  })
 }
