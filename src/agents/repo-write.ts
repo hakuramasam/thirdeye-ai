@@ -37,8 +37,10 @@ const DENIED = [
 ]
 
 export function validateWritePath(raw: unknown): string {
-  // Validate the path as given and refuse anything ambiguous. This function deliberately no longer
-  // trims or strips prefixes: a silent rewrite here would authorize one string and send another.
+  // Validate the path as given and refuse anything ambiguous. checkPath is the only thing allowed to
+  // touch the string: it strips a single leading './' and returns that exact stripped path, which is
+  // what is authorized here and what is sent to GitHub. Nothing else is trimmed or rewritten, so the
+  // authorized path and the written path cannot diverge.
   const check = checkPath(raw)
   if (!check.ok) throw new Error(`Refusing to write ${String(raw ?? '')}: ${check.reason}`)
   const p = check.path

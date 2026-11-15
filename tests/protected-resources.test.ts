@@ -122,6 +122,20 @@ describe('control plane', () => {
     }
   })
 
+  it('refuses the relay policy and the Paragraph key client', () => {
+    // src/antseed/analyst.ts narrows model, system prompt, tools and token limits; stripping those
+    // turns the relay into a raw proxy. src/lib/paragraph.ts reads PARAGRAPH_API_KEY.
+    const relay = authorizeWrite('src/antseed/analyst.ts', agent)
+    assert.equal(relay.allowed, false)
+    assert.equal(relay.resourceId, 'control-plane')
+    const paragraph = authorizeWrite('src/lib/paragraph.ts', agent)
+    assert.equal(paragraph.allowed, false)
+    assert.equal(paragraph.resourceId, 'secrets')
+    // Both are the same files the review named, and both stay owner-writable rather than blocked.
+    assert.equal(authorizeWrite('src/antseed/analyst.ts', { type: 'owner' }).allowed, true)
+    assert.equal(authorizeWrite('src/lib/paragraph.ts', { type: 'owner' }).allowed, true)
+  })
+
   it('refuses the money, auth, secrets, schema, policy and CI classes too', () => {
     const samples: Record<string, string> = {
       secrets: '.env',
@@ -155,7 +169,10 @@ describe('payments classification', () => {
 
   it('keeps the payments class ahead of the control-plane matcher in the policy order', () => {
     const ids = RESOURCE_CLASSES.map((c) => c.id)
-    assert.ok(ids.indexOf('payments') < ids.lastIndexOf('control-plane'), 'payments must precede the catch-all')
+    // Two control-plane entries exist (the route/agent catch-all, then the named lib modules), so the
+    // meaningful comparison is against the first one: payments must be reached before the catch-all.
+    assert.equal(ids.filter((id) => id === 'control-plane').length, 2)
+    assert.ok(ids.indexOf('payments') < ids.indexOf('control-plane'), 'payments must precede the first catch-all')
   })
 })
 
@@ -191,6 +208,34 @@ describe('ordinary application paths', () => {
     }
     for (const p of ['src/routes/stats.ts', 'src/routes/feedback.ts', 'src/routes/playground.ts', 'src/routes/v1.ts']) {
       assert.equal(authorizeWrite(p, agent).allowed, false, `${p} is a route and is control plane`)
+    }
+  })
+
+  it('applies the content exemption to the exact case only', () => {
+    // GitHub paths are case-sensitive, so a differently-cased spelling is a different file and must
+    // not inherit the exemption by being lowercased before the comparison.
+    assert.equal(authorizeWrite('src/routes/public.ts', agent).allowed, true)
+    for (const p of ['src/routes/Public.ts', 'src/routes/WHITEPAPER.ts', 'src/routes/Discovery.ts']) {
+      const d = authorizeWrite(p, agent)
+      assert.equal(d.allowed, false, `${p} must not inherit the content exemption`)
+      assert.equal(d.resourceId, 'control-plane', `${p} must classify as control plane`)
+    }
+  })
+
+  it('classifies uppercase and mixed-case protected paths as protected', () => {
+    // The exact-case content exemption must not weaken protected matching, which is case-insensitive.
+    const expected: Record<string, string> = {
+      'SRC/AGENTS/REPO-WRITE.TS': 'control-plane',
+      'Src/Routes/Agents.ts': 'control-plane',
+      'SRC/PROVIDERS/INDEX.TS': 'secrets',
+      'SRC/PAYMENTS/SWAP.TS': 'payments',
+      'Team/Policies/Authority.md': 'authority',
+      '.GITHUB/workflows/ci.yml': 'ci',
+    }
+    for (const [p, id] of Object.entries(expected)) {
+      const d = authorizeWrite(p, agent)
+      assert.equal(d.allowed, false, `${p} must be refused`)
+      assert.equal(d.resourceId, id, `${p} must classify as ${id}`)
     }
   })
 

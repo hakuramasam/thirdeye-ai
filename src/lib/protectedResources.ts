@@ -56,7 +56,7 @@ export const RESOURCE_CLASSES: ResourceClass[] = [
     // src/providers/** decrypts BYOK and platform provider credentials, so a normal-looking source
     // edit there is a credential-exfiltration path rather than a feature change.
     match:
-      /(^|[/])\.env(\.[^/]*)?$|[.](pem|key|p12|pfx|keystore)$|(^|[/])id_(rsa|dsa|ecdsa|ed25519)([.]pub)?$|(^|[/])[.]npmrc$|(^|[/])[.]vercel[/]|^src[/]providers[/]/,
+      /(^|[/])\.env(\.[^/]*)?$|[.](pem|key|p12|pfx|keystore)$|(^|[/])id_(rsa|dsa|ecdsa|ed25519)([.]pub)?$|(^|[/])[.]npmrc$|(^|[/])[.]vercel[/]|^src[/]providers[/]|^src[/]lib[/]paragraph[.]ts$/,
     approver: 'owner',
   },
   {
@@ -111,7 +111,7 @@ export const RESOURCE_CLASSES: ResourceClass[] = [
     // messages; src/telemetry is the run-tracing path. All three can change who may act or what is
     // recorded, so all three are control plane.
     match:
-      /^src[/]agents[/]|^src[/]routes[/]|^src[/]inngest[/]|^src[/]index[.]ts$|^src[/]app[.]ts$|^api[/]|^src[/]middleware|^src[/]team[/]|^src[/]telemetry[/]/,
+      /^src[/]agents[/]|^src[/]routes[/]|^src[/]inngest[/]|^src[/]index[.]ts$|^src[/]app[.]ts$|^api[/]|^src[/]middleware|^src[/]team[/]|^src[/]telemetry[/]|^src[/]antseed[/]/,
     approver: 'owner',
   },
   {
@@ -218,9 +218,13 @@ export function normalizePath(raw: unknown): string {
 export function classifyResource(raw: unknown): Classification | null {
   const check = checkPath(raw)
   if (!check.ok) return null
+  // The content exemption is compared on the exact validated path, before any case folding, because
+  // GitHub paths are case-sensitive: `src/routes/Public.ts` is a different file from
+  // `src/routes/public.ts` and must not inherit the exemption by being lowercased first. Matching
+  // against the protected classes below stays case-insensitive on purpose, so an uppercase spelling
+  // of a protected path is still protected.
+  if (CONTENT_ROUTE_ALLOWLIST.includes(check.path)) return null
   const p = check.path.toLowerCase()
-  if (!p) return null
-  if (CONTENT_ROUTE_ALLOWLIST.includes(p)) return null
   for (const c of RESOURCE_CLASSES) {
     if (c.match.test(p)) return { resourceId: c.id, label: c.label, requires: c.approver }
   }
