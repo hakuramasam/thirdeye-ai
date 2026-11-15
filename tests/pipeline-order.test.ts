@@ -93,13 +93,15 @@ describe('PH2-002 declared pipelines hold their order', () => {
     assert.equal(!inFlight.ok && inFlight.code, 'stage_in_flight')
   })
 
-  it('stops a pipeline whose failed stage says stop, and retries one that says back_to_build', () => {
+  it('stops a pipeline whose failed stage says stop, and sends back_to_* work to the stage it names', () => {
     const stopped = planForPipeline('bugfix', ledgerOf({ intake: { started: 1, failed: 1 } }))
     assert.equal(!stopped.ok && stopped.code, 'pipeline_stopped')
 
-    const retry = planForPipeline('feature', ledgerOf({ scope: { started: 1, completed: 1 }, design: { started: 1, failed: 1 } }))
-    assert.equal(retry.ok && retry.stage.id, 'design')
-    assert.equal(retry.ok && retry.attempt, 2)
+    // design declares back_to_scope, so the work returns to scope instead of design being re-attempted.
+    const rewind = planForPipeline('feature', ledgerOf({ scope: { started: 1, completed: 1 }, design: { started: 1, failed: 1 } }))
+    assert.equal(rewind.ok && rewind.stage.id, 'scope')
+    assert.equal(rewind.ok && rewind.rewoundFrom, 'design')
+    assert.equal(rewind.ok && rewind.attempt, 2)
 
     const exhausted = planForPipeline('feature', ledgerOf({ scope: { started: 1, completed: 1 }, design: { started: 2, failed: 2 } }))
     assert.equal(!exhausted.ok && exhausted.code, 'stage_exhausted')
@@ -217,4 +219,30 @@ describe('PH2-002 the runner enforces stage order when a pipeline is declared', 
     assert.ok(denied.length >= 1)
     assert.match(String(denied.at(-1)?.error_summary ?? ''), /already running/)
   })
+})
+
+it('a failed verify sends work back to build instead of repeating verify', () => {
+  const plan = planForPipeline('feature', ledgerOf({
+    scope: { started: 1, completed: 1 }, design: { started: 1, completed: 1 },
+    build: { started: 1, completed: 1 }, verify: { started: 1, failed: 1 },
+  }))
+  assert.equal(plan.ok && plan.stage.id, 'build')
+  assert.equal(plan.ok && plan.rewoundFrom, 'verify')
+  assert.equal(plan.ok && plan.attempt, 2)
+})
+
+it('a rewind to an exhausted stage escalates instead of ping-ponging', () => {
+  const plan = planForPipeline('feature', ledgerOf({
+    scope: { started: 1, completed: 1 }, design: { started: 1, completed: 1 },
+    build: { started: 2, failed: 2 }, verify: { started: 1, failed: 1 },
+  }))
+  assert.equal(!plan.ok && plan.code, 'stage_exhausted')
+})
+
+it('a second failure of the same stage is exhausted, not another rewind', () => {
+  const plan = planForPipeline('feature', ledgerOf({
+    scope: { started: 1, completed: 1 }, design: { started: 1, completed: 1 },
+    build: { started: 2, completed: 1, failed: 1 }, verify: { started: 2, failed: 2 },
+  }))
+  assert.equal(!plan.ok && plan.code, 'stage_exhausted')
 })

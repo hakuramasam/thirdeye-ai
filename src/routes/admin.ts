@@ -197,6 +197,9 @@ export function registerAdminRoutes(app: SessionApp) {
   app.get('/api/admin/agents/scorecard', async (c) => {
     if (c.req.header('x-master-key') !== env.masterKey) return c.json({ error: { message: 'Forbidden', type: 'auth', code: 403 } }, 403)
     const { scorecardReport } = await import('../agents/scorecard.js')
-    return c.json({ ok: true, ...(await scorecardReport(Number(c.req.query('hours') ?? 168))) })
+    // A non-numeric window must fall back to the documented default rather than to 24.
+    const raw = Number(c.req.query('hours'))
+    const hours = Number.isFinite(raw) && raw > 0 ? raw : 168
+    return c.json({ ok: true, ...(await scorecardReport(hours)) })
   })
 }

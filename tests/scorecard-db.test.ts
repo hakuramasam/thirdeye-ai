@@ -9,6 +9,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 delete process.env.DATABASE_URL
+delete process.env.DATABASE_URL_UNPOOLED
+// env.ts prefers PREVIEW_DATABASE_URL, so an inherited value would point this suite at a real database.
+delete process.env.PREVIEW_DATABASE_URL
 process.env.PGLITE_DIR = join(mkdtempSync(join(tmpdir(), 'scorecard-')), 'db')
 const { migrate, query } = await import('../src/db/index.js')
 const { scorecardReport } = await import('../src/agents/scorecard.js')
@@ -51,14 +54,14 @@ describe('scorecard against the real schema', () => {
 
   it('scores only team agents, never the legacy ones', async () => {
     const r = await scorecardReport(24)
-    assert.deepEqual(r.agents.map((a) => a.agent_id).sort(), ['tdt_backend', 'tdt_qa'])
-    const cost = r.metrics.find((m) => m.id === 'budget_efficiency')!
+    assert.deepEqual(r.agents.map((a: any) => a.agent_id).sort(), ['tdt_backend', 'tdt_qa'])
+    const cost = r.metrics.find((m: any) => m.id === 'budget_efficiency')!
     assert.equal(cost.numerator, 600, 'the 9,000,000 micro legacy run must not leak into team cost')
   })
 
   it('computes recovery from the real rows and compares it with the previous window', async () => {
     const r = await scorecardReport(24)
-    const rec = r.metrics.find((m) => m.id === 'recovery_rate')!
+    const rec = r.metrics.find((m: any) => m.id === 'recovery_rate')!
     assert.equal(rec.value, 1, 'the qa failure was followed by a qa success inside the window')
     assert.equal(rec.previous, 0, 'in the previous window both failures stayed failed')
     assert.equal(rec.trend, 'improving')
@@ -67,7 +70,7 @@ describe('scorecard against the real schema', () => {
   it('reports the pipeline measures as not measurable when no stage events exist', async () => {
     const r = await scorecardReport(24)
     for (const id of ['first_pass_success', 'rework_rate']) {
-      assert.equal(r.metrics.find((m) => m.id === id)!.status, 'not_measurable', id)
+      assert.equal(r.metrics.find((m: any) => m.id === id)!.status, 'not_measurable', id)
     }
     assert.ok(r.gaps.length >= 2)
   })

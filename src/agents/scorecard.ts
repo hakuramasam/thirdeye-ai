@@ -92,13 +92,10 @@ function ratio(n: number, d: number): number | null {
  */
 export function stageRework(events: StageEventInput[]) {
   const starts = new Map<string, number>()
-  const verifyOutcomes = new Map<string, StageEventInput['event_type'][]>()
   for (const e of events) {
+    if (e.event_type !== 'stage.started') continue
     const key = `${e.correlation_id}::${e.stage_id}`
-    if (e.event_type === 'stage.started') starts.set(key, (starts.get(key) ?? 0) + 1)
-    const list = verifyOutcomes.get(key) ?? []
-    list.push(e.event_type)
-    verifyOutcomes.set(key, list)
+    starts.set(key, (starts.get(key) ?? 0) + 1)
   }
   const stages = [...starts.keys()]
   const reworked = stages.filter((k) => (starts.get(k) ?? 0) > 1)
@@ -241,7 +238,7 @@ export function buildScorecard(input: ScorecardInput): { metrics: Metric[]; head
   metrics.push(measured({
     id: 'security_quality', label: 'Open high-severity blockers', unit: 'count', better: 'lower',
     value: blockers.length, numerator: blockers.length,
-    basis: 'Unacknowledged alerts of severity high, the top tier the monitor emits. Zero means none are open, not that none were raised.',
+    basis: 'Every unacknowledged high alert, whatever its age, the top tier the monitor emits. Zero means none are open now, not that none were raised.',
   }))
 
   const m = new Map(metrics.map((x) => [x.id, x]))
@@ -264,9 +261,12 @@ export function trend(prev: Metric, curr: Metric): 'improving' | 'worsening' | '
 
 export interface AgentScore {
   agent_id: string
-  runs: number
+  /** The denominator behind success_rate, never a score: a high count is not an achievement. */
+  observations: number
   succeeded: number
   success_rate: number | null
+  /** 'thin' below MIN_SAMPLE, so a one-run 100% cannot outrank a reliable agent. */
+  confidence: 'thin' | 'adequate'
   spend_usd: number
   /** Cost of this agent's spend per success. Null when it never succeeded. */
   usd_per_success: number | null
@@ -284,8 +284,9 @@ export function perAgent(runs: RunInput[]): AgentScore[] {
     const succeeded = list.filter((r) => isSuccess(r.status)).length
     const spend = list.reduce((s, r) => s + Number(r.spend_usd_micros || 0), 0) / 1e6
     return {
-      agent_id, runs: list.length, succeeded,
+      agent_id, observations: list.length, succeeded,
       success_rate: ratio(succeeded, list.length),
+      confidence: list.length < MIN_SAMPLE ? 'thin' as const : 'adequate' as const,
       spend_usd: spend,
       usd_per_success: succeeded > 0 ? spend / succeeded : null,
     }
@@ -294,16 +295,29 @@ export function perAgent(runs: RunInput[]): AgentScore[] {
 
 export async function readScorecardInput(opts: { sinceHours: number; untilHours?: number; teamOnly?: boolean }): Promise<ScorecardInput> {
   const since = `now() - ($1 || ' hours')::interval`
-  const until = opts.untilHours ? `AND created_at < now() - ($2 || ' hours')::interval` : ''
+  const end = `now() - ($2 || ' hours')::interval`
   const params: unknown[] = opts.untilHours ? [String(opts.sinceHours), String(opts.untilHours)] : [String(opts.sinceHours)]
-  const team = opts.teamOnly === false ? '' : `AND agent_id LIKE 'tdt\\_%'`
+  // Team scope is applied to EVERY query. Filtering only runs let unrelated agents move the
+  // stage, task and alert measures while the run measures stayed team-only.
+  const team = opts.teamOnly === false ? '' : `AND agent_id LIKE 'tdt\_%'`
+  // An open blocker is open whatever its age, so the current window counts all unacknowledged
+  // rows. The previous window is evaluated AS OF its end, or a long-lived blocker would vanish
+  // from the older side and manufacture a fake improvement.
+  // Its own placeholder and parameter list: reusing the window params made Postgres complain that
+  // the statement had no placeholders while one value was bound.
+  const alertsWhere = opts.untilHours
+    ? `created_at <= now() - ($1 || ' hours')::interval AND (acknowledged_at IS NULL OR acknowledged_at > now() - ($1 || ' hours')::interval)`
+    : `acknowledged_at IS NULL`
+  const alertParams: unknown[] = opts.untilHours ? [String(opts.untilHours)] : []
   const [runs, stages, tasks, alerts] = await Promise.all([
-    query(`SELECT id, agent_id, status, spend_usd_micros, created_at FROM agent_runs WHERE created_at > ${since} ${until} ${team} ORDER BY created_at`, params),
+    query(`SELECT id, agent_id, status, spend_usd_micros, created_at FROM agent_runs WHERE created_at > ${since} ${opts.untilHours ? `AND created_at <= ${end}` : ''} ${team} ORDER BY created_at`, params),
     query(`SELECT correlation_id, stage_id, event_type, insert_seq FROM agent_audit_events
-            WHERE created_at > ${since} ${until} AND event_type IN ('stage.started','stage.completed','stage.failed','stage.skipped') ORDER BY insert_seq`, params),
+            WHERE created_at > ${since} ${opts.untilHours ? `AND created_at <= ${end}` : ''} ${team}
+              AND event_type IN ('stage.started','stage.completed','stage.failed','stage.skipped') ORDER BY insert_seq`, params),
     query(`SELECT correlation_id, task_id, event_type FROM agent_audit_events
-            WHERE created_at > ${since} ${until} AND event_type IN ('task.delegated','task.completed','task.rejected')`, params),
-    query(`SELECT code, severity, acknowledged_at, created_at FROM agent_alerts WHERE created_at > ${since} ${until}`, params),
+            WHERE created_at > ${since} ${opts.untilHours ? `AND created_at <= ${end}` : ''} ${team}
+              AND event_type IN ('task.delegated','task.completed','task.rejected')`, params),
+    query(`SELECT code, severity, acknowledged_at, created_at FROM agent_alerts WHERE ${alertsWhere} ${team}`, alertParams),
   ])
   return {
     runs: (runs.rows as any[]).map((r) => ({ ...r, spend_usd_micros: Number(r.spend_usd_micros) })),

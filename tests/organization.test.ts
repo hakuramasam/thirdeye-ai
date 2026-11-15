@@ -71,7 +71,7 @@ test('the five enforcement services are code, not an agent', () => {
   }
 })
 
-test('the builder is never the acceptor', () => {
+test('the builder is never the verifier, the reviewer or the acceptor', () => {
   for (const { file, doc } of pipelines) {
     const build = doc.stages.find((s: any) => s.produces === 'pull_request')
     const verify = doc.stages.find((s: any) => s.produces === 'test_report')
@@ -80,8 +80,9 @@ test('the builder is never the acceptor', () => {
     assert.ok(verify, `${file} has no independent test stage`)
     assert.notEqual(verify.owner, build.owner, `${file}: the unit that built also verifies`)
     if (review) assert.notEqual(review.owner, build.owner, `${file}: the unit that built also reviews`)
-    const qa = byId.get('tdt_qa')
-    assert.equal(qa.independent_verification, true)
+    const closure = doc.stages.find((s: any) => s.produces === 'closure')
+    if (closure) assert.notEqual(closure.owner, build.owner, `${file}: the unit that built also accepts`)
+    assert.equal(byId.get('tdt_qa').independent_verification, true)
     assert.equal(byId.get('tdt_sentinel').independent_verification, true)
   }
 })
@@ -105,9 +106,9 @@ test('the shared system states what is built and what is not', () => {
 const WF = JSON.parse(readFileSync('team/workflows/job-resolution.workflow.json', 'utf8'))
 const steps = WF.steps as any[]
 
-test('job resolution has eight steps in order and every step has an owner in the chart', () => {
-  assert.equal(steps.length, 8)
-  assert.deepEqual(steps.map((s) => s.n), [1, 2, 3, 4, 5, 6, 7, 8])
+test('job resolution has nine steps in order and every step has an owner in the chart', () => {
+  assert.equal(steps.length, 9)
+  assert.deepEqual(steps.map((s) => s.n), [1, 2, 3, 4, 5, 6, 7, 8, 9])
   for (const s of steps) {
     assert.ok(byId.has(s.owner), `step ${s.n} owned by unknown ${s.owner}`)
     for (const c of s.contributors ?? []) assert.ok(byId.has(c), `step ${s.n} names unknown contributor ${c}`)
@@ -117,9 +118,9 @@ test('job resolution has eight steps in order and every step has an owner in the
 
 test('job resolution opens and closes with the orchestrator', () => {
   assert.equal(steps[0].owner, 'tdt_hermes')
-  assert.equal(steps[7].owner, 'tdt_hermes')
+  assert.equal(steps[8].owner, 'tdt_hermes')
   assert.equal(steps[0].id, 'intake')
-  assert.equal(steps[7].id, 'accept_close')
+  assert.equal(steps[8].id, 'accept_close')
 })
 
 test('every artifact a step consumes was produced by an earlier step', () => {
@@ -179,4 +180,33 @@ test('release readiness precedes release and release needs the owner', () => {
   assert.ok(ids.indexOf('accept') > ids.indexOf('release'))
   assert.equal(feature.find((s) => s.id === 'release').approval, 'owner')
   assert.equal(feature.find((s) => s.id === 'release').consumes.includes('release_plan'), true)
+})
+
+
+test('no two units own the same path or a path inside another unit\'s', () => {
+  const claims = units.flatMap((u) => u.owns_paths.map((p: string) => ({ id: u.id, p: p.replace(/\/$/, '') })))
+  for (const a of claims) {
+    for (const b of claims) {
+      if (a.id === b.id) continue
+      const nested = b.p === a.p || b.p.startsWith(a.p + '/')
+      assert.equal(nested, false, `${a.id} owns ${a.p} and ${b.id} also claims ${b.p}`)
+    }
+  }
+})
+
+test('review ownership is separate from implementation ownership', () => {
+  for (const u of units) {
+    for (const r of u.reviews_paths ?? []) {
+      assert.ok(!(u.owns_paths as string[]).includes(r), `${u.id} both owns and only reviews ${r}`)
+    }
+  }
+  const sentinel = byId.get('tdt_sentinel')
+  assert.ok(sentinel.reviews_paths.length >= 1, 'SENTINEL must review code it does not own')
+})
+
+test('every unit that writes workflow or chart files can actually reach them under the path gate', () => {
+  // The repo-write allowlist admits team/; what this checks is that SOME unit owns team/workflows,
+  // so a workflow file is never unreachable for want of an owner.
+  const owners = units.filter((u) => u.owns_paths.some((p: string) => p === 'team/workflows' || p.startsWith('team/workflows/')))
+  assert.equal(owners.length, 1, 'exactly one unit owns team/workflows')
 })

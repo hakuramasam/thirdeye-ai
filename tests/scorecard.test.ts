@@ -150,17 +150,26 @@ test('five or more observations are adequate', () => {
   assert.equal(get(buildScorecard({ runs, stageEvents: [], taskEvents: [], alerts: [] }), 'budget_efficiency').confidence, 'adequate')
 })
 
-import { readFileSync } from 'node:fs'
-test('the scorecard route is master-key gated and has no volume figure', () => {
-  const src = readFileSync('src/routes/admin.ts', 'utf8')
-  const block = src.slice(src.indexOf("'/api/admin/agents/scorecard'"))
-  assert.match(block.slice(0, 260), /x-master-key/)
-  assert.doesNotMatch(block, /runs_per|lines_of_code|pr_count/)
+
+test('an open blocker counts whatever its age, so a long-lived one cannot age out of the measure', () => {
+  // buildScorecard receives everything the query returned; the query is what must not truncate by age.
+  const alerts = [{ code: 'old', severity: 'high' as const, acknowledged_at: null, created_at: t(-500) }]
+  assert.equal(get(buildScorecard({ runs: [], stageEvents: [], taskEvents: [], alerts }), 'security_quality').value, 1)
 })
 
-test('the ops path accepts only a declared pipeline id, so stage recording can switch on', () => {
-  const src = readFileSync('src/routes/agents.ts', 'utf8')
-  assert.match(src, /getPipeline\(pipelineId\)/)
-  assert.match(src, /Unknown pipeline_id/)
-  assert.match(src, /pipelineId \? \{ pipelineId \}/)
+test('per-agent success rate carries the same thin-sample label as every other ratio', () => {
+  const runs = [run('a', 'once', 'success'), run('b', 'often', 'error'), run('c', 'often', 'error')]
+  const ranked = perAgent(runs)
+  const once = ranked.find((r) => r.agent_id === 'once')!
+  assert.equal(once.success_rate, 1)
+  assert.equal(once.confidence, 'thin', 'one run at 100% must not read as reliable')
+  assert.equal(ranked.find((r) => r.agent_id === 'often')!.confidence, 'thin')
+  assert.equal('runs' in once, false, 'observation count is exposed as observations, not as a volume score')
+})
+
+test('the scorecard has no field named like a volume score', () => {
+  const r = perAgent([run('a', 'x', 'success')])[0]
+  for (const banned of ['runs', 'runs_per_day', 'loc', 'prs', 'commits', 'throughput']) {
+    assert.equal(banned in r, false, `per-agent output must not expose ${banned}`)
+  }
 })

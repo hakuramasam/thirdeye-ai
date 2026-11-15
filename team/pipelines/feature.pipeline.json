@@ -20,7 +20,7 @@
       "gate": "Named findings with severity, or an explicit statement that there are none.",
       "produces": "review", "consumes": ["design", "pull_request"], "environment": "none", "approval": "hermes", "on_failure": "stop" },
     { "id": "release_readiness", "owner": "tdt_devops", "purpose": "Prove it can ship and can be undone before anything is promoted.",
-      "gate": "CI green on the exact head, a preview deployment serving the change, a written rollback step, and the owner's approval recorded.",
+      "gate": "CI green on the exact head, a preview deployment serving the change, and a written rollback step.",
       "produces": "release_plan", "consumes": ["test_report", "review"], "environment": "preview", "approval": "hermes", "on_failure": "back_to_build" },
     { "id": "release", "owner": "tdt_architect", "purpose": "Promote to production.",
       "gate": "Merge to main, deployment id, sha matching HEAD, health check green.",

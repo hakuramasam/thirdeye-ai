@@ -7,7 +7,7 @@ import type { SessionApp } from '../lib/session.js'
 import { requireUser } from '../lib/session.js'
 import { parseCron, isCronDue } from '../agents/cron.js'
 import { runAgent, type AgentRow } from '../agents/runner.js'
-import { getPipeline, pipelineIds } from '../agents/pipeline.js'
+import { pipelineIds } from '../agents/pipeline.js'
 import { acquireScheduleLock, finishScheduleLock, cronSlotKey } from '../agents/schedule-lock.js'
 
 type McpServerIn = { name?: string; url?: string; headers?: Record<string, string> }
@@ -305,6 +305,18 @@ export function registerCronRoute(app: SessionApp): void {
       const input = String(body?.input || '').trim()
       if (!input) return c.json({ error: { message: 'input is required when agent_id is set', type: 'invalid_request' } }, 400)
 
+      // An ops job may name the pipeline it follows. Validated BEFORE the idempotency lock is taken,
+      // because a refused request that held a lock would leave the slot LOCKED for its TTL and a
+      // corrected retry with the same key would come back as a silent "skipped".
+      // Membership is checked against the declared list, not by a property lookup on the pipeline
+      // map: a plain-object lookup accepts `constructor` and `__proto__`, which are not pipelines.
+      const rawPipeline = body?.pipeline_id
+      const hasPipeline = rawPipeline !== undefined && rawPipeline !== null && rawPipeline !== ''
+      const pipelineId = hasPipeline ? String(rawPipeline).toLowerCase() : null
+      if (hasPipeline && !pipelineIds().includes(pipelineId as string)) {
+        return c.json({ error: { message: `Unknown pipeline_id "${String(pipelineId).slice(0, 40)}". Declared: ${pipelineIds().join(', ')}`, type: 'invalid_request' } }, 400)
+      }
+
       // Optional idempotency key: a retried ops call with the same key must not run or charge
       // twice. Without a key an ops call is a deliberate fresh run and is not deduplicated.
       const idem = body?.idempotency_key ? String(body.idempotency_key).slice(0, 200) : ''
@@ -314,13 +326,6 @@ export function registerCronRoute(app: SessionApp): void {
         if (!lock) {
           return c.json({ triggered: [], skipped: [{ agent_id: opsRun, reason: 'idempotency key already used or in flight' }] })
         }
-      }
-
-      // An ops job may name the pipeline it follows. Only a declared pipeline id is accepted, so a typo
-      // or a hostile value cannot switch enforcement off by being unrecognised: it is refused instead.
-      const pipelineId = body?.pipeline_id ? String(body.pipeline_id).toLowerCase() : null
-      if (pipelineId && !getPipeline(pipelineId)) {
-        return c.json({ error: { message: `Unknown pipeline_id "${pipelineId.slice(0, 40)}". Declared: ${pipelineIds().join(', ')}`, type: 'invalid_request' } }, 400)
       }
       const r = await runAgent(row as AgentRow, input.slice(0, 4000), user, { ...(lock ? { runId: lock.runId } : {}), ...(pipelineId ? { pipelineId } : {}) })
       if (lock) await finishScheduleLock(lock.id, lock.runId, r.status === 'success' ? 'COMPLETED' : 'FAILED')
