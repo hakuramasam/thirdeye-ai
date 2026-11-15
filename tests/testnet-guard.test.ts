@@ -348,7 +348,7 @@ test('development keeps working with the built-in defaults', () => {
 test('a SIWE domain mismatch is rejected, not logged', () => {
   const d = decideSiwe({ messageDomain: 'evil.example', host: 'thirdeye-ai-alpha.vercel.app', strictParseFailed: false, nodeEnv: 'production' })
   assert.equal(d.ok, false)
-  assert.equal(d.reason, 'domain mismatch')
+  assert.equal(d.reason, 'domain_mismatch')
   const ok = decideSiwe({ messageDomain: 'thirdeye-ai-alpha.vercel.app', host: 'thirdeye-ai-alpha.vercel.app', strictParseFailed: false, nodeEnv: 'production' })
   assert.equal(ok.ok, true)
 })

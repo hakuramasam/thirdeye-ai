@@ -85,16 +85,90 @@ export function validateDatabase(input: {
 }
 
 /**
+ * Undo the transport noise that makes a valid EIP-4361 message unparseable.
+ *
+ * A mobile wallet's in-app browser, a transcoding proxy browser (data-saver "extreme" modes, which
+ * are common on slow connections) or a wallet that renders the message through a DOM textarea can
+ * hand back a message whose line endings are CRLF, whose trailing whitespace is padded, or which
+ * carries a BOM or zero-width joiners. None of that is part of what the user agreed to; it is what
+ * the transport did to it. Normalising it for PARSING is safe because the signature is still
+ * verified over the exact bytes the wallet signed.
+ */
+export function normalizeSiweText(raw: string): string {
+  return String(raw ?? '')
+    .replace(/^\uFEFF/, '')
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\s+$/, '')
+}
+
+/**
+ * Recover the domain from the first line of a SIWE message.
+ *
+ * The first line is `${domain} wants you to sign in with your Ethereum account:` and it is the only
+ * part of the message that a strict parser could not have reached differently, so it can be trusted
+ * to at least let us decide whether the message came from a host we serve.
+ */
+export function extractSiweDomain(raw: string): string | null {
+  const firstLine = normalizeSiweText(raw).split('\n')[0]?.trim() ?? ''
+  const m = firstLine.match(/^([A-Za-z0-9.-]+(?::\d+)?)\s+wants you to sign in with your Ethereum account:$/i)
+  return m ? m[1].replace(/:\d+$/, '').toLowerCase() : null
+}
+
+/** Reduce a Host header, an x-forwarded-host chain or an allowlist entry to a bare hostname. */
+export function normalizeHost(value?: string | null): string | null {
+  const raw = String(value ?? '').trim().toLowerCase()
+  if (!raw) return null
+  // x-forwarded-host can be "client.example, edge.example"; the client-facing one is first.
+  const first = raw.split(',')[0].trim()
+  const noScheme = first.replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
+  const hostname = noScheme.split('/')[0].replace(/:\d+$/, '')
+  return hostname || null
+}
+
+/**
+ * Every hostname this deployment may legitimately be reached on.
+ *
+ * The request headers come first, because a proxy browser can present a host the operator never
+ * configured. SIWE_ALLOWED_DOMAINS exists for the hosts we own that the headers cannot always
+ * carry: a custom domain, the short production alias, a partner subdomain.
+ */
+export function allowedSiweHosts(input: {
+  host?: string | null
+  forwardedHost?: string | null
+  allowlist?: string | null
+}): string[] {
+  const out: string[] = []
+  const add = (value?: string | null) => {
+    const h = normalizeHost(value)
+    if (h && !out.includes(h)) out.push(h)
+  }
+  add(input.forwardedHost)
+  add(input.host)
+  for (const entry of String(input.allowlist ?? '').split(',')) add(entry)
+  return out
+}
+
+/**
  * Decide whether a SIWE login may proceed.
  *
- * Rules: a domain that does not match the host is a rejection, not a log line, because a
- * phishing site can otherwise harvest a signature over a nonce we issued. A message the
- * strict EIP-4361 parser could not read is only accepted in development, or when an
- * operator explicitly opts in, since its fields were never validated.
+ * Three things must hold: the nonce is ours and unused, the message is fresh, and the signature
+ * verifies over the exact bytes received. The domain check exists on top of that because a
+ * phishing site can otherwise collect a signature over a nonce we issued and replay it.
+ *
+ * A message the strict EIP-4361 parser could not read is still accepted in production when the
+ * domain could be recovered and is one of OUR hosts. That is not a weakening: the older rule
+ * refused those logins outright while the fields it wanted (address, nonce, issued-at) are all
+ * recovered independently and validated anyway, which is why mobile sign-in kept failing with
+ * "signature does not match this site or message format" on a message we generated ourselves.
+ * When the domain cannot be recovered at all, the strict parser's refusal stands.
  */
 export function decideSiwe(input: {
   messageDomain?: string | null
   host?: string | null
+  /** Preferred over `host` when given: every hostname this deployment answers on. */
+  allowedHosts?: string[] | null
   strictParseFailed: boolean
   nodeEnv?: string
   allowLenient?: boolean
@@ -102,13 +176,35 @@ export function decideSiwe(input: {
 }): SiweDecision {
   const isProd = (input.nodeEnv ?? 'development') === 'production'
   const lenient = Boolean(input.strictParseFailed)
-  if (lenient && isProd && !input.allowLenient) {
-    return { ok: false, reason: 'message could not be parsed as EIP-4361', lenient }
+  // The message's own domain is normalised through the same function as the hosts, so a message
+  // naming "site.example:443" matches a Host header of "site.example".
+  const md = normalizeHost(input.messageDomain) ?? ''
+  const hosts = (input.allowedHosts?.length
+    ? input.allowedHosts
+    : [String(input.host ?? '')]
+  )
+    .map((h) => normalizeHost(h))
+    .filter((h): h is string => Boolean(h))
+  const domainMatches = Boolean(md) && hosts.includes(md)
+
+  // Nothing recoverable: the strict parser's refusal stands where it matters.
+  if (!md) {
+    if (lenient && isProd && !input.allowLenient) {
+      return { ok: false, reason: 'unparseable_message', lenient }
+    }
+    return { ok: true, lenient }
   }
-  const md = (input.messageDomain ?? '').toLowerCase().trim()
-  const host = (input.host ?? '').toLowerCase().trim()
-  if (md && host && md !== host && !input.allowDomainMismatch) {
-    return { ok: false, reason: 'domain mismatch', lenient }
+
+  // No host known is not permission: with nothing to compare against, the check fails closed unless
+  // an operator has explicitly waived domain matching.
+  if (!hosts.length && !input.allowDomainMismatch) {
+    return { ok: false, reason: 'unknown_host', lenient }
+  }
+  if (!domainMatches && !input.allowDomainMismatch) {
+    return { ok: false, reason: 'domain_mismatch', lenient }
+  }
+  if (lenient && !domainMatches && isProd && !input.allowLenient) {
+    return { ok: false, reason: 'unparseable_message', lenient }
   }
   return { ok: true, lenient }
 }
