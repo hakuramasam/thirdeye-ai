@@ -13,23 +13,46 @@ Related: [token launch pipeline](token-launch-plan.md), [tokenomics](tokenomics.
    whatever the quote currency. No transaction, OTC or pooled, is recorded at a lower valuation.
 2. **Sales are permitted from adoption.** The "no sales before month six" condition is deleted: no
    waiting period, no minimum token age, no calendar gate.
-3. **The asking price is $0.000088 per token or higher ($88,000 FDV).** Deposits credit THIRDEYE at the
-   ops policy rate (`PLATFORM_TOKEN_USD_RATE`, $0.00008 today) plus the 10% deposit bonus, so a
-   deposited token is worth $0.000088 of platform credit. A sale below that value hands the buyer a
-   positive loop: pay $0.00005, deposit, receive $0.000088. Quoting the pre-bonus rate ($0.00008) still
-   leaves the 10% bonus as free credit, so the guard is the post-bonus figure, not the rate. The $50,000
-   floor is the hard stop; $0.000088 is what is actually asked.
+3. **The binding minimum for any sale is the higher of the $50,000 floor and the post-bonus deposit credit
+   value.** Deposits credit THIRDEYE at the live policy rate plus the live deposit bonus, which today is
+   $0.00008 x 1.1 = **$0.000088 per token** ($88,000 FDV). A buyer who pays less than that and deposits
+   gets back more credit than the token cost, so selling anywhere in the $50,000 to $88,000 band is
+   refused too, on every venue, not just quoted against. The $50,000 floor only becomes the binding
+   number if the credit rate falls below $0.00004545, where rate x 1.1 slips under $0.00005.
 
 | level | USD per token | FDV at 1B | meaning |
 | --- | --- | --- | --- |
-| hard floor | 0.00005 | $50,000 | no sale recorded below this |
-| asking price | 0.000088 | $88,000 | at the post-bonus deposit credit value, so no free-credit loop |
+| hard floor | 0.00005 | $50,000 | Sam's floor: no sale recorded below this, ever |
+| binding minimum, today | 0.000088 | $88,000 | the post-bonus credit value, so no free-credit loop |
 | curve implied, 2026-11-16 | 0.0000988 | $98,800 | where the launch curve sits, reference only |
 
-If the ops credit rate or the deposit bonus changes, the asking price moves with it: rate times one
-plus the bonus, and never below the $50,000 floor.
+The binding minimum moves with the deposit settings, so it is recomputed from them rather than read off
+this table: `rate x (1 + bonusBps / 10000)`, never below the floor.
+
+### The deposit settings this depends on
+
+Read live from production `/api/me` on 2026-11-16, which returned
+`platform_token: {live: true, priced: true, usd_rate: 0.00008, bonus_bps: 1000, max_deposit_usd: 25}`
+for `0xa8a65a86e01d227dbfd7c7a94d14344b33603df5` on Base:
+
+| setting | env var | production value | repository default |
+| --- | --- | --- | --- |
+| policy rate | `PLATFORM_TOKEN_USD_RATE` | 0.00008 | 0 |
+| deposit bonus | `PLATFORM_TOKEN_BONUS_BPS` | 1000 | 0 |
+| per-deposit cap | `PLATFORM_TOKEN_MAX_DEPOSIT_USD` | 25 | 25 |
+
+Those live in the deployment environment, not in the repository, and the defaults are zero: with no rate
+published the deposit path refuses to value the token at all rather than crediting an unvalued amount. So
+this policy has to be read against the live configuration, and whoever changes the rate or the bonus
+changes the binding minimum at the same time. The deposit cap does not rescue a bad sale price: it limits
+how much credit one deposit can buy, not whether the token was sold below its credit value.
 
 ## What must be true before any sale
+
+Supply is **1,000,000,000**, read from `totalSupply()` on the token at block 58,139,747, and
+every figure in this policy uses that denominator. `docs/tokenomics.md` still carries an abandoned
+100B Clanker shape and now says so at the top; where the two disagree, the chain and this document
+are correct.
 
 Verified onchain 2026-11-16 at block 58,139,747:
 

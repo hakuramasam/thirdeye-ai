@@ -1,7 +1,9 @@
 # Platform token (THIRDEYE): launch pipeline
 
-Status: pipeline wired, token not deployed. Nothing below spends funds or touches a chain until the
-parameters are signed off.
+Status: **superseded by the live launch.** THIRDEYE deployed on Base on 2026-11-12 as a Doppler launch
+with a fixed 1,000,000,000 supply, not the shape planned below. This document is kept as the design
+record; do not read its pool, airdrop or vault figures as current. Sale terms live in
+[the sale policy](token-sale-policy.md), and the chain is the authority for holdings and schedules.
 
 ## Why the token exists
 
