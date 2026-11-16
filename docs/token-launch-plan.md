@@ -7,7 +7,8 @@ parameters are signed off.
 
 One purpose only: let the people who actually consume Thirdeye settle in the platform's own unit, and
 give the usage metrics a public, verifiable surface. It is not a fundraising instrument. There is no
-pre-sale in this plan, and nothing here should be read as an investment offer.
+pre-sale in this plan, and nothing here should be read as an investment offer. Terms for any later sale of treasury
+holdings live in [the sale policy](token-sale-policy.md), not here.
 
 ## Decisions required before deploy
 
@@ -104,7 +105,8 @@ pricing source.
 ## Risks to state out loud
 
 - **Regulatory**: a token with a bonus for usage can look like an incentive or a security depending on
-  jurisdiction. Get real advice before any public sale or yield framing. This plan contains no sale.
+  jurisdiction. Get real advice before any public sale or yield framing. This plan contains no sale;
+  the standing terms for one live in [the sale policy](token-sale-policy.md).
 - **Thin-market loop**: if THIRDEYE deposits are credited at pool price, someone with pool control can
   inflate credits. The deposit cap and liquidity floor blunt it; they do not eliminate it.
 - **Accounting**: token revenue is not USD revenue. Ledger stays in USD micros; the token is an asset

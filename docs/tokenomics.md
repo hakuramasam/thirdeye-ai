@@ -107,7 +107,9 @@ spendable money.
 
 ## What this plan deliberately does not do
 
-- No private sale, no pre-sale, no whitelist raise.
+- No private sale, no pre-sale, no whitelist raise. Any later sale of treasury tokens follows
+  [the sale policy](token-sale-policy.md): the $50,000 FDV floor, the asking price that keeps the deposit
+  credit from funding a buy-and-redeposit loop, and the reasons for both.
 - No yield, staking APR, or "buy to earn" framing, since those are the exact features that turn a
   utility token into something requiring legal advice first.
 - No burn mechanic that pretends to create value by shrinking a supply nobody is buying.
