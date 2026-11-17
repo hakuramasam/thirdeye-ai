@@ -395,8 +395,9 @@ export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRout
         403
       )
     }
-    // Finality gate. Recorded now, credited later: the row exists so a retry can complete the
-    // claim once the transfer is buried deep enough, and a reorg cannot leave money behind.
+    // Finality gate. Recorded now, credited only after the configured depth is met. A later reorg
+    // is marked only when independent canonical evidence exists; a missing receipt alone is retryable
+    // and never triggers an automatic ledger reversal.
     const finality = found.finality
     const receivedAtOf = (transfer: IncomingTransfer) =>
       transfer.to === String(env.platformReceiverAddress || '').toLowerCase()
