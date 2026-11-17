@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { latestIndependentApprovals } from '../.github/scripts/verify-hermes-phase-b-graduation.mjs'
 
 const review = (id: number, login: string, state: string, sha: string, at: string, type = 'User') => ({
-  id, user: { login, type }, state, commit_id: sha, submitted_at: at,
+  id, user: { login, type }, author_association: 'COLLABORATOR', state, commit_id: sha, submitted_at: at,
 })
 
 test('graduation accepts only the latest independent human approval on the exact head', () => {
@@ -25,4 +25,10 @@ test('a newer non-approval supersedes an earlier approval', () => {
     review(2, 'reviewer', 'DISMISSED', 'head', '2026-11-17T11:00:00Z'),
   ]
   assert.deepEqual(latestIndependentApprovals(reviews, 'head', 'author'), [])
+})
+
+
+test('graduation rejects approvals from non-collaborator accounts', () => {
+  const outsider = { ...review(5, 'outsider', 'APPROVED', 'head', '2026-11-17T14:00:00Z'), author_association: 'CONTRIBUTOR' }
+  assert.deepEqual(latestIndependentApprovals([outsider], 'head', 'author'), [])
 })
