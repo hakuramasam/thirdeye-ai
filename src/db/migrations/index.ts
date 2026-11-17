@@ -10,18 +10,6 @@ export type DbMigration = {
  */
 export const DB_MIGRATIONS: readonly DbMigration[] = [
   {
-    version: '0002_wo02_payment_intent_destination_binding',
-    name: 'Bind payment rows to their intended API-key destination',
-    statements: [
-      `ALTER TABLE payments ADD COLUMN IF NOT EXISTS to_key_id text`,
-      `UPDATE payments p
-          SET to_key_id = i.api_key_id
-         FROM payment_intents i
-        WHERE p.intent_id = i.id
-          AND p.to_key_id IS NULL`,
-    ],
-  },
-  {
     version: '0001_wo02_deposit_scope_and_payment_event_guard',
     name: 'Bind deposits to payment scope and enforce append-only payment events',
     statements: [
@@ -37,6 +25,18 @@ $payment_events_fn$ LANGUAGE plpgsql`,
       `CREATE TRIGGER payment_events_no_rewrite
   BEFORE UPDATE OR DELETE ON payment_events
   FOR EACH ROW EXECUTE FUNCTION payment_events_append_only()`,
+    ],
+  },
+  {
+    version: '0002_wo02_payment_intent_destination_binding',
+    name: 'Bind payment rows to their intended API-key destination',
+    statements: [
+      `ALTER TABLE payments ADD COLUMN IF NOT EXISTS to_key_id text`,
+      `UPDATE payments p
+          SET to_key_id = i.api_key_id
+         FROM payment_intents i
+        WHERE p.intent_id = i.id
+          AND p.to_key_id IS NULL`,
     ],
   },
 ]
