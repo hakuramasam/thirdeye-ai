@@ -19,6 +19,7 @@ export type VerifyErrorCode =
   | 'deposit_too_large'
   | 'insufficient_confirmations'
   | 'rpc_error'
+  | 'reorg_confirmed'
 
 export type VerifyResult =
   | {
