@@ -1,0 +1,28 @@
+name: hermes-phase-b-graduation
+on:
+  workflow_dispatch:
+    inputs:
+      owner_attestation:
+        description: 'Optional owner acknowledgement: I_ACKNOWLEDGE_HERMES_PHASE_B_TECHNICAL_GATES'
+        required: false
+        type: string
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  administration: read
+jobs:
+  verify-graduation:
+    name: Evaluate HERMES Phase B technical gates (manual)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Verify merged PRs, independent approvals, CI and branch rules
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ADMIN_TOKEN: ${{ secrets.GITHUB_ADMIN_TOKEN }}
+          OWNER_ATTESTATION: ${{ inputs.owner_attestation }}
+        run: node .github/scripts/verify-hermes-phase-b-graduation.mjs
