@@ -32,39 +32,19 @@ async function creditVerified(
   userId: string,
   usdMicros: number,
   args: { chain: string; txHash: string; token: string },
-  intentId: string | null | undefined,
+  intentId: string | null,
+  toKeyId: string | null,
   paymentId: string,
   finality: FinalityVerdict,
   receivedBy: string
 ) {
-  const settle = (toKeyId: string | null = null) =>
-    creditPaymentDeposit(paymentId, userId, usdMicros, args, {
-      toKeyId,
-      receivedBy,
-      confirmations: finality.confirmations,
-      requiredConfirmations: finality.required,
-    })
-
-  if (intentId) {
-    const it = await one('SELECT api_key_id FROM payment_intents WHERE id = $1 AND user_id = $2', [intentId, userId])
-    if (it?.api_key_id) {
-      const dep = await settle(it.api_key_id)
-      return {
-        credited: dep.credited,
-        settled: dep.settled,
-        destinationConflict: dep.destinationConflict,
-        scopeConflict: dep.scopeConflict,
-        ownershipConflict: dep.ownershipConflict,
-        reconciliation: dep.reconciliation,
-        reason: dep.reason,
-        to: 'key' as const,
-        api_key_id: it.api_key_id,
-        key_credit_usd_micros: dep.keyCredit ?? null,
-        deposit: dep,
-      }
-    }
-  }
-  const dep = await settle(null)
+  const dep = await creditPaymentDeposit(paymentId, userId, usdMicros, args, {
+    intentId,
+    toKeyId,
+    receivedBy,
+    confirmations: finality.confirmations,
+    requiredConfirmations: finality.required,
+  })
   return {
     credited: dep.credited,
     settled: dep.settled,
@@ -73,7 +53,9 @@ async function creditVerified(
     ownershipConflict: dep.ownershipConflict,
     reconciliation: dep.reconciliation,
     reason: dep.reason,
-    to: 'account' as const,
+    to: toKeyId ? ('key' as const) : ('account' as const),
+    api_key_id: toKeyId,
+    key_credit_usd_micros: dep.keyCredit ?? null,
     deposit: dep,
   }
 }
@@ -193,7 +175,14 @@ export async function recordPayment(args: {
   })
 }
 
-export function registerCreditsRoutes(app: SessionApp): void {
+export type CreditsRouteDependencies = {
+  findIncomingTransfer?: typeof findIncomingTransfer
+  verifyDeposit?: typeof verifyDeposit
+}
+
+export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRouteDependencies = {}): void {
+  const findTransfer = dependencies.findIncomingTransfer ?? findIncomingTransfer
+  const verifyPayment = dependencies.verifyDeposit ?? verifyDeposit
   // GET /api/credits
   app.get('/api/credits', requireUser, async (c) => {
     const user = c.get('user')!
@@ -345,7 +334,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       if (!intent) return c.json({ error: { message: 'intent not found for this account', type: 'not_found' } }, 404)
     }
     const receivers = platformReceivers()
-    const found = await findIncomingTransfer({ chainId, txHash, receivers })
+    const found = await findTransfer({ chainId, txHash, receivers })
     if (!found.ok) {
       // A transfer we already recorded that is no longer on the chain is a reorg, not a bad claim.
       // It is marked and audited rather than ignored, and a credited one is flagged because its
@@ -412,16 +401,6 @@ export function registerCreditsRoutes(app: SessionApp): void {
         usdMicros: 0, status: 'pending_confirmations', refusalCode: null,
         state: 'confirming', confirmations: finality.confirmations, observedBlock: finality.observedBlock,
       })
-      // The confirming transition is part of the settlement record, so it is written to the audit
-      // log too. Only on the insert: a replay polls this route, and appending the same note on every
-      // poll would bury the real transitions without adding a fact.
-      if (!waiting.duplicate) {
-        await logPaymentEvent(waiting.paymentId, 'confirming', {
-          confirmations: finality.confirmations,
-          required: finality.required,
-          observed_block: finality.observedBlock === null ? null : String(finality.observedBlock),
-        })
-      }
       return c.json(
         {
           accepted: true,
@@ -495,7 +474,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
         required: finality.required,
       })
       if (policyChain && policyDecision.status === 'credited' && (policySettle.action === 'credit' || policySettle.action === 'already_credited')) {
-        const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, policyRecord.paymentId, finality, received_at)
+        const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, policyRecord.intentId, policyRecord.toKeyId, policyRecord.paymentId, finality, received_at)
         if (dep.destinationConflict || dep.scopeConflict || dep.ownershipConflict || !dep.settled) {
           return c.json({
             accepted: false,
@@ -602,7 +581,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       required: finality.required,
     })
     if (chainSlug && (settle.action === 'credit' || settle.action === 'already_credited')) {
-      const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, recorded.paymentId, finality, received_at)
+      const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, recorded.intentId, recorded.toKeyId, recorded.paymentId, finality, received_at)
       if (dep.destinationConflict || dep.scopeConflict || dep.ownershipConflict || !dep.settled) {
         return c.json({
           accepted: false,
@@ -705,7 +684,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       return c.json({ error: { message: 'tx_hash is required', type: 'validation', code: 'invalid_request' } }, 400)
     }
 
-    const found = await findIncomingTransfer({ chainId: chainConfig.chainId, txHash, receivers })
+    const found = await findTransfer({ chainId: chainConfig.chainId, txHash, receivers })
     if (!found.ok) {
       return c.json({ error: { message: found.message, type: 'billing', code: found.code } }, found.code === 'invalid_tx_hash' ? 400 : 422)
     }
@@ -745,13 +724,6 @@ export function registerCreditsRoutes(app: SessionApp): void {
         confirmations: found.finality.confirmations,
         observedBlock: found.finality.observedBlock,
       })
-      if (!waiting.duplicate) {
-        await logPaymentEvent(waiting.paymentId, 'confirming', {
-          confirmations: found.finality.confirmations,
-          required: found.finality.required,
-          observed_block: found.finality.observedBlock === null ? null : String(found.finality.observedBlock),
-        })
-      }
       return c.json({
         accepted: true,
         credited: false,
@@ -764,7 +736,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       }, 202)
     }
 
-    const verification = await verifyDeposit({
+    const verification = await verifyPayment({
       chain: chainConfig.id,
       txHash,
       fromWallet: user.wallet,
