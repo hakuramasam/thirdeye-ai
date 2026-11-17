@@ -378,7 +378,12 @@ export async function auditAgents(opts: {
           let res: any = null
           try {
             const { runAgent } = await import('./runner.js')
-            res = await runAgent(hermes, brief, owner, { runId })
+            res = await runAgent(hermes, brief, owner, {
+              runId,
+              actorType: 'system',
+              invokerId: 'agent-monitor',
+              invocationSource: 'monitor.alert_dispatch',
+            })
           } catch {
             // The audit still returns its findings; only the handoff is reported as failed.
             dispatchError = 'runner_failed'
