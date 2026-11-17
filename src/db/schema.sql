@@ -298,11 +298,11 @@ CREATE INDEX IF NOT EXISTS idx_payment_events_payment ON payment_events(payment_
 
 -- Payment history is an audit record, not mutable application state. Enforce append-only at the
 -- database boundary so a later writer cannot rewrite or erase evidence of a credit/reorg.
-CREATE OR REPLACE FUNCTION payment_events_append_only() RETURNS trigger AS $
+CREATE OR REPLACE FUNCTION payment_events_append_only() RETURNS trigger AS $payment_events_fn$
 BEGIN
   RAISE EXCEPTION 'payment_events is append-only (%; write a new event instead)', TG_OP;
 END;
-$ LANGUAGE plpgsql;
+$payment_events_fn$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS payment_events_no_rewrite ON payment_events;
 CREATE TRIGGER payment_events_no_rewrite
