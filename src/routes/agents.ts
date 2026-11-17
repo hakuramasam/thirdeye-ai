@@ -260,6 +260,53 @@ export function registerAgentsRoutes(app: SessionApp): void {
     )
     return c.json({ runs: res.rows })
   })
+
+  // POST /api/ops/agents/:id/run — owner-authenticated operator dispatch.
+  // Unlike the scheduler endpoint, this is bound to a wallet session and the caller's own agent.
+  app.post('/api/ops/agents/:id/run', requireUser, async (c) => {
+    const user = c.get('user')!
+    const row = await loadOwned(c.req.param('id'), user.id)
+    if (!row) return c.json({ error: { message: 'Agent not found', type: 'not_found', code: 404 } }, 404)
+    const body = await c.req.json().catch(() => null)
+    const input = body?.input
+    if (typeof input !== 'string' || input.trim().length < 1 || input.length > 4000) {
+      return c.json({ error: { message: 'input must be 1-4000 characters', type: 'invalid_request', code: 400 } }, 400)
+    }
+
+    const rawPipeline = body?.pipeline_id
+    const hasPipeline = rawPipeline !== undefined && rawPipeline !== null && rawPipeline !== ''
+    const pipelineId = hasPipeline ? String(rawPipeline).toLowerCase() : null
+    if (hasPipeline && !pipelineIds().includes(pipelineId as string)) {
+      return c.json({ error: { message: 'Unknown pipeline_id', type: 'invalid_request', code: 400 } }, 400)
+    }
+
+    const rawIdem = body?.idempotency_key
+    if (rawIdem !== undefined && (typeof rawIdem !== 'string' || rawIdem.length < 1 || rawIdem.length > 200)) {
+      return c.json({ error: { message: 'idempotency_key must be 1-200 characters', type: 'invalid_request', code: 400 } }, 400)
+    }
+    let lock: Awaited<ReturnType<typeof acquireScheduleLock>> = null
+    if (rawIdem) {
+      lock = await acquireScheduleLock(row.id, `operator:${rawIdem}`, { runId: crypto.randomUUID() })
+      if (!lock) {
+        return c.json({ triggered: [], skipped: [{ agent_id: row.id, reason: 'idempotency key already used or in flight' }] })
+      }
+    }
+
+    try {
+      const result = await runAgent(row, input.trim(), user, {
+        ...(lock ? { runId: lock.runId } : {}),
+        ...(pipelineId ? { pipelineId } : {}),
+        actorType: 'user',
+        invokerId: user.id,
+        invocationSource: 'api.operator_agent_run',
+      })
+      if (lock) await finishScheduleLock(lock.id, lock.runId, result.status === 'success' ? 'COMPLETED' : 'FAILED')
+      return c.json({ triggered: [row.id], results: [{ agent_id: row.id, ...result }] }, result.status === 'success' ? 200 : 422)
+    } catch (error: any) {
+      if (lock) await finishScheduleLock(lock.id, lock.runId, 'FAILED', { reason: String(error?.message ?? error).slice(0, 200) })
+      throw error
+    }
+  })
 }
 
 /**
@@ -297,49 +344,12 @@ export function registerCronRoute(app: SessionApp): void {
     if (!env.cronSecret || auth !== `Bearer ${env.cronSecret}`) {
       return c.json({ error: { message: 'Unauthorized', type: 'auth', code: 401 } }, 401)
     }
-    // Ops path: run one named agent with an explicit task. This is how a human or a
-    // scheduler hands real work to the team instead of the generic scheduled message.
+    // This credential is scheduler-only. Human/operator dispatch must use the
+    // wallet-session, owner-scoped /api/ops/agents/:id/run route above.
     const body = await c.req.json().catch(() => ({} as any))
-    const opsRun = body?.agent_id ? String(body.agent_id) : null
-    if (opsRun) {
-      const row = await one(`SELECT * FROM agents WHERE id = $1 AND status = 'active'`, [opsRun])
-      if (!row) return c.json({ error: { message: 'Agent not found or not active', type: 'not_found' } }, 404)
-      const user = await one('SELECT * FROM users WHERE id = $1', [(row as any).user_id])
-      if (!user) return c.json({ error: { message: 'Owner not found', type: 'not_found' } }, 404)
-      const input = String(body?.input || '').trim()
-      if (!input) return c.json({ error: { message: 'input is required when agent_id is set', type: 'invalid_request' } }, 400)
-
-      // An ops job may name the pipeline it follows. Validated BEFORE the idempotency lock is taken,
-      // because a refused request that held a lock would leave the slot LOCKED for its TTL and a
-      // corrected retry with the same key would come back as a silent "skipped".
-      // Membership is checked against the declared list, not by a property lookup on the pipeline
-      // map: a plain-object lookup accepts `constructor` and `__proto__`, which are not pipelines.
-      const rawPipeline = body?.pipeline_id
-      const hasPipeline = rawPipeline !== undefined && rawPipeline !== null && rawPipeline !== ''
-      const pipelineId = hasPipeline ? String(rawPipeline).toLowerCase() : null
-      if (hasPipeline && !pipelineIds().includes(pipelineId as string)) {
-        return c.json({ error: { message: `Unknown pipeline_id "${String(pipelineId).slice(0, 40)}". Declared: ${pipelineIds().join(', ')}`, type: 'invalid_request' } }, 400)
-      }
-
-      // Optional idempotency key: a retried ops call with the same key must not run or charge
-      // twice. Without a key an ops call is a deliberate fresh run and is not deduplicated.
-      const idem = body?.idempotency_key ? String(body.idempotency_key).slice(0, 200) : ''
-      let lock: Awaited<ReturnType<typeof acquireScheduleLock>> = null
-      if (idem) {
-        lock = await acquireScheduleLock(opsRun, `ops:${idem}`, { runId: crypto.randomUUID() })
-        if (!lock) {
-          return c.json({ triggered: [], skipped: [{ agent_id: opsRun, reason: 'idempotency key already used or in flight' }] })
-        }
-      }
-      const r = await runAgent(row as AgentRow, input.slice(0, 4000), user, {
-        ...(lock ? { runId: lock.runId } : {}),
-        ...(pipelineId ? { pipelineId } : {}),
-        actorType: 'system',
-        invokerId: 'cron-credential',
-        invocationSource: 'api.cron.ops',
-      })
-      if (lock) await finishScheduleLock(lock.id, lock.runId, r.status === 'success' ? 'COMPLETED' : 'FAILED')
-      return c.json({ triggered: [opsRun], results: [{ agent_id: opsRun, ...r }] })
+    if (body && typeof body === 'object' &&
+        ['agent_id', 'input', 'pipeline_id', 'idempotency_key'].some((key) => Object.prototype.hasOwnProperty.call(body, key))) {
+      return c.json({ error: { message: 'Operator payloads are not accepted on the scheduler endpoint; use /api/ops/agents/:id/run', type: 'invalid_request', code: 400 } }, 400)
     }
 
     // Due-ness is measured against the last SUCCESSFUL run, not the last attempt. A scheduled
