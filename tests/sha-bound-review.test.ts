@@ -16,6 +16,7 @@ test('only the latest review by a non-author on the exact current head qualifies
     review(2, 'reviewer', 'APPROVED', 'current-sha', '2026-11-17T11:00:00Z'),
     review(3, 'author', 'APPROVED', 'current-sha', '2026-11-17T12:00:00Z'),
     review(4, 'stale-reviewer', 'APPROVED', 'old-sha', '2026-11-17T13:00:00Z'),
+    { ...review(5, 'review-bot', 'APPROVED', 'current-sha', '2026-11-17T14:00:00Z'), user: { login: 'review-bot', type: 'Bot' } },
   ]
   assert.deepEqual(
     independentApprovalCandidates(reviews, 'current-sha', 'author').map((r: { user: { login: string } }) => r.user.login),
