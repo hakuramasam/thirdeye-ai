@@ -193,6 +193,23 @@ describe('settlement integrity', () => {
     assert.equal(replay.duplicate, true)
     assert.equal(replay.scopeConflict, true)
     assert.equal(replay.destinationConflict, true)
+    assert.equal(replay.ownershipConflict, false)
+
+    const otherUserId = randomUUID()
+    await query(`INSERT INTO users (id, wallet, role) VALUES ($1, $2, 'user')`, [otherUserId, '0x' + '4'.repeat(40)])
+    const crossAccountReplay = await recordPayment({
+      intent: null,
+      userId: otherUserId,
+      transfer: transfer({ tx_hash: txHash }),
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 12,
+      observedBlock: 100,
+    })
+    assert.equal(crossAccountReplay.ownershipConflict, true)
 
     const wrongDestination = await creditPaymentDeposit(
       payment.paymentId,
@@ -239,6 +256,38 @@ describe('settlement integrity', () => {
     assert.equal(events.length, 1)
     assert.equal(events[0].detail.confirmations, 3)
     assert.equal(events[0].detail.required, 10)
+  })
+
+  it('rolls back the payment claim if its confirming audit event cannot be inserted', async () => {
+    const txHash = '0x' + 'e4'.repeat(32)
+    await query(`CREATE OR REPLACE FUNCTION test_fail_confirming_event() RETURNS trigger AS $
+      BEGIN
+        IF NEW.kind = 'confirming' THEN RAISE EXCEPTION 'forced confirming event failure'; END IF;
+        RETURN NEW;
+      END;
+    $ LANGUAGE plpgsql`)
+    await query(`CREATE TRIGGER test_fail_confirming_event_trigger
+      BEFORE INSERT ON payment_events FOR EACH ROW EXECUTE FUNCTION test_fail_confirming_event()`)
+    try {
+      await assert.rejects(recordPayment({
+        intent: null,
+        userId: owner.id,
+        transfer: transfer({ tx_hash: txHash }),
+        receivedAt: VAULT,
+        usdMicros: 0,
+        status: 'pending_confirmations',
+        refusalCode: null,
+        state: 'confirming',
+        confirmations: 3,
+        requiredConfirmations: 10,
+        observedBlock: 100,
+      }), /forced confirming event failure/)
+    } finally {
+      await query('DROP TRIGGER IF EXISTS test_fail_confirming_event_trigger ON payment_events')
+      await query('DROP FUNCTION IF EXISTS test_fail_confirming_event()')
+    }
+    const rows = await one(`SELECT count(*)::int AS n FROM payments WHERE tx_hash = $1`, [txHash])
+    assert.equal(rows.n, 0, 'the payment insert must roll back with the failed audit event')
   })
 
   it('values the exact transfer selected by the receipt parser without a second chain read', async () => {
