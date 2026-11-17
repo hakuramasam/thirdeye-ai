@@ -24,7 +24,7 @@ The payment-review and compatibility deposit endpoints use `creditPaymentDeposit
 5. Update payment state and payment-intent state.
 6. Append the `credited` payment event.
 
-The locked payment's intent ID and `to_key_id` must match the original claim. The payment row, deposit row, ledger/key balance, payment-intent status, and audit event commit or roll back together. The confirmation count used for settlement is also persisted on the payment row.
+A payment intent is single-use: one payment row may reference each non-null intent ID, and a new transfer cannot reuse an already-claimed or paid intent. An exact replay of the original transfer remains idempotent. The migration fails closed if legacy duplicate intent claims exist and requires reconciliation before applying the unique index. The locked payment's intent ID and `to_key_id` must match the original claim. The payment row, deposit row, ledger/key balance, payment-intent status, and audit event commit or roll back together. The confirmation count used for settlement is also persisted on the payment row.
 
 All six steps run in one database transaction. If the reorg transition obtains the payment lock first, the credit is refused. If the credit transaction obtains it first, a later reorg transition observes `credited` and escalates to reconciliation. A failed payment-event insert rolls the balance write back.
 
