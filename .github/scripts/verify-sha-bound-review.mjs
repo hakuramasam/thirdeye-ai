@@ -21,7 +21,8 @@ export function independentApprovalCandidates(reviews, headSha, authorLogin) {
   return [...latest.values()].filter((review) =>
     review.state === 'APPROVED' &&
     review.commit_id === headSha &&
-    review.user.login !== authorLogin
+    review.user.login !== authorLogin &&
+    review.user.type !== 'Bot'
   )
 }
 
@@ -65,6 +66,12 @@ async function main() {
     try {
       const permission = await api(`/collaborators/${encodeURIComponent(review.user.login)}/permission`)
       if (['write', 'maintain', 'admin'].includes(permission.permission)) {
+        const currentPr = await api(`/pulls/${prNumber}`)
+        if (currentPr.state !== 'open' || currentPr.head?.sha !== headSha) {
+          console.error('PR head or state changed during review verification; re-run against the current open PR.')
+          process.exitCode = 1
+          return
+        }
         console.log(`Independent approval verified for current head ${headSha.slice(0, 12)} by ${review.user.login} (${permission.permission}).`)
         return
       }
