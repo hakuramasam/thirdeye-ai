@@ -81,10 +81,13 @@ CREATE TABLE IF NOT EXISTS deposits (
   token             text NOT NULL,           -- lowercase 0x token address
   tx_hash           text NOT NULL,
   amount_usd_micros bigint NOT NULL,
+  to_key_id         text,                    -- NULL = account ledger; otherwise the exact prepaid API key
   status            text NOT NULL DEFAULT 'confirmed',
   created_at        timestamptz NOT NULL DEFAULT now(),
   UNIQUE (chain, tx_hash, token)
 );
+
+ALTER TABLE deposits ADD COLUMN IF NOT EXISTS to_key_id text;
 
 CREATE TABLE IF NOT EXISTS ledger (
   id               bigserial PRIMARY KEY,
