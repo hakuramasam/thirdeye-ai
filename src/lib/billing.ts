@@ -219,6 +219,22 @@ export async function creditPaymentDeposit(
       }
     }
 
+    if (storedIntentId) {
+      const intentResult = await q(
+        `SELECT id, status FROM payment_intents
+          WHERE id = $1 AND user_id = $2
+          FOR UPDATE`,
+        [storedIntentId, userId]
+      )
+      if (!intentResult.rows[0] || intentResult.rows[0].status !== 'open') {
+        return {
+          credited: false, settled: false, state: payment.state, reconciliation: false,
+          destinationConflict: false, scopeConflict: true, ownershipConflict: false,
+          reason: 'payment_intent_not_open', balance: 0,
+        }
+      }
+    }
+
     const inserted = await q(
       `INSERT INTO deposits (id, user_id, chain, token, tx_hash, amount_usd_micros, to_key_id, payment_id, received_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -314,11 +330,13 @@ export async function creditPaymentDeposit(
       ]
     )
     if (updated.rows[0].intent_id) {
-      await q(
+      const intentUpdate = await q(
         `UPDATE payment_intents SET status = 'paid'
-          WHERE id = $1 AND status = 'open'`,
+          WHERE id = $1 AND status = 'open'
+          RETURNING id`,
         [updated.rows[0].intent_id]
       )
+      if (!intentUpdate.rows[0]) throw new Error('Payment intent changed before settlement commit')
     }
 
     const balance = await q(
