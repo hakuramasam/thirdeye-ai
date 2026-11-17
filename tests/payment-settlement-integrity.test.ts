@@ -482,7 +482,7 @@ describe('settlement integrity', () => {
       owner.id,
       5_000_000,
       { chain: 'base', txHash, token: TOKEN },
-      { confirmations: 12, requiredConfirmations: 10 },
+      { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(replay.credited, false)
     assert.equal(replay.settled, true)
@@ -500,7 +500,7 @@ describe('settlement integrity', () => {
       owner.id,
       5_000_000,
       { chain: 'base', txHash, token: TOKEN },
-      { confirmations: 12, requiredConfirmations: 10 },
+      { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(result.credited, false)
     assert.equal(result.settled, false)
