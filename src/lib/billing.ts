@@ -65,7 +65,7 @@ export async function creditDeposit(
       `INSERT INTO deposits (id, user_id, chain, token, tx_hash, amount_usd_micros, to_key_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (chain, tx_hash, token) DO NOTHING RETURNING id`,
-      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros, opts.toKeyId ?? null]
+      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros, storedToKeyId]
     )
     if (!dep.rows[0]) {
       const owner = await q('SELECT user_id, to_key_id FROM deposits WHERE chain = $1 AND tx_hash = $2 AND token = $3', [
@@ -76,7 +76,7 @@ export async function creditDeposit(
       const b = await q('SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal FROM ledger WHERE user_id = $1', [userId])
       const existingUserId = (owner.rows[0]?.user_id as string | undefined) ?? null
       const existingToKeyId = (owner.rows[0]?.to_key_id as string | undefined) ?? null
-      const requestedToKeyId = opts.toKeyId ?? null
+      const requestedToKeyId = storedToKeyId
       return {
         credited: false,
         balance: Number(b.rows[0]?.bal ?? 0),
@@ -91,7 +91,7 @@ export async function creditDeposit(
       const b = await q('SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal FROM ledger WHERE user_id = $1', [userId])
       return Number(b.rows[0]?.bal ?? 0)
     }
-    if (opts.toKeyId) {
+    if (storedToKeyId) {
       const k = await q('UPDATE api_keys SET credit_usd_micros = credit_usd_micros + $1 WHERE id = $2 RETURNING credit_usd_micros', [amountMicros, opts.toKeyId])
       if (!k.rows[0]) throw new Error('api key not found for deposit credit')
       return { credited: true, balance: await balNow(), keyCredit: Number(k.rows[0].credit_usd_micros) }
@@ -116,7 +116,7 @@ export async function creditPaymentDeposit(
   userId: string,
   amountMicros: number,
   ref: { chain: string; txHash: string; token: string },
-  opts: { toKeyId?: string | null; receivedBy: string; confirmations: number; requiredConfirmations: number }
+  opts: { toKeyId?: string | null; intentId?: string | null; receivedBy: string; confirmations: number; requiredConfirmations: number }
 ): Promise<{
   credited: boolean
   settled: boolean
@@ -143,7 +143,7 @@ export async function creditPaymentDeposit(
 
   return tx(async (q) => {
     const paymentResult = await q(
-      `SELECT id, user_id, state, status, intent_id
+      `SELECT id, user_id, state, status, intent_id, to_key_id
          FROM payments
         WHERE id = $1 AND user_id = $2
         FOR UPDATE`,
@@ -166,6 +166,23 @@ export async function creditPaymentDeposit(
         reason: 'payment_requires_reconciliation', balance: 0,
       }
     }
+
+    const storedIntentId = payment.intent_id ?? null
+    const storedToKeyId = payment.to_key_id ?? null
+    if (storedIntentId !== (opts.intentId ?? null)) {
+      return {
+        credited: false, settled: false, state: payment.state, reconciliation: false,
+        destinationConflict: false, scopeConflict: true, ownershipConflict: false,
+        reason: 'payment_intent_mismatch', balance: 0,
+      }
+    }
+    if (storedToKeyId !== (storedToKeyId)) {
+      return {
+        credited: false, settled: false, state: payment.state, reconciliation: false,
+        destinationConflict: true, scopeConflict: false, ownershipConflict: false,
+        reason: 'payment_destination_mismatch', balance: 0,
+      }
+    }
     if (payment.state === 'credited') {
       const existing = await q(
         `SELECT user_id, to_key_id, payment_id, received_by FROM deposits
@@ -174,15 +191,15 @@ export async function creditPaymentDeposit(
       )
       const row = existing.rows[0]
       const sameOwner = row?.user_id === userId
-      const sameDestination = (row?.to_key_id ?? null) === (opts.toKeyId ?? null)
+      const sameDestination = (row?.to_key_id ?? null) === (storedToKeyId)
       const sameScope = row?.payment_id === paymentId && row?.received_by === opts.receivedBy
       const balanceRow = await q(
         `SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal FROM ledger WHERE user_id = $1`,
         [userId]
       )
       let existingKeyCredit: number | undefined
-      if (opts.toKeyId && sameOwner && sameDestination) {
-        const key = await q('SELECT credit_usd_micros FROM api_keys WHERE id = $1 AND user_id = $2', [opts.toKeyId, userId])
+      if (storedToKeyId && sameOwner && sameDestination) {
+        const key = await q('SELECT credit_usd_micros FROM api_keys WHERE id = $1 AND user_id = $2', [storedToKeyId, userId])
         existingKeyCredit = key.rows[0] ? Number(key.rows[0].credit_usd_micros) : undefined
       }
       return {
@@ -207,7 +224,7 @@ export async function creditPaymentDeposit(
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (chain, tx_hash, token) DO NOTHING
        RETURNING id`,
-      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros, opts.toKeyId ?? null, paymentId, opts.receivedBy]
+      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros, storedToKeyId, paymentId, opts.receivedBy]
     )
 
     let creditedNow = Boolean(inserted.rows[0])
@@ -221,7 +238,7 @@ export async function creditPaymentDeposit(
       )
       const row = existing.rows[0]
       const sameOwner = row?.user_id === userId
-      const sameDestination = (row?.to_key_id ?? null) === (opts.toKeyId ?? null)
+      const sameDestination = (row?.to_key_id ?? null) === (storedToKeyId)
       const sameScope = row?.payment_id === paymentId && row?.received_by === opts.receivedBy
       if (!sameOwner) {
         return {
@@ -244,17 +261,17 @@ export async function creditPaymentDeposit(
           reason: 'deposit_destination_conflict', balance: 0,
         }
       }
-      if (opts.toKeyId) {
-        const key = await q('SELECT credit_usd_micros FROM api_keys WHERE id = $1 AND user_id = $2', [opts.toKeyId, userId])
+      if (storedToKeyId) {
+        const key = await q('SELECT credit_usd_micros FROM api_keys WHERE id = $1 AND user_id = $2', [storedToKeyId, userId])
         keyCredit = key.rows[0] ? Number(key.rows[0].credit_usd_micros) : undefined
       }
-    } else if (opts.toKeyId) {
+    } else if (storedToKeyId) {
       const key = await q(
         `UPDATE api_keys
             SET credit_usd_micros = credit_usd_micros + $1
           WHERE id = $2 AND user_id = $3 AND revoked_at IS NULL
           RETURNING credit_usd_micros`,
-        [amountMicros, opts.toKeyId, userId]
+        [amountMicros, storedToKeyId, userId]
       )
       if (!key.rows[0]) throw new Error('active API key not found for deposit credit')
       keyCredit = Number(key.rows[0].credit_usd_micros)
@@ -271,12 +288,13 @@ export async function creditPaymentDeposit(
           SET state = 'credited',
               credited_at = COALESCE(credited_at, now()),
               usd_value_micros = CASE WHEN $2::bigint > 0 THEN $2::bigint ELSE usd_value_micros END,
+              confirmations = $5,
               status = CASE WHEN status = 'pending_confirmations' THEN 'recorded' ELSE status END
         WHERE id = $1
           AND state = ANY($3::text[])
           AND status = ANY($4::text[])
         RETURNING intent_id`,
-      [paymentId, amountMicros, [...CREDITABLE_STATES], [...CREDITABLE_STATUSES]]
+      [paymentId, amountMicros, [...CREDITABLE_STATES], [...CREDITABLE_STATUSES], opts.confirmations]
     )
     if (!updated.rows[0]) throw new Error('Payment state changed while its row lock was held; credit transaction aborted')
 
@@ -289,7 +307,7 @@ export async function creditPaymentDeposit(
         JSON.stringify({
           usd_micros: amountMicros,
           destination: opts.toKeyId ? 'api_key' : 'account',
-          api_key_id: opts.toKeyId ?? null,
+          api_key_id: storedToKeyId,
           confirmations: opts.confirmations,
           required_confirmations: opts.requiredConfirmations,
         }),
