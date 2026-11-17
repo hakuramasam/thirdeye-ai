@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "stage": "HERMES Phase B",
+  "required_pull_requests": {
+    "B1_scheduler_operator_separation": 57,
+    "B2_execution_attribution": 56,
+    "B3_protected_resource_enforcement": 52,
+    "B4_sha_bound_independent_review": 58
+  },
+  "required_ci_check_names": ["verify"],
+  "required_review_check_names": [
+    "Independent approval on current head SHA",
+    "sha-bound-independent-review / Independent approval on current head SHA"
+  ],
+  "minimum_independent_approvals": 1,
+  "required_branch_protection_contexts": ["verify", "Independent approval on current head SHA"],
+  "automation_may_grant_authority": false
+}
