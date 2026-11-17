@@ -10,7 +10,6 @@ permissions:
   contents: read
   pull-requests: read
   checks: read
-  administration: read
 jobs:
   verify-graduation:
     name: Evaluate HERMES Phase B technical gates (manual)
@@ -23,5 +22,6 @@ jobs:
       - name: Verify merged PRs, independent approvals, CI and branch rules
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ADMIN_TOKEN: ${{ secrets.GITHUB_ADMIN_TOKEN }}
           OWNER_ATTESTATION: ${{ inputs.owner_attestation }}
         run: node .github/scripts/verify-hermes-phase-b-graduation.mjs
