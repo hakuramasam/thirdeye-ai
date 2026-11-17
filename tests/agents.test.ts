@@ -208,6 +208,13 @@ describe('Agents Module C Tests', () => {
     assert.ok([200, 422].includes(run.status))
     const runBody = await run.json()
     assert.ok(runBody.runId)
+    const manualAudit = await one(
+      `SELECT actor_type, authorization_context FROM agent_audit_events WHERE run_id = $1 AND event_type = 'run.started'`,
+      [runBody.runId]
+    )
+    assert.equal(manualAudit.actor_type, 'user')
+    assert.equal(manualAudit.authorization_context.invoker_id, testUser.id)
+    assert.equal(manualAudit.authorization_context.invocation_source, 'api.manual_agent_run')
 
     // run history
     const runs = await app.request(`/api/agents/${agent.id}/runs`, { headers: H })
@@ -262,6 +269,31 @@ describe('Agents Module C Tests', () => {
     assert.equal(cronRes.status, 200)
     const cronBody = await cronRes.json()
     assert.ok(Array.isArray(cronBody.triggered))
+    assert.equal(cronBody.triggered.length, 0)
+
+    // A due scheduled run is attributed to the scheduler service, never the shared credential as a user.
+    await query(
+      `INSERT INTO agents (id, user_id, name, system_prompt, model, mcp_servers, x402_enabled, budget_usd_micros, max_steps, cron, status)
+       VALUES ('agt_scheduler_attribution', $1, 'scheduled-agent', 'Run scheduled work.', 'thirdeye-mock', '[]', false, 100000, 4, '* * * * *', 'active')
+       ON CONFLICT DO NOTHING`,
+      [testUser.id]
+    )
+    const scheduledRes = await app.request('/api/cron/agents', {
+      method: 'POST', headers: { authorization: 'Bearer test-cron-secret' },
+    })
+    assert.equal(scheduledRes.status, 200)
+    const scheduledBody = await scheduledRes.json()
+    assert.ok(scheduledBody.triggered.includes('agt_scheduler_attribution'))
+    const scheduledRun = scheduledBody.results.find((item: any) => item.agent_id === 'agt_scheduler_attribution')
+    assert.ok(scheduledRun?.runId)
+    const schedulerAudit = await one(
+      `SELECT actor_type, authorization_context FROM agent_audit_events WHERE run_id = $1 AND event_type = 'run.started'`,
+      [scheduledRun.runId]
+    )
+    assert.equal(schedulerAudit.actor_type, 'scheduler')
+    assert.equal(schedulerAudit.authorization_context.invoker_id, 'vercel-cron')
+    assert.equal(schedulerAudit.authorization_context.invocation_source, 'api.cron.scheduled')
+
     envMod.cronSecret = ''
     process.env.CRON_SECRET = ''
   })
