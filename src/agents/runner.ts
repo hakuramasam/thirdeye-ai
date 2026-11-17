@@ -31,6 +31,7 @@ import {
   recordStageTransition,
   readStageLedger,
   type AuditContext,
+  type ActorType,
 } from './audit-log.js'
 import { planForPipeline } from './pipeline.js'
 import {
@@ -95,6 +96,12 @@ export type RunnerDeps = {
    * and task/pipeline/stage travel with the work rather than being guessed from timing later.
    */
   correlationId?: string
+  /** Initiating principal; inherited by delegated child runs. */
+  actorType?: ActorType
+  /** Stable, non-secret identifier for the initiating principal or service. */
+  invokerId?: string
+  /** Trusted call-site label, never supplied by the model. */
+  invocationSource?: string
   parentRunId?: string
   taskId?: string
   pipelineId?: string
@@ -274,6 +281,11 @@ export async function runAgent(
           agentRole: agent.name,
           pipelineId: deps.pipelineId ?? null,
           stageId: deps.stageId ?? null,
+          actorType: deps.actorType ?? 'agent',
+          authorizationContext: {
+            invoker_id: deps.invokerId ?? null,
+            invocation_source: deps.invocationSource ?? 'agent.internal',
+          },
         },
         {
           errorCode: rateLimited ? 'rate_limited' : timedOut ? 'deadline_exceeded' : 'uncaught_exception',
@@ -334,6 +346,11 @@ async function runAgentInner(
     agentRole: agent.name,
     pipelineId: deps.pipelineId ?? null,
     stageId: deps.stageId ?? null,
+    actorType: deps.actorType ?? 'agent',
+    authorizationContext: {
+      invoker_id: deps.invokerId ?? null,
+      invocation_source: deps.invocationSource ?? 'agent.internal',
+    },
   }
   const startedAt = Date.now()
   const budget = Number(agent.budget_usd_micros)
@@ -722,6 +739,9 @@ async function runAgentInner(
                         // The child inherits the chain: same correlation, this run as its parent, and
                         // the task id, so one id traces the whole delegated action.
                         correlationId,
+                        actorType: deps.actorType ?? 'agent',
+                        invokerId: deps.invokerId ?? null,
+                        invocationSource: deps.invocationSource ?? 'agent.internal',
                         parentRunId: runId,
                         taskId: taskDoc.task_id,
                         pipelineId: deps.pipelineId,

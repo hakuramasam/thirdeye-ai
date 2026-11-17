@@ -240,7 +240,11 @@ export function registerAgentsRoutes(app: SessionApp): void {
     if (typeof input !== 'string' || input.length < 1 || input.length > 16000) {
       return c.json({ error: { message: 'input must be 1-16000 characters', type: 'invalid_request', code: 400 } }, 400)
     }
-    const result = await runAgent(row, input, user)
+    const result = await runAgent(row, input, user, {
+      actorType: 'user',
+      invokerId: user.id,
+      invocationSource: 'api.manual_agent_run',
+    })
     return c.json(result, result.status === 'success' ? 200 : 422)
   })
 
@@ -327,7 +331,13 @@ export function registerCronRoute(app: SessionApp): void {
           return c.json({ triggered: [], skipped: [{ agent_id: opsRun, reason: 'idempotency key already used or in flight' }] })
         }
       }
-      const r = await runAgent(row as AgentRow, input.slice(0, 4000), user, { ...(lock ? { runId: lock.runId } : {}), ...(pipelineId ? { pipelineId } : {}) })
+      const r = await runAgent(row as AgentRow, input.slice(0, 4000), user, {
+        ...(lock ? { runId: lock.runId } : {}),
+        ...(pipelineId ? { pipelineId } : {}),
+        actorType: 'system',
+        invokerId: 'cron-credential',
+        invocationSource: 'api.cron.ops',
+      })
       if (lock) await finishScheduleLock(lock.id, lock.runId, r.status === 'success' ? 'COMPLETED' : 'FAILED')
       return c.json({ triggered: [opsRun], results: [{ agent_id: opsRun, ...r }] })
     }
@@ -380,7 +390,13 @@ export function registerCronRoute(app: SessionApp): void {
           results.push({ agent_id: row.id, status: 'error', error: 'owner not found' })
           continue
         }
-        const r = await runAgent(row, scheduledBrief(now), user, { runId: lock.runId, deadlineMs: tickDeadline })
+        const r = await runAgent(row, scheduledBrief(now), user, {
+          runId: lock.runId,
+          deadlineMs: tickDeadline,
+          actorType: 'scheduler',
+          invokerId: 'vercel-cron',
+          invocationSource: 'api.cron.scheduled',
+        })
         await finishScheduleLock(lock.id, lock.runId, r.status === 'success' ? 'COMPLETED' : 'FAILED', {
           spend_usd_micros: r.spend_usd_micros,
         })

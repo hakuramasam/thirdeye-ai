@@ -70,7 +70,11 @@ export const teamAgentRun = inngest.createFunction(
     const result = await step.run('run-agent', async () => {
       const agent = await one('SELECT * FROM agents WHERE id = $1', [loaded.agentId])
       const user = await one('SELECT * FROM users WHERE id = $1', [loaded.userId])
-      const r = await runAgent(agent as unknown as AgentRow, input, user as unknown as UserRow)
+      const r = await runAgent(agent as unknown as AgentRow, input, user as unknown as UserRow, {
+        actorType: 'service',
+        invokerId: 'inngest:team-agent-run',
+        invocationSource: 'inngest.event.thirdeye/team.run',
+      })
       return { status: r.status, spendMicros: r.spend_usd_micros ?? 0, output: String(r.output ?? '').slice(0, 2000) }
     })
 
