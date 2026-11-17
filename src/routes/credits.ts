@@ -60,12 +60,12 @@ async function creditVerified(
   }
 }
 
-function claimConflictResponse(c: any, claim: { scopeConflict: boolean; destinationConflict: boolean }) {
-  if (!claim.scopeConflict && !claim.destinationConflict) return null
+function claimConflictResponse(c: any, claim: { scopeConflict: boolean; destinationConflict: boolean; ownershipConflict: boolean }) {
+  if (!claim.scopeConflict && !claim.destinationConflict && !claim.ownershipConflict) return null
   return c.json({
     accepted: false,
     error: {
-      code: claim.scopeConflict ? 'payment_intent_conflict' : 'payment_destination_conflict',
+      code: claim.ownershipConflict ? 'payment_already_claimed' : claim.scopeConflict ? 'payment_intent_conflict' : 'payment_destination_conflict',
       message: 'This transfer is already bound to a different payment intent or credit destination. No new credit was issued.',
     },
   }, 409)
@@ -111,6 +111,7 @@ export async function recordPayment(args: {
   toKeyId: string | null
   scopeConflict: boolean
   destinationConflict: boolean
+  ownershipConflict: boolean
 }> {
   const t = args.transfer
   const id = 'pay_' + randomBytes(9).toString('hex')
@@ -124,7 +125,7 @@ export async function recordPayment(args: {
                              state, confirmations, observed_block)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        ON CONFLICT (chain_id, tx_hash, token, received_by) DO NOTHING
-       RETURNING id, intent_id, to_key_id, state`,
+       RETURNING id, user_id, intent_id, to_key_id, state`,
       [id, requestedIntentId, requestedToKeyId, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt,
        t.from, t.raw_amount, t.decimals, args.usdMicros, args.priceUsd ?? null, args.pool ?? null,
        args.intent?.purpose ?? null, args.intent?.memo ?? null, args.status, args.refusalCode,
@@ -136,7 +137,7 @@ export async function recordPayment(args: {
     let payment = inserted.rows[0]
     if (duplicate) {
       const existing = await q(
-        `SELECT id, intent_id, to_key_id, state FROM payments
+        `SELECT id, user_id, intent_id, to_key_id, state FROM payments
           WHERE chain_id = $1 AND lower(tx_hash) = lower($2) AND lower(token) = lower($3) AND received_by = $4
           FOR UPDATE`,
         [t.chain_id, t.tx_hash, t.token, args.receivedAt]
@@ -149,10 +150,11 @@ export async function recordPayment(args: {
     const toKeyId = payment.to_key_id ?? null
     const scopeConflict = intentId !== requestedIntentId
     const destinationConflict = toKeyId !== requestedToKeyId
+    const ownershipConflict = payment.user_id !== args.userId
 
     // The confirming audit event shares the payment insert transaction. If an earlier process
     // crashed between those writes, a retry repairs the missing event without duplicating it.
-    if (!scopeConflict && !destinationConflict && args.status === 'pending_confirmations') {
+    if (!scopeConflict && !destinationConflict && !ownershipConflict && args.status === 'pending_confirmations') {
       const existingEvent = await q(
         `SELECT id FROM payment_events WHERE payment_id = $1 AND kind = 'confirming' LIMIT 1`,
         [payment.id]
@@ -182,6 +184,7 @@ export async function recordPayment(args: {
       toKeyId,
       scopeConflict,
       destinationConflict,
+      ownershipConflict,
     }
   })
 }
