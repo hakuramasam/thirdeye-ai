@@ -117,6 +117,10 @@ describe('settlement integrity', () => {
         WHERE table_name = 'payments' AND column_name = 'to_key_id'`
     )
     assert.equal(paymentDestinationColumn.rows.length, 1)
+    const intentIndex = await query(
+      `SELECT indexname FROM pg_indexes WHERE tablename = 'payments' AND indexname = 'payments_one_claim_per_intent'`
+    )
+    assert.equal(intentIndex.rows.length, 1)
     await migrate()
     const again = await query(
       `SELECT count(*)::int AS n FROM schema_migrations WHERE version = $1`,
@@ -175,6 +179,20 @@ describe('settlement integrity', () => {
     })
     assert.equal(payment.toKeyId, keyId)
     assert.equal(payment.intentId, intentA)
+    const secondTransfer = await recordPayment({
+      intent: { id: intentA, api_key_id: keyId },
+      toKeyId: keyId,
+      userId: owner.id,
+      transfer: transfer({ tx_hash: '0x' + 'e5'.repeat(32) }),
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 12,
+      observedBlock: 100,
+    })
+    assert.equal(secondTransfer.intentConflict, true, 'an open intent may be claimed by only one transfer')
     const beforeCredit = await one(`SELECT status FROM payment_intents WHERE id = $1`, [intentA])
     assert.equal(beforeCredit.status, 'open', 'recording a payment must not mark its intent paid before credit commits')
 
@@ -235,6 +253,37 @@ describe('settlement integrity', () => {
     const paymentRow = await one(`SELECT confirmations, to_key_id FROM payments WHERE id = $1`, [payment.paymentId])
     assert.equal(paymentRow.confirmations, 14)
     assert.equal(paymentRow.to_key_id, keyId)
+
+    const exactReplay = await recordPayment({
+      intent: { id: intentA, api_key_id: keyId },
+      toKeyId: keyId,
+      userId: owner.id,
+      transfer: transfer({ tx_hash: txHash }),
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 14,
+      observedBlock: 100,
+    })
+    assert.equal(exactReplay.duplicate, true)
+    assert.equal(exactReplay.intentConflict, false, 'the exact original transfer remains idempotently replayable')
+
+    const afterPaidNewTransfer = await recordPayment({
+      intent: { id: intentA, api_key_id: keyId },
+      toKeyId: keyId,
+      userId: owner.id,
+      transfer: transfer({ tx_hash: '0x' + 'e6'.repeat(32) }),
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 14,
+      observedBlock: 100,
+    })
+    assert.equal(afterPaidNewTransfer.intentConflict, true, 'a paid intent cannot be reused for a new transfer')
   })
 
   it('writes the confirming audit event with the payment claim', async () => {
