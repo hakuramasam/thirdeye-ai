@@ -441,4 +441,53 @@ describe('settlement integrity', () => {
     assert.notEqual((res as any).code, 'not_found', 'a failed read must not tell the caller the deposit does not exist')
     assert.equal((res as any).code, 'rpc_error')
   })
+  it('does not treat an account-credit replay as settled for a key destination', async () => {
+    const args = { chain: 'base', txHash: '0x' + 'a1'.repeat(32), token: TOKEN }
+    const account = await creditDeposit(owner.id, 2_000_000, args)
+    assert.equal(account.credited, true)
+
+    const replayToKey = await creditDeposit(owner.id, 2_000_000, args, { toKeyId: keyId })
+    assert.equal(replayToKey.credited, false)
+    assert.equal(replayToKey.existingUserId, owner.id)
+    assert.equal(replayToKey.existingToKeyId, null)
+    assert.equal(replayToKey.destinationConflict, true)
+
+    const key = await one(`SELECT credit_usd_micros FROM api_keys WHERE id = $1`, [keyId])
+    assert.equal(Number(key.credit_usd_micros), 0, 'the account credit must not be mistaken for a key credit')
+  })
+
+  it('does not treat a key-credit replay as settled for the account destination', async () => {
+    const args = { chain: 'base', txHash: '0x' + 'a2'.repeat(32), token: TOKEN }
+    const key = await creditDeposit(owner.id, 2_000_000, args, { toKeyId: keyId })
+    assert.equal(key.credited, true)
+
+    const replayToAccount = await creditDeposit(owner.id, 2_000_000, args)
+    assert.equal(replayToAccount.credited, false)
+    assert.equal(replayToAccount.existingUserId, owner.id)
+    assert.equal(replayToAccount.existingToKeyId, keyId)
+    assert.equal(replayToAccount.destinationConflict, true)
+
+    const accountLedger = await one(
+      `SELECT count(*)::int AS n FROM ledger WHERE user_id = $1 AND ref = $2`,
+      [owner.id, `base:${args.txHash}`]
+    )
+    assert.equal(accountLedger.n, 0, 'the key credit must not be mistaken for an account credit')
+  })
+
+  it('same-destination replays remain idempotent and do not conflict', async () => {
+    const accountArgs = { chain: 'base', txHash: '0x' + 'a3'.repeat(32), token: TOKEN }
+    await creditDeposit(owner.id, 1_000_000, accountArgs)
+    const accountReplay = await creditDeposit(owner.id, 1_000_000, accountArgs)
+    assert.equal(accountReplay.credited, false)
+    assert.equal(accountReplay.destinationConflict, false)
+    assert.equal(accountReplay.existingToKeyId, null)
+
+    const keyArgs = { chain: 'base', txHash: '0x' + 'a4'.repeat(32), token: TOKEN }
+    await creditDeposit(owner.id, 1_000_000, keyArgs, { toKeyId: keyId })
+    const keyReplay = await creditDeposit(owner.id, 1_000_000, keyArgs, { toKeyId: keyId })
+    assert.equal(keyReplay.credited, false)
+    assert.equal(keyReplay.destinationConflict, false)
+    assert.equal(keyReplay.existingToKeyId, keyId)
+  })
+
 })
