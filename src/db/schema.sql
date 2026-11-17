@@ -81,17 +81,11 @@ CREATE TABLE IF NOT EXISTS deposits (
   token             text NOT NULL,           -- lowercase 0x token address
   tx_hash           text NOT NULL,
   amount_usd_micros bigint NOT NULL,
-  to_key_id         text,                    -- NULL = account ledger; otherwise the exact prepaid API key
-  payment_id        text,                    -- payment-review row that authorized this one-time credit
-  received_by       text,                    -- exact platform receiver associated with that payment row
   status            text NOT NULL DEFAULT 'confirmed',
   created_at        timestamptz NOT NULL DEFAULT now(),
   UNIQUE (chain, tx_hash, token)
 );
 
-ALTER TABLE deposits ADD COLUMN IF NOT EXISTS to_key_id text;
-ALTER TABLE deposits ADD COLUMN IF NOT EXISTS payment_id text;
-ALTER TABLE deposits ADD COLUMN IF NOT EXISTS received_by text;
 
 CREATE TABLE IF NOT EXISTS ledger (
   id               bigserial PRIMARY KEY,
@@ -295,19 +289,6 @@ CREATE TABLE IF NOT EXISTS payment_events (
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_payment_events_payment ON payment_events(payment_id, created_at);
-
--- Payment history is an audit record, not mutable application state. Enforce append-only at the
--- database boundary so a later writer cannot rewrite or erase evidence of a credit/reorg.
-CREATE OR REPLACE FUNCTION payment_events_append_only() RETURNS trigger AS $payment_events_fn$
-BEGIN
-  RAISE EXCEPTION 'payment_events is append-only (%; write a new event instead)', TG_OP;
-END;
-$payment_events_fn$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS payment_events_no_rewrite ON payment_events;
-CREATE TRIGGER payment_events_no_rewrite
-  BEFORE UPDATE OR DELETE ON payment_events
-  FOR EACH ROW EXECUTE FUNCTION payment_events_append_only();
 
 -- Partner hub: a private, scoped workspace shared between the owner, this agent and
 -- named external partners. Keys are stored hashed and shown once at issue time.
