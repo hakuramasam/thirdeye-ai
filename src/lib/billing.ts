@@ -306,7 +306,7 @@ export async function creditPaymentDeposit(
         paymentId,
         JSON.stringify({
           usd_micros: amountMicros,
-          destination: opts.toKeyId ? 'api_key' : 'account',
+          destination: storedToKeyId ? 'api_key' : 'account',
           api_key_id: storedToKeyId,
           confirmations: opts.confirmations,
           required_confirmations: opts.requiredConfirmations,
