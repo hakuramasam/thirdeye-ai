@@ -10,7 +10,7 @@ import { verifyDeposit } from '../payments/verify.js'
 import { findIncomingTransfer, checkSenderOwnership } from '../payments/verify.js'
 import { prepareAutoConvert, autoConvertPolicyFromEnv } from '../payments/autoConvert.js'
 import { decideSettlement, type FinalityVerdict } from '../payments/finality.js'
-import { markCredited, markReorged, paymentStateFor, logPaymentEvent } from '../payments/settle.js'
+import { markReorged, paymentStateFor, logPaymentEvent } from '../payments/settle.js'
 import { randomBytes } from 'node:crypto'
 import type { IncomingTransfer } from '../payments/verify.js'
 
