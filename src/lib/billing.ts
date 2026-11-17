@@ -1,4 +1,7 @@
+import { randomBytes } from 'node:crypto'
 import { one, query, tx } from '../db/index.js'
+import { CREDITABLE_STATES } from '../payments/finality.js'
+import { CREDITABLE_STATUSES } from '../payments/settle.js'
 import { newId } from './env.js'
 
 /**
@@ -97,6 +100,194 @@ export async function creditDeposit(
       userId, amountMicros, 'deposit', `${ref.chain}:${ref.txHash}`,
     ])
     return { credited: true, balance: await balNow() }
+  })
+}
+
+/**
+ * Credit a payment and move its payment row to credited under one database transaction.
+ *
+ * The payment row is locked before the idempotency insert. If reorg handling wins the lock first,
+ * this function sees the reorg state and refuses to move money. If this function wins first, a later
+ * reorg transition sees credited and escalates to reconciliation. The deposit, destination, ledger
+ * or key balance, payment state, and audit event commit or roll back together.
+ */
+export async function creditPaymentDeposit(
+  paymentId: string,
+  userId: string,
+  amountMicros: number,
+  ref: { chain: string; txHash: string; token: string },
+  opts: { toKeyId?: string | null; confirmations: number; requiredConfirmations: number }
+): Promise<{
+  credited: boolean
+  settled: boolean
+  state: string | null
+  reconciliation: boolean
+  destinationConflict: boolean
+  ownershipConflict: boolean
+  reason?: string
+  balance: number
+  keyCredit?: number
+}> {
+  if (!Number.isSafeInteger(amountMicros) || amountMicros <= 0) {
+    throw new Error('A payment credit must be a positive integer number of USD micros')
+  }
+  if (!Number.isSafeInteger(opts.confirmations) || !Number.isSafeInteger(opts.requiredConfirmations) ||
+      opts.requiredConfirmations < 1 || opts.confirmations < opts.requiredConfirmations) {
+    return {
+      credited: false, settled: false, state: null, reconciliation: false,
+      destinationConflict: false, ownershipConflict: false,
+      reason: 'insufficient_confirmations', balance: 0,
+    }
+  }
+
+  return tx(async (q) => {
+    const paymentResult = await q(
+      `SELECT id, user_id, state, status, intent_id
+         FROM payments
+        WHERE id = $1 AND user_id = $2
+        FOR UPDATE`,
+      [paymentId, userId]
+    )
+    const payment = paymentResult.rows[0]
+    if (!payment) {
+      return {
+        credited: false, settled: false, state: null, reconciliation: false,
+        destinationConflict: false, ownershipConflict: false,
+        reason: 'payment_not_found', balance: 0,
+      }
+    }
+
+    if (payment.state === 'reorged' || payment.state === 'needs_reconciliation') {
+      return {
+        credited: false, settled: false, state: payment.state,
+        reconciliation: payment.state === 'needs_reconciliation',
+        destinationConflict: false, ownershipConflict: false,
+        reason: 'payment_requires_reconciliation', balance: 0,
+      }
+    }
+    if (payment.state === 'credited') {
+      const existing = await q(
+        `SELECT user_id, to_key_id FROM deposits
+          WHERE chain = $1 AND tx_hash = $2 AND token = $3`,
+        [ref.chain, ref.txHash.toLowerCase(), ref.token.toLowerCase()]
+      )
+      const row = existing.rows[0]
+      const sameOwner = row?.user_id === userId
+      const sameDestination = (row?.to_key_id ?? null) === (opts.toKeyId ?? null)
+      return {
+        credited: false, settled: Boolean(sameOwner && sameDestination), state: 'credited',
+        reconciliation: false, destinationConflict: Boolean(sameOwner && !sameDestination),
+        ownershipConflict: Boolean(row && !sameOwner),
+        reason: 'already_credited', balance: 0,
+      }
+    }
+    if (!CREDITABLE_STATES.has(payment.state) || !CREDITABLE_STATUSES.includes(payment.status)) {
+      return {
+        credited: false, settled: false, state: payment.state, reconciliation: false,
+        destinationConflict: false, ownershipConflict: false,
+        reason: 'payment_not_creditable', balance: 0,
+      }
+    }
+
+    const inserted = await q(
+      `INSERT INTO deposits (id, user_id, chain, token, tx_hash, amount_usd_micros, to_key_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (chain, tx_hash, token) DO NOTHING
+       RETURNING id`,
+      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros, opts.toKeyId ?? null]
+    )
+
+    let creditedNow = Boolean(inserted.rows[0])
+    let keyCredit: number | undefined
+    if (!creditedNow) {
+      const existing = await q(
+        `SELECT user_id, to_key_id FROM deposits
+          WHERE chain = $1 AND tx_hash = $2 AND token = $3
+          FOR UPDATE`,
+        [ref.chain, ref.txHash.toLowerCase(), ref.token.toLowerCase()]
+      )
+      const row = existing.rows[0]
+      const sameOwner = row?.user_id === userId
+      const sameDestination = (row?.to_key_id ?? null) === (opts.toKeyId ?? null)
+      if (!sameOwner) {
+        return {
+          credited: false, settled: false, state: payment.state, reconciliation: false,
+          destinationConflict: false, ownershipConflict: true,
+          reason: 'deposit_already_owned', balance: 0,
+        }
+      }
+      if (!sameDestination) {
+        return {
+          credited: false, settled: false, state: payment.state, reconciliation: false,
+          destinationConflict: true, ownershipConflict: false,
+          reason: 'deposit_destination_conflict', balance: 0,
+        }
+      }
+    } else if (opts.toKeyId) {
+      const key = await q(
+        `UPDATE api_keys
+            SET credit_usd_micros = credit_usd_micros + $1
+          WHERE id = $2 AND user_id = $3 AND revoked_at IS NULL
+          RETURNING credit_usd_micros`,
+        [amountMicros, opts.toKeyId, userId]
+      )
+      if (!key.rows[0]) throw new Error('active API key not found for deposit credit')
+      keyCredit = Number(key.rows[0].credit_usd_micros)
+    } else {
+      await q(
+        `INSERT INTO ledger (user_id, amount_usd_micros, kind, ref)
+         VALUES ($1, $2, 'deposit', $3)`,
+        [userId, amountMicros, `${ref.chain}:${ref.txHash}`]
+      )
+    }
+
+    const updated = await q(
+      `UPDATE payments
+          SET state = 'credited',
+              credited_at = COALESCE(credited_at, now()),
+              usd_value_micros = CASE WHEN $2::bigint > 0 THEN $2::bigint ELSE usd_value_micros END,
+              status = CASE WHEN status = 'pending_confirmations' THEN 'recorded' ELSE status END
+        WHERE id = $1
+          AND state = ANY($3::text[])
+          AND status = ANY($4::text[])
+        RETURNING intent_id`,
+      [paymentId, amountMicros, [...CREDITABLE_STATES], [...CREDITABLE_STATUSES]]
+    )
+    if (!updated.rows[0]) throw new Error('Payment state changed while its row lock was held; credit transaction aborted')
+
+    await q(
+      `INSERT INTO payment_events (id, payment_id, kind, detail)
+       VALUES ($1, $2, 'credited', $3)`,
+      [
+        'pev_' + randomBytes(9).toString('hex'),
+        paymentId,
+        JSON.stringify({
+          usd_micros: amountMicros,
+          destination: opts.toKeyId ? 'api_key' : 'account',
+          api_key_id: opts.toKeyId ?? null,
+          confirmations: opts.confirmations,
+          required_confirmations: opts.requiredConfirmations,
+        }),
+      ]
+    )
+    if (updated.rows[0].intent_id) {
+      await q(
+        `UPDATE payment_intents SET status = 'paid'
+          WHERE id = $1 AND status = 'open'`,
+        [updated.rows[0].intent_id]
+      )
+    }
+
+    const balance = await q(
+      `SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal
+         FROM ledger WHERE user_id = $1`,
+      [userId]
+    )
+    return {
+      credited: creditedNow, settled: true, state: 'credited', reconciliation: false,
+      destinationConflict: false, ownershipConflict: false,
+      balance: Number(balance.rows[0]?.bal ?? 0), keyCredit,
+    }
   })
 }
 
