@@ -138,36 +138,58 @@ export async function recordPayment(args: {
         [requestedIntentId, args.userId]
       )
       const intentRow = intentResult.rows[0]
-      if (
-        !intentRow ||
-        intentRow.status !== 'open' ||
-        intentRow.not_expired !== true ||
-        (intentRow.api_key_id ?? null) !== requestedToKeyId
-      ) {
+      if (!intentRow) {
         return {
           paymentId: '', duplicate: true, state: null,
           intentId: requestedIntentId, toKeyId: requestedToKeyId,
-          scopeConflict: !intentRow, destinationConflict: Boolean(intentRow && (intentRow.api_key_id ?? null) !== requestedToKeyId),
+          scopeConflict: true, destinationConflict: false,
           ownershipConflict: false, intentConflict: true,
         }
       }
 
-      const existingIntentPayment = await q(
-        `SELECT id, user_id, intent_id, to_key_id, state
-           FROM payments
-          WHERE intent_id = $1
+      // Another request may have inserted this exact transfer while we waited for the intent
+      // lock. Allow that exact replay even if the first request has already paid the intent.
+      const concurrentTransfer = (await q(
+        `SELECT id, user_id, intent_id, to_key_id, state FROM payments
+          WHERE chain_id = $1 AND lower(tx_hash) = lower($2) AND lower(token) = lower($3) AND received_by = $4
           FOR UPDATE`,
-        [requestedIntentId]
-      )
-      if (existingIntentPayment.rows[0]) {
-        return {
-          paymentId: existingIntentPayment.rows[0].id, duplicate: true,
-          state: existingIntentPayment.rows[0].state ?? null,
-          intentId: existingIntentPayment.rows[0].intent_id ?? null,
-          toKeyId: existingIntentPayment.rows[0].to_key_id ?? null,
-          scopeConflict: false, destinationConflict: false,
-          ownershipConflict: existingIntentPayment.rows[0].user_id !== args.userId,
-          intentConflict: true,
+        [t.chain_id, t.tx_hash, t.token, args.receivedAt]
+      )).rows[0]
+      if (concurrentTransfer) {
+        payment = concurrentTransfer
+        duplicate = true
+      } else {
+        if (
+          intentRow.status !== 'open' ||
+          intentRow.not_expired !== true ||
+          (intentRow.api_key_id ?? null) !== requestedToKeyId
+        ) {
+          return {
+            paymentId: '', duplicate: true, state: null,
+            intentId: requestedIntentId, toKeyId: requestedToKeyId,
+            scopeConflict: false,
+            destinationConflict: (intentRow.api_key_id ?? null) !== requestedToKeyId,
+            ownershipConflict: false, intentConflict: true,
+          }
+        }
+
+        const existingIntentPayment = await q(
+          `SELECT id, user_id, intent_id, to_key_id, state
+             FROM payments
+            WHERE intent_id = $1
+            FOR UPDATE`,
+          [requestedIntentId]
+        )
+        if (existingIntentPayment.rows[0]) {
+          return {
+            paymentId: existingIntentPayment.rows[0].id, duplicate: true,
+            state: existingIntentPayment.rows[0].state ?? null,
+            intentId: existingIntentPayment.rows[0].intent_id ?? null,
+            toKeyId: existingIntentPayment.rows[0].to_key_id ?? null,
+            scopeConflict: false, destinationConflict: false,
+            ownershipConflict: existingIntentPayment.rows[0].user_id !== args.userId,
+            intentConflict: true,
+          }
         }
       }
     }
