@@ -448,7 +448,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
         confirmations: finality.confirmations,
         required: finality.required,
       })
-      if (policyChain && policyDecision.status === 'credited' && policySettle.action === 'credit') {
+      if (policyChain && policyDecision.status === 'credited' && (policySettle.action === 'credit' || policySettle.action === 'already_credited')) {
         const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, policyRecord.paymentId, finality)
         if (dep.destinationConflict) {
           return c.json({ accepted: false, error: { code: 'deposit_destination_conflict', message: 'This transfer was already credited to a different destination. It cannot be moved to this account or API key automatically.' } }, 409)
@@ -558,7 +558,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       confirmations: finality.confirmations,
       required: finality.required,
     })
-    if (chainSlug && settle.action === 'credit') {
+    if (chainSlug && (settle.action === 'credit' || settle.action === 'already_credited')) {
       const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, recorded.paymentId, finality)
       if (dep.destinationConflict) {
         return c.json({ accepted: false, error: { code: 'deposit_destination_conflict', message: 'This transfer was already credited to a different destination. It cannot be moved to this account or API key automatically.' } }, 409)
