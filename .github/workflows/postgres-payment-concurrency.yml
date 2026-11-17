@@ -1,0 +1,45 @@
+name: Postgres payment concurrency
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  postgres-payment-concurrency:
+    name: Real PostgreSQL settlement and lock-order tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: thirdeye_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d thirdeye_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Run real PostgreSQL settlement suite
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/thirdeye_test
+          NODE_ENV: test
+        run: |
+          if [ -f tests/payment-settlement-integrity.test.ts ]; then
+            npx tsx --test tests/payment-settlement-integrity.test.ts
+          else
+            echo "Payment settlement suite is not present on this branch; skipped."
+          fi
