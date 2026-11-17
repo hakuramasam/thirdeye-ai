@@ -129,7 +129,7 @@ async function main() {
   if (!hasCi || !hasReview || !strict || requiredApprovals < manifest.minimum_independent_approvals) {
     blockers.push(`main branch protection/rulesets must require at least ${manifest.minimum_independent_approvals} approving review(s), current CI, SHA-bound review, and strict up-to-date checks (found approvals: ${requiredApprovals}; contexts: ${contexts.join(', ') || 'none'})`)
   } else {
-    evidence.push('PASS main branch rules require ${requiredApprovals} approving review(s), CI + SHA-bound independent review, and strict up-to-date checks')
+    evidence.push(`PASS main branch rules require ${requiredApprovals} approving review(s), CI + SHA-bound independent review, and strict up-to-date checks`)
   }
 
   const attestation = process.env.OWNER_ATTESTATION || ''
