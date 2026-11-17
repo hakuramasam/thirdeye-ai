@@ -442,6 +442,7 @@ describe('settlement integrity', () => {
     assert.equal((res as any).code, 'rpc_error')
   })
   it('does not treat an account-credit replay as settled for a key destination', async () => {
+    const beforeKey = await one(`SELECT credit_usd_micros FROM api_keys WHERE id = $1`, [keyId])
     const args = { chain: 'base', txHash: '0x' + 'a1'.repeat(32), token: TOKEN }
     const account = await creditDeposit(owner.id, 2_000_000, args)
     assert.equal(account.credited, true)
@@ -453,7 +454,7 @@ describe('settlement integrity', () => {
     assert.equal(replayToKey.destinationConflict, true)
 
     const key = await one(`SELECT credit_usd_micros FROM api_keys WHERE id = $1`, [keyId])
-    assert.equal(Number(key.credit_usd_micros), 0, 'the account credit must not be mistaken for a key credit')
+    assert.equal(Number(key.credit_usd_micros), Number(beforeKey.credit_usd_micros), 'the account credit must not be mistaken for a key credit')
   })
 
   it('does not treat a key-credit replay as settled for the account destination', async () => {
