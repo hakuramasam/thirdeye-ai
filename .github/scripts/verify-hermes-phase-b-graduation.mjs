@@ -21,6 +21,29 @@ export function latestIndependentApprovals(reviews, headSha, authorLogin) {
   )
 }
 
+export function isWriteEligiblePermission(permission) {
+  return ['write', 'maintain', 'admin'].includes(permission)
+}
+
+export function collectActiveRulesetRequirements(rulesets) {
+  const result = { contexts: [], strict: false, requiredApprovals: 0 }
+  for (const ruleset of rulesets.filter((item) => item.enforcement === 'active')) {
+    for (const rule of ruleset.rules ?? []) {
+      if (rule.type === 'pull_request') {
+        result.requiredApprovals = Math.max(
+          result.requiredApprovals,
+          rule.parameters?.required_approving_review_count ?? 0,
+        )
+      }
+      if (rule.type === 'required_status_checks') {
+        result.contexts.push(...(rule.parameters?.required_status_checks ?? []).map((item) => item.context))
+        result.strict ||= rule.parameters?.strict_required_status_checks_policy === true
+      }
+    }
+  }
+  return result
+}
+
 async function main() {
   const repo = process.env.GITHUB_REPOSITORY
   const token = process.env.GITHUB_ADMIN_TOKEN || process.env.GITHUB_TOKEN
@@ -70,12 +93,18 @@ async function main() {
 
     const reviews = await paged(`/pulls/${number}/reviews`)
     const approvals = latestIndependentApprovals(reviews, pr.head?.sha, pr.user?.login)
-    // Collaborator association is available on review records. GitHub branch protection itself
-    // enforces that required approvals come from write-eligible reviewers.
-    const reviewers = approvals.map((review) => review.user.login)
+    const reviewers = []
+    for (const review of approvals) {
+      try {
+        const permission = await api(`/collaborators/${encodeURIComponent(review.user.login)}/permission`)
+        if (isWriteEligiblePermission(permission.permission)) reviewers.push(review.user.login)
+      } catch {
+        // An unreadable or missing permission is not proof of reviewer authority.
+      }
+    }
     const reviewGatePassed = reviewers.length >= manifest.minimum_independent_approvals
     if (!reviewGatePassed) {
-      blockers.push(`${gate}: requires ${manifest.minimum_independent_approvals} latest independent approval(s) on exact head SHA ${pr.head?.sha}; found ${reviewers.length}`)
+      blockers.push(`${gate}: requires ${manifest.minimum_independent_approvals} latest independent approval(s) on exact head SHA ${pr.head?.sha} from write/maintain/admin reviewers; found ${reviewers.length}`)
     }
     const currentPr = await api(`/pulls/${number}`)
     const snapshotStable =
@@ -90,11 +119,11 @@ async function main() {
     )
     if (!successful) blockers.push(`${gate}: required CI check(s) are not successful on merge commit ${pr.merge_commit_sha}`)
 
-    evidence.push(`${reviewGatePassed && successful && snapshotStable ? 'PASS' : 'BLOCKED'} ${gate}: merged PR #${number}; independent reviewers=${reviewers.join(', ') || 'missing'}; merge CI=${successful ? 'success' : 'not green'}; snapshot=${snapshotStable ? 'stable' : 'changed'}`)
+    evidence.push(`${reviewGatePassed && successful && snapshotStable ? 'PASS' : 'BLOCKED'} ${gate}: merged PR #${number}; independent write-eligible reviewers=${reviewers.join(', ') || 'missing'}; merge CI=${successful ? 'success' : 'not green'}; snapshot=${snapshotStable ? 'stable' : 'changed'}`)
   }
 
   // A green workflow is not merge-blocking unless repository rules require it.
-  // Read both classic branch protection and rulesets: repositories can use either or both.
+  // Read both classic branch protection and complete ruleset definitions.
   let contexts = []
   let strict = false
   let requiredApprovals = 0
@@ -109,17 +138,19 @@ async function main() {
 
   const rulesetsResult = await request('/rulesets?includes_parents=true&per_page=100')
   if (rulesetsResult.status === 200 && Array.isArray(rulesetsResult.body)) {
-    for (const ruleset of rulesetsResult.body.filter((r) => r.enforcement === 'active')) {
-      for (const rule of ruleset.rules ?? []) {
-        if (rule.type === 'pull_request') {
-          requiredApprovals = Math.max(requiredApprovals, rule.parameters?.required_approving_review_count ?? 0)
-        }
-        if (rule.type === 'required_status_checks') {
-          contexts.push(...(rule.parameters?.required_status_checks ?? []).map((x) => x.context))
-          strict ||= rule.parameters?.strict_required_status_checks_policy === true
-        }
+    const activeRulesets = rulesetsResult.body.filter((item) => item.enforcement === 'active')
+    const details = []
+    for (const ruleset of activeRulesets) {
+      try {
+        details.push(await api(`/rulesets/${ruleset.id}`))
+      } catch (error) {
+        blockers.push(`Unable to inspect active ruleset ${ruleset.name ?? ruleset.id}: ${error.message}`)
       }
     }
+    const ruleRequirements = collectActiveRulesetRequirements(details)
+    contexts.push(...ruleRequirements.contexts)
+    strict ||= ruleRequirements.strict
+    requiredApprovals = Math.max(requiredApprovals, ruleRequirements.requiredApprovals)
   } else {
     blockers.push(`Unable to inspect repository rulesets (HTTP ${rulesetsResult.status})`)
   }
@@ -146,8 +177,8 @@ async function main() {
     `## ${manifest.stage} — automated graduation verification`,
     `**Result: ${status}**`,
     '',
-    ...evidence.map((x) => `- ${x}`),
-    ...(blockers.length ? ['', '### Blockers', ...blockers.map((x) => `- ${x}`)] : []),
+    ...evidence.map((item) => `- ${item}`),
+    ...(blockers.length ? ['', '### Blockers', ...blockers.map((item) => `- ${item}`)] : []),
     '',
     'This verifier checks technical prerequisites only. It never grants HERMES authority, merges PRs, deploys, or performs financial actions.',
   ]
