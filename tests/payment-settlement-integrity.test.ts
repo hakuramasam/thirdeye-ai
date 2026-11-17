@@ -465,7 +465,7 @@ describe('settlement integrity', () => {
       owner.id,
       5_000_000,
       { chain: 'base', txHash, token: TOKEN },
-      { confirmations: 12, requiredConfirmations: 10 },
+      { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(result.credited, true)
     assert.equal(result.settled, true)
@@ -513,20 +513,27 @@ describe('settlement integrity', () => {
   it('atomic payment settlement refuses an existing deposit credited to a different destination', async () => {
     const txHash = '0x' + 'b3'.repeat(32)
     const payment = await claim({ tx_hash: txHash })
-    await creditDeposit(owner.id, 5_000_000, { chain: 'base', txHash, token: TOKEN }, { toKeyId: keyId })
+    const first = await creditPaymentDeposit(
+      payment.paymentId,
+      owner.id,
+      5_000_000,
+      { chain: 'base', txHash, token: TOKEN },
+      { toKeyId: keyId, receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+    )
+    assert.equal(first.credited, true)
 
     const result = await creditPaymentDeposit(
       payment.paymentId,
       owner.id,
       5_000_000,
       { chain: 'base', txHash, token: TOKEN },
-      { confirmations: 12, requiredConfirmations: 10 },
+      { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(result.credited, false)
     assert.equal(result.settled, false)
     assert.equal(result.destinationConflict, true)
     const row = await one(`SELECT state FROM payments WHERE id = $1`, [payment.paymentId])
-    assert.equal(row.state, 'confirmed', 'destination conflict must not falsely settle the payment')
+    assert.equal(row.state, 'credited', 'a replay cannot move the existing key credit to the account')
   })
 
   it('atomic payment settlement refuses an insufficient confirmation count', async () => {
@@ -537,7 +544,7 @@ describe('settlement integrity', () => {
       owner.id,
       5_000_000,
       { chain: 'base', txHash, token: TOKEN },
-      { confirmations: 9, requiredConfirmations: 10 },
+      { receivedBy: VAULT, confirmations: 9, requiredConfirmations: 10 },
     )
     assert.equal(result.credited, false)
     assert.equal(result.reason, 'insufficient_confirmations')
