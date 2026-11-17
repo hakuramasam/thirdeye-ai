@@ -35,11 +35,13 @@ async function creditVerified(
   args: { chain: string; txHash: string; token: string },
   intentId: string | null | undefined,
   paymentId: string,
-  finality: FinalityVerdict
+  finality: FinalityVerdict,
+  receivedBy: string
 ) {
   const settle = (toKeyId: string | null = null) =>
     creditPaymentDeposit(paymentId, userId, usdMicros, args, {
       toKeyId,
+      receivedBy,
       confirmations: finality.confirmations,
       requiredConfirmations: finality.required,
     })
@@ -52,6 +54,7 @@ async function creditVerified(
         credited: dep.credited,
         settled: dep.settled,
         destinationConflict: dep.destinationConflict,
+        scopeConflict: dep.scopeConflict,
         ownershipConflict: dep.ownershipConflict,
         reconciliation: dep.reconciliation,
         reason: dep.reason,
@@ -67,6 +70,7 @@ async function creditVerified(
     credited: dep.credited,
     settled: dep.settled,
     destinationConflict: dep.destinationConflict,
+    scopeConflict: dep.scopeConflict,
     ownershipConflict: dep.ownershipConflict,
     reconciliation: dep.reconciliation,
     reason: dep.reason,
@@ -449,16 +453,16 @@ export function registerCreditsRoutes(app: SessionApp): void {
         required: finality.required,
       })
       if (policyChain && policyDecision.status === 'credited' && (policySettle.action === 'credit' || policySettle.action === 'already_credited')) {
-        const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, policyRecord.paymentId, finality)
+        const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, policyRecord.paymentId, finality, received_at)
         if (dep.destinationConflict) {
           return c.json({ accepted: false, error: { code: 'deposit_destination_conflict', message: 'This transfer was already credited to a different destination. It cannot be moved to this account or API key automatically.' } }, 409)
         }
-        if (dep.destinationConflict || dep.ownershipConflict || !dep.settled) {
+        if (dep.destinationConflict || dep.scopeConflict || dep.ownershipConflict || !dep.settled) {
           return c.json({
             accepted: false,
             reconciliation: dep.reconciliation,
             error: {
-              code: dep.destinationConflict ? 'deposit_destination_conflict' : dep.ownershipConflict ? 'deposit_already_owned' : dep.reason ?? 'payment_not_settled',
+              code: dep.destinationConflict ? 'deposit_destination_conflict' : dep.scopeConflict ? 'deposit_payment_scope_conflict' : dep.ownershipConflict ? 'deposit_already_owned' : dep.reason ?? 'payment_not_settled',
               message: 'The payment could not be safely settled to the requested destination. No new credit was issued.',
             },
           }, 409)
@@ -559,7 +563,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       required: finality.required,
     })
     if (chainSlug && (settle.action === 'credit' || settle.action === 'already_credited')) {
-      const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, recorded.paymentId, finality)
+      const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, recorded.paymentId, finality, received_at)
       if (dep.destinationConflict) {
         return c.json({ accepted: false, error: { code: 'deposit_destination_conflict', message: 'This transfer was already credited to a different destination. It cannot be moved to this account or API key automatically.' } }, 409)
       }
