@@ -62,10 +62,10 @@ export async function creditDeposit(
   return tx(async (q) => {
     await q('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId])
     const dep = await q(
-      `INSERT INTO deposits (id, user_id, chain, token, tx_hash, amount_usd_micros, to_key_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO deposits (id, user_id, chain, token, tx_hash, amount_usd_micros, to_key_id, payment_id, received_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (chain, tx_hash, token) DO NOTHING RETURNING id`,
-      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros, opts.toKeyId ?? null]
+      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros, opts.toKeyId ?? null, paymentId, opts.receivedBy]
     )
     if (!dep.rows[0]) {
       const owner = await q('SELECT user_id, to_key_id FROM deposits WHERE chain = $1 AND tx_hash = $2 AND token = $3', [
@@ -116,13 +116,14 @@ export async function creditPaymentDeposit(
   userId: string,
   amountMicros: number,
   ref: { chain: string; txHash: string; token: string },
-  opts: { toKeyId?: string | null; confirmations: number; requiredConfirmations: number }
+  opts: { toKeyId?: string | null; receivedBy: string; confirmations: number; requiredConfirmations: number }
 ): Promise<{
   credited: boolean
   settled: boolean
   state: string | null
   reconciliation: boolean
   destinationConflict: boolean
+  scopeConflict: boolean
   ownershipConflict: boolean
   reason?: string
   balance: number
@@ -135,7 +136,7 @@ export async function creditPaymentDeposit(
       opts.requiredConfirmations < 1 || opts.confirmations < opts.requiredConfirmations) {
     return {
       credited: false, settled: false, state: null, reconciliation: false,
-      destinationConflict: false, ownershipConflict: false,
+      destinationConflict: false, scopeConflict: false, ownershipConflict: false,
       reason: 'insufficient_confirmations', balance: 0,
     }
   }
@@ -167,13 +168,14 @@ export async function creditPaymentDeposit(
     }
     if (payment.state === 'credited') {
       const existing = await q(
-        `SELECT user_id, to_key_id FROM deposits
+        `SELECT user_id, to_key_id, payment_id, received_by FROM deposits
           WHERE chain = $1 AND tx_hash = $2 AND token = $3`,
         [ref.chain, ref.txHash.toLowerCase(), ref.token.toLowerCase()]
       )
       const row = existing.rows[0]
       const sameOwner = row?.user_id === userId
       const sameDestination = (row?.to_key_id ?? null) === (opts.toKeyId ?? null)
+      const sameScope = row?.payment_id === paymentId && row?.received_by === opts.receivedBy
       const balanceRow = await q(
         `SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal FROM ledger WHERE user_id = $1`,
         [userId]
@@ -184,8 +186,9 @@ export async function creditPaymentDeposit(
         existingKeyCredit = key.rows[0] ? Number(key.rows[0].credit_usd_micros) : undefined
       }
       return {
-        credited: false, settled: Boolean(sameOwner && sameDestination), state: 'credited',
+        credited: false, settled: Boolean(sameOwner && sameDestination && sameScope), state: 'credited',
         reconciliation: false, destinationConflict: Boolean(sameOwner && !sameDestination),
+        scopeConflict: Boolean(sameOwner && sameDestination && !sameScope),
         ownershipConflict: Boolean(row && !sameOwner),
         reason: 'already_credited', balance: Number(balanceRow.rows[0]?.bal ?? 0),
         keyCredit: existingKeyCredit,
@@ -211,7 +214,7 @@ export async function creditPaymentDeposit(
     let keyCredit: number | undefined
     if (!creditedNow) {
       const existing = await q(
-        `SELECT user_id, to_key_id FROM deposits
+        `SELECT user_id, to_key_id, payment_id, received_by FROM deposits
           WHERE chain = $1 AND tx_hash = $2 AND token = $3
           FOR UPDATE`,
         [ref.chain, ref.txHash.toLowerCase(), ref.token.toLowerCase()]
@@ -219,17 +222,25 @@ export async function creditPaymentDeposit(
       const row = existing.rows[0]
       const sameOwner = row?.user_id === userId
       const sameDestination = (row?.to_key_id ?? null) === (opts.toKeyId ?? null)
+      const sameScope = row?.payment_id === paymentId && row?.received_by === opts.receivedBy
       if (!sameOwner) {
         return {
           credited: false, settled: false, state: payment.state, reconciliation: false,
-          destinationConflict: false, ownershipConflict: true,
+          destinationConflict: false, scopeConflict: false, ownershipConflict: true,
           reason: 'deposit_already_owned', balance: 0,
+        }
+      }
+      if (!sameScope) {
+        return {
+          credited: false, settled: false, state: payment.state, reconciliation: false,
+          destinationConflict: false, scopeConflict: true, ownershipConflict: false,
+          reason: 'deposit_payment_scope_conflict', balance: 0,
         }
       }
       if (!sameDestination) {
         return {
           credited: false, settled: false, state: payment.state, reconciliation: false,
-          destinationConflict: true, ownershipConflict: false,
+          destinationConflict: true, scopeConflict: false, ownershipConflict: false,
           reason: 'deposit_destination_conflict', balance: 0,
         }
       }
