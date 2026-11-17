@@ -809,4 +809,37 @@ describe('settlement integrity', () => {
     }
   })
 
+
+  it('serializes concurrent payment credits on real PostgreSQL and records exactly one settlement', async () => {
+    const txHash = '0x' + 'c4'.repeat(32)
+    const payment = await claim({ tx_hash: txHash })
+    const args = {
+      paymentId: payment.paymentId,
+      userId: owner.id,
+      amountMicros: 5_000_000,
+      ref: { chain: 'base', txHash, token: TOKEN },
+      opts: { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+    }
+
+    const results = await Promise.all([
+      creditPaymentDeposit(args.paymentId, args.userId, args.amountMicros, args.ref, args.opts),
+      creditPaymentDeposit(args.paymentId, args.userId, args.amountMicros, args.ref, args.opts),
+      creditPaymentDeposit(args.paymentId, args.userId, args.amountMicros, args.ref, args.opts),
+    ])
+
+    assert.equal(results.filter((result) => result.credited).length, 1)
+    assert.ok(results.every((result) => result.settled))
+    const deposit = await one(
+      `SELECT count(*)::int AS n FROM deposits WHERE chain = $1 AND tx_hash = $2 AND token = $3 AND payment_id = $4`,
+      ['base', txHash, TOKEN, payment.paymentId],
+    )
+    assert.equal(deposit.n, 1)
+    const ledger = await one(
+      `SELECT count(*)::int AS n FROM ledger WHERE user_id = $1 AND ref = $2`,
+      [owner.id, `base:${txHash}`],
+    )
+    assert.equal(ledger.n, 1)
+    assert.equal((await eventsFor(payment.paymentId, 'credited')).length, 1)
+  })
+
 })
