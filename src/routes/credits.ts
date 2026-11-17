@@ -1,16 +1,15 @@
 import type { SessionApp } from '../lib/session.js'
 import { requireUser } from '../lib/session.js'
 import { env, depositAddress, platformReceivers } from '../lib/env.js'
-import { query } from '../db/index.js'
+import { one, query, tx } from '../db/index.js'
 import { getBalanceMicros, creditPaymentDeposit } from '../lib/billing.js'
-import { one } from '../db/index.js'
 import { decideCredit } from '../lib/creditPolicy.js'
 import { CHAINS, isPolicyPricedToken, platformTokenUsdMicros } from '../payments/chains.js'
 import { verifyDeposit } from '../payments/verify.js'
 import { findIncomingTransfer, checkSenderOwnership } from '../payments/verify.js'
 import { prepareAutoConvert, autoConvertPolicyFromEnv } from '../payments/autoConvert.js'
 import { decideSettlement, type FinalityVerdict } from '../payments/finality.js'
-import { markReorged, paymentStateFor, logPaymentEvent } from '../payments/settle.js'
+import { markReorged, paymentStateFor } from '../payments/settle.js'
 import { randomBytes } from 'node:crypto'
 import type { IncomingTransfer } from '../payments/verify.js'
 
@@ -104,51 +103,94 @@ export async function recordPayment(args: {
   refusalCode: string | null
   priceUsd?: number | null
   pool?: string | null
+  /** Immutable account-vs-key destination captured when the transfer is first claimed. */
+  toKeyId?: string | null
   /** Settlement state and the confirmation evidence behind it. */
   state?: string
   confirmations?: number
+  requiredConfirmations?: number
   observedBlock?: number | null
-}): Promise<{ paymentId: string; duplicate: boolean; state: string | null }> {
+}): Promise<{
+  paymentId: string
+  duplicate: boolean
+  state: string | null
+  intentId: string | null
+  toKeyId: string | null
+  scopeConflict: boolean
+  destinationConflict: boolean
+}> {
   const t = args.transfer
   const id = 'pay_' + randomBytes(9).toString('hex')
-  const inserted = (
-    await query(
-      `INSERT INTO payments (id, intent_id, user_id, chain_id, token, tx_hash, received_by, sender,
+  const requestedIntentId = args.intent?.id ?? null
+  const requestedToKeyId = args.toKeyId ?? args.intent?.api_key_id ?? null
+
+  return tx(async (q) => {
+    const inserted = await q(
+      `INSERT INTO payments (id, intent_id, to_key_id, user_id, chain_id, token, tx_hash, received_by, sender,
                              raw_amount, decimals, usd_value_micros, price_usd, pool, purpose, memo, status, refusal_code,
                              state, confirmations, observed_block)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
        ON CONFLICT (chain_id, tx_hash, token, received_by) DO NOTHING
-       RETURNING id`,
-      [id, args.intent?.id ?? null, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt,
+       RETURNING id, intent_id, to_key_id, state`,
+      [id, requestedIntentId, requestedToKeyId, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt,
        t.from, t.raw_amount, t.decimals, args.usdMicros, args.priceUsd ?? null, args.pool ?? null,
        args.intent?.purpose ?? null, args.intent?.memo ?? null, args.status, args.refusalCode,
        args.state ?? (args.status === 'recorded' ? 'confirmed' : 'detected'),
        args.confirmations ?? null, args.observedBlock ?? t.block_number ?? null]
     )
-  ).rows
 
-  const duplicate = inserted.length === 0
-  // On a conflict, return the id of the row that already exists. Returning the freshly generated
-  // id matched no row, so every later `UPDATE payments ... WHERE id = $1` silently changed
-  // nothing: the payment stayed in 'confirming' and the credit gate reopened on each retry.
-  let paymentId = inserted[0]?.id ?? id
-  if (duplicate) {
-    const existing = await query(
-      `SELECT id FROM payments
-        WHERE chain_id = $1 AND lower(tx_hash) = lower($2) AND lower(token) = lower($3) AND received_by = $4
-        LIMIT 1`,
-      [t.chain_id, t.tx_hash, t.token, args.receivedAt]
-    )
-    paymentId = existing.rows[0]?.id ?? id
-  }
+    const duplicate = inserted.rows.length === 0
+    let payment = inserted.rows[0]
+    if (duplicate) {
+      const existing = await q(
+        `SELECT id, intent_id, to_key_id, state FROM payments
+          WHERE chain_id = $1 AND lower(tx_hash) = lower($2) AND lower(token) = lower($3) AND received_by = $4
+          FOR UPDATE`,
+        [t.chain_id, t.tx_hash, t.token, args.receivedAt]
+      )
+      payment = existing.rows[0]
+    }
+    if (!payment?.id) throw new Error('Payment claim insert or replay lookup did not return a payment row')
 
-  if (!duplicate && args.intent?.id && args.status === 'recorded') {
-    await query(`UPDATE payment_intents SET status = 'paid' WHERE id = $1 AND user_id = $2 AND status = 'open'`, [
-      args.intent.id,
-      args.userId,
-    ])
-  }
-  return { paymentId, duplicate, state: args.state ?? null }
+    const intentId = payment.intent_id ?? null
+    const toKeyId = payment.to_key_id ?? null
+    const scopeConflict = intentId !== requestedIntentId
+    const destinationConflict = toKeyId !== requestedToKeyId
+
+    // The confirming audit event shares the payment insert transaction. If an earlier process
+    // crashed between those writes, a retry repairs the missing event without duplicating it.
+    if (!scopeConflict && !destinationConflict && args.status === 'pending_confirmations') {
+      const existingEvent = await q(
+        `SELECT id FROM payment_events WHERE payment_id = $1 AND kind = 'confirming' LIMIT 1`,
+        [payment.id]
+      )
+      if (!existingEvent.rows[0]) {
+        await q(
+          `INSERT INTO payment_events (id, payment_id, kind, detail)
+           VALUES ($1, $2, 'confirming', $3)`,
+          [
+            'pev_' + randomBytes(9).toString('hex'),
+            payment.id,
+            JSON.stringify({
+              confirmations: args.confirmations ?? null,
+              required: args.requiredConfirmations ?? null,
+              observed_block: args.observedBlock == null ? null : String(args.observedBlock),
+            }),
+          ]
+        )
+      }
+    }
+
+    return {
+      paymentId: payment.id,
+      duplicate,
+      state: payment.state ?? args.state ?? null,
+      intentId,
+      toKeyId,
+      scopeConflict,
+      destinationConflict,
+    }
+  })
 }
 
 export function registerCreditsRoutes(app: SessionApp): void {
