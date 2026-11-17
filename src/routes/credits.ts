@@ -758,6 +758,8 @@ export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRout
       chain: chainConfig.id,
       txHash,
       fromWallet: user.wallet,
+      selectedTransfer: transfer,
+      selectedFinality: found.finality,
     })
     if (!verification.ok) {
       return c.json({ error: { message: verification.message, type: 'billing', code: verification.code } }, 422)
