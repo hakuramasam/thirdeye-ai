@@ -1,0 +1,195 @@
+import { appendFileSync, readFileSync } from 'node:fs'
+
+export function latestIndependentApprovals(reviews, headSha, authorLogin) {
+  const latest = new Map()
+  for (const review of reviews) {
+    const login = review?.user?.login
+    if (!login || !review?.submitted_at) continue
+    const previous = latest.get(login)
+    const time = Date.parse(review.submitted_at)
+    const oldTime = previous ? Date.parse(previous.submitted_at) : -Infinity
+    if (!previous || time > oldTime || (time === oldTime && Number(review.id) > Number(previous.id))) {
+      latest.set(login, review)
+    }
+  }
+  return [...latest.values()].filter((review) =>
+    review.state === 'APPROVED' &&
+    review.commit_id === headSha &&
+    review.user.login !== authorLogin &&
+    review.user.type !== 'Bot' &&
+    ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(review.author_association)
+  )
+}
+
+export function isWriteEligiblePermission(permission) {
+  return ['write', 'maintain', 'admin'].includes(permission)
+}
+
+export function collectActiveRulesetRequirements(rulesets) {
+  const result = { contexts: [], strict: false, requiredApprovals: 0 }
+  for (const ruleset of rulesets.filter((item) => item.enforcement === 'active')) {
+    for (const rule of ruleset.rules ?? []) {
+      if (rule.type === 'pull_request') {
+        result.requiredApprovals = Math.max(
+          result.requiredApprovals,
+          rule.parameters?.required_approving_review_count ?? 0,
+        )
+      }
+      if (rule.type === 'required_status_checks') {
+        result.contexts.push(...(rule.parameters?.required_status_checks ?? []).map((item) => item.context))
+        result.strict ||= rule.parameters?.strict_required_status_checks_policy === true
+      }
+    }
+  }
+  return result
+}
+
+async function main() {
+  const repo = process.env.GITHUB_REPOSITORY
+  const token = process.env.GITHUB_ADMIN_TOKEN || process.env.GITHUB_TOKEN
+  if (!repo || !token) throw new Error('GITHUB_REPOSITORY and a GitHub token are required')
+
+  const manifest = JSON.parse(readFileSync('docs/authority/hermes-phase-b-graduation.json', 'utf8'))
+  if (manifest.automation_may_grant_authority !== false) {
+    throw new Error('Graduation verifier must remain technical-only and may never grant authority')
+  }
+  const headers = {
+    accept: 'application/vnd.github+json',
+    authorization: `Bearer ${token}`,
+    'x-github-api-version': '2022-11-28',
+  }
+  const request = async (path) => {
+    const response = await fetch(`https://api.github.com/repos/${repo}${path}`, { headers })
+    const body = await response.json().catch(() => ({}))
+    return { status: response.status, body }
+  }
+  const api = async (path) => {
+    const result = await request(path)
+    if (result.status < 200 || result.status >= 300) {
+      throw new Error(`GitHub API ${result.status} for ${path}`)
+    }
+    return result.body
+  }
+  const paged = async (path) => {
+    const all = []
+    for (let page = 1; ; page++) {
+      const batch = await api(`${path}${path.includes('?') ? '&' : '?'}per_page=100&page=${page}`)
+      all.push(...batch)
+      if (batch.length < 100) return all
+    }
+  }
+  const blockers = []
+  const evidence = []
+  const owner = (await api('')).owner?.login
+  if (!owner) throw new Error('Repository owner could not be determined')
+
+  for (const [gate, number] of Object.entries(manifest.required_pull_requests)) {
+    const pr = await api(`/pulls/${number}`)
+    if (!pr.merged || !pr.merged_at || !pr.merge_commit_sha) {
+      blockers.push(`${gate}: PR #${number} is not merged`)
+      evidence.push(`BLOCKED ${gate}: PR #${number} is open/unmerged`)
+      continue
+    }
+
+    const reviews = await paged(`/pulls/${number}/reviews`)
+    const approvals = latestIndependentApprovals(reviews, pr.head?.sha, pr.user?.login)
+    const reviewers = []
+    for (const review of approvals) {
+      try {
+        const permission = await api(`/collaborators/${encodeURIComponent(review.user.login)}/permission`)
+        if (isWriteEligiblePermission(permission.permission)) reviewers.push(review.user.login)
+      } catch {
+        // An unreadable or missing permission is not proof of reviewer authority.
+      }
+    }
+    const reviewGatePassed = reviewers.length >= manifest.minimum_independent_approvals
+    if (!reviewGatePassed) {
+      blockers.push(`${gate}: requires ${manifest.minimum_independent_approvals} latest independent approval(s) on exact head SHA ${pr.head?.sha} from write/maintain/admin reviewers; found ${reviewers.length}`)
+    }
+    const currentPr = await api(`/pulls/${number}`)
+    const snapshotStable =
+      currentPr.head?.sha === pr.head?.sha &&
+      currentPr.merge_commit_sha === pr.merge_commit_sha &&
+      currentPr.merged_at === pr.merged_at
+    if (!snapshotStable) blockers.push(`${gate}: PR head or merge snapshot changed during graduation verification`)
+
+    const checks = await api(`/commits/${pr.merge_commit_sha}/check-runs?per_page=100`)
+    const successful = manifest.required_ci_check_names.every((name) =>
+      checks.check_runs?.some((check) => check.name === name && check.conclusion === 'success')
+    )
+    if (!successful) blockers.push(`${gate}: required CI check(s) are not successful on merge commit ${pr.merge_commit_sha}`)
+
+    evidence.push(`${reviewGatePassed && successful && snapshotStable ? 'PASS' : 'BLOCKED'} ${gate}: merged PR #${number}; independent write-eligible reviewers=${reviewers.join(', ') || 'missing'}; merge CI=${successful ? 'success' : 'not green'}; snapshot=${snapshotStable ? 'stable' : 'changed'}`)
+  }
+
+  // A green workflow is not merge-blocking unless repository rules require it.
+  // Read both classic branch protection and complete ruleset definitions.
+  let contexts = []
+  let strict = false
+  let requiredApprovals = 0
+  const protection = await request('/branches/main/protection')
+  if (protection.status === 200) {
+    contexts.push(...(protection.body.required_status_checks?.contexts ?? []))
+    strict ||= protection.body.required_status_checks?.strict === true
+    requiredApprovals = Math.max(requiredApprovals, protection.body.required_pull_request_reviews?.required_approving_review_count ?? 0)
+  } else if (protection.status !== 404) {
+    blockers.push(`Unable to inspect main branch protection (HTTP ${protection.status})`)
+  }
+
+  const rulesetsResult = await request('/rulesets?includes_parents=true&per_page=100')
+  if (rulesetsResult.status === 200 && Array.isArray(rulesetsResult.body)) {
+    const activeRulesets = rulesetsResult.body.filter((item) => item.enforcement === 'active')
+    const details = []
+    for (const ruleset of activeRulesets) {
+      try {
+        details.push(await api(`/rulesets/${ruleset.id}`))
+      } catch (error) {
+        blockers.push(`Unable to inspect active ruleset ${ruleset.name ?? ruleset.id}: ${error.message}`)
+      }
+    }
+    const ruleRequirements = collectActiveRulesetRequirements(details)
+    contexts.push(...ruleRequirements.contexts)
+    strict ||= ruleRequirements.strict
+    requiredApprovals = Math.max(requiredApprovals, ruleRequirements.requiredApprovals)
+  } else {
+    blockers.push(`Unable to inspect repository rulesets (HTTP ${rulesetsResult.status})`)
+  }
+
+  const hasCi = contexts.some((x) => [manifest.required_branch_protection_contexts[0], 'ci / verify'].includes(x))
+  const hasReview = contexts.some((x) => manifest.required_review_check_names.includes(x))
+  if (!hasCi || !hasReview || !strict || requiredApprovals < manifest.minimum_independent_approvals) {
+    blockers.push(`main branch protection/rulesets must require at least ${manifest.minimum_independent_approvals} approving review(s), current CI, SHA-bound review, and strict up-to-date checks (found approvals: ${requiredApprovals}; contexts: ${contexts.join(', ') || 'none'})`)
+  } else {
+    evidence.push(`PASS main branch rules require ${requiredApprovals} approving review(s), CI + SHA-bound independent review, and strict up-to-date checks`)
+  }
+
+  const attestation = process.env.OWNER_ATTESTATION || ''
+  const actor = process.env.GITHUB_ACTOR || ''
+  if (attestation && (attestation !== 'I_ACKNOWLEDGE_HERMES_PHASE_B_TECHNICAL_GATES' || actor !== owner)) {
+    blockers.push('Owner attestation is invalid or was not dispatched by the repository owner')
+  }
+
+  const technicalPass = blockers.length === 0
+  const status = technicalPass
+    ? (attestation ? 'TECHNICAL_GATES_PASS_OWNER_ACKNOWLEDGED_NO_AUTHORITY_GRANTED' : 'TECHNICAL_GATES_PASS_OWNER_ATTESTATION_PENDING')
+    : 'NOT_GRADUATED_BLOCKED'
+  const lines = [
+    `## ${manifest.stage} — automated graduation verification`,
+    `**Result: ${status}**`,
+    '',
+    ...evidence.map((item) => `- ${item}`),
+    ...(blockers.length ? ['', '### Blockers', ...blockers.map((item) => `- ${item}`)] : []),
+    '',
+    'This verifier checks technical prerequisites only. It never grants HERMES authority, merges PRs, deploys, or performs financial actions.',
+  ]
+  console.log(lines.join('\n'))
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join('\n') + '\n')
+  if (blockers.length) process.exitCode = 1
+}
+
+if (process.argv[1]?.endsWith('verify-hermes-phase-b-graduation.mjs')) {
+  main().catch((error) => {
+    console.error(error.message)
+    process.exitCode = 1
+  })
+}
