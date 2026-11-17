@@ -219,7 +219,7 @@ export async function recordPayment(args: {
         )).rows[0]
         if (!payment && requestedIntentId) {
           const existingIntentPayment = (await q(
-            `SELECT id, user_id, intent_id, to_key_id, state FROM payments WHERE intent_id = $1 FOR UPDATE`,
+            `SELECT id, user_id, intent_id, to_key_id, state FROM payments WHERE intent_id = $1`,
             [requestedIntentId]
           )).rows[0]
           if (existingIntentPayment) {
