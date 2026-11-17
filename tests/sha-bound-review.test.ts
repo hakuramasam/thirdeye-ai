@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { independentApprovalCandidates } from '../.github/scripts/verify-sha-bound-review.mjs'
+import { independentApprovalCandidates, isWriteEligiblePermission } from '../.github/scripts/verify-sha-bound-review.mjs'
 
 const review = (id: number, user: string, state: string, sha: string, submittedAt: string) => ({
   id,
@@ -40,8 +40,7 @@ test('an approval on an older head cannot approve a later push', () => {
   assert.deepEqual(independentApprovalCandidates(reviews, 'sha-after-push', 'author'), [])
 })
 
-
-test('does not accept an approval from a non-collaborator account', () => {
-  const outsider = { ...review(6, 'outsider', 'APPROVED', 'current-sha', '2026-11-17T15:00:00Z'), author_association: 'CONTRIBUTOR' }
-  assert.deepEqual(independentApprovalCandidates([outsider], 'current-sha', 'author'), [])
+test('permission qualification is exact and fails closed for read, triage, unknown and missing permission', () => {
+  for (const permission of ['write', 'maintain', 'admin']) assert.equal(isWriteEligiblePermission(permission), true)
+  for (const permission of ['read', 'triage', 'none', 'unknown', undefined, '']) assert.equal(isWriteEligiblePermission(permission), false)
 })
