@@ -191,7 +191,13 @@ describe('Payments & Credits Module B Tests', () => {
 
   it('(d) route integration tests', async () => {
     const app = new Hono<AppEnv>()
-    registerCreditsRoutes(app)
+    registerCreditsRoutes(app, {
+      findIncomingTransfer: async () => ({
+        ok: false,
+        code: 'receipt_unavailable',
+        message: 'Transaction receipt is not available yet. Please retry shortly.',
+      }),
+    })
     registerStatsRoutes(app)
 
     const sessionToken = await createSessionToken(testUser)
