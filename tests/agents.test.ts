@@ -221,6 +221,29 @@ describe('Agents Module C Tests', () => {
     assert.equal(runs.status, 200)
     assert.ok((await runs.json()).runs.length >= 1)
 
+    // Operator dispatch requires a wallet session and remains scoped to the caller's own agent.
+    const operatorUnauth = await app.request(`/api/ops/agents/${agent.id}/run`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ input: 'operator task' }),
+    })
+    assert.equal(operatorUnauth.status, 401)
+    const operatorForeign = await app.request(`/api/ops/agents/${agent.id}/run`, {
+      method: 'POST', headers: { 'x-session-token': otherToken, 'content-type': 'application/json' },
+      body: JSON.stringify({ input: 'operator task' }),
+    })
+    assert.equal(operatorForeign.status, 404)
+    const operatorRun = await app.request(`/api/ops/agents/${agent.id}/run`, {
+      method: 'POST', headers: H,
+      body: JSON.stringify({ input: 'operator task', idempotency_key: 'operator-ci-1' }),
+    })
+    assert.ok([200, 422].includes(operatorRun.status))
+    const operatorReplay = await app.request(`/api/ops/agents/${agent.id}/run`, {
+      method: 'POST', headers: H,
+      body: JSON.stringify({ input: 'operator task', idempotency_key: 'operator-ci-1' }),
+    })
+    assert.equal(operatorReplay.status, 200)
+    assert.ok((await operatorReplay.json()).skipped?.length === 1)
+
     // delete (soft)
     const del = await app.request(`/api/agents/${agent.id}`, { method: 'DELETE', headers: H })
     assert.equal(del.status, 200)
@@ -230,10 +253,16 @@ describe('Agents Module C Tests', () => {
     // cron trigger: 401 without secret
     const unauth = await app.request('/api/cron/agents', { method: 'POST' })
     assert.equal(unauth.status, 401)
-    // with secret, agent list empty/non-due -> triggered []
+    // Scheduler credential cannot be used for operator-style targeted execution.
     process.env.CRON_SECRET = 'test-cron-secret'
     const { env: envMod } = await import('../src/lib/env.js')
     envMod.cronSecret = 'test-cron-secret'
+    const cronOpsPayload = await app.request('/api/cron/agents', {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-cron-secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ agent_id: 'some-agent', input: 'not allowed on scheduler credential' }),
+    })
+    assert.equal(cronOpsPayload.status, 400)
     const cronRes = await app.request('/api/cron/agents', {
       method: 'POST', headers: { authorization: 'Bearer test-cron-secret' },
     })

@@ -1,6 +1,6 @@
 /**
  * The two behaviours the source-grep tests pretended to cover, exercised as requests:
- * the master-key gate on the scorecard, and the ops path's refusal of an undeclared pipeline_id.
+ * the master-key gate on the scorecard, and owner-scoped operator validation separate from cron.
  */
 import { describe, it, before } from 'node:test'
 import assert from 'node:assert/strict'
@@ -21,12 +21,16 @@ import type { AppEnv } from '../src/lib/types.js'
 const { migrate, query } = await import('../src/db/index.js')
 const { env } = await import('../src/lib/env.js')
 const { registerAdminRoutes } = await import('../src/routes/admin.js')
-const { registerCronRoute } = await import('../src/routes/agents.js')
+const { createSessionToken } = await import('../src/lib/session.js')
+const { registerAgentsRoutes, registerCronRoute } = await import('../src/routes/agents.js')
 
 const adminApp = new Hono<AppEnv>()
 registerAdminRoutes(adminApp)
 const cronApp = new Hono<AppEnv>()
 registerCronRoute(cronApp)
+const operatorApp = new Hono<AppEnv>()
+registerAgentsRoutes(operatorApp)
+let userToken = ''
 
 const U = 'u_routes'
 
@@ -34,6 +38,7 @@ describe('scorecard and ops-path behaviour', () => {
   before(async () => {
     await migrate()
     await query(`INSERT INTO users (id, wallet, role) VALUES ($1,'0xroutes','user') ON CONFLICT DO NOTHING`, [U])
+    userToken = await createSessionToken({ id: U, wallet: '0xroutes', role: 'user', created_at: '' })
     await query(
       `INSERT INTO agents (id,user_id,name,system_prompt,model,budget_usd_micros,max_steps,status)
        VALUES ('tdt_qa',$1,'QA','p','gpt-oss-20b',1000,2,'active') ON CONFLICT DO NOTHING`,
@@ -56,28 +61,39 @@ describe('scorecard and ops-path behaviour', () => {
     assert.equal(body.metrics.length, 6)
   })
 
-  it('refuses a pipeline_id that is not declared, including prototype keys', async () => {
+  it('rejects operator-style payloads on the scheduler credential', async () => {
+    const res = await cronApp.request('/api/cron/agents', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${env.cronSecret}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ agent_id: 'tdt_qa', input: 'operator work', pipeline_id: 'nope' }),
+    })
+    assert.equal(res.status, 400)
+    const body = await res.json() as any
+    assert.match(body.error.message, /Operator payloads are not accepted/)
+  })
+
+  it('validates operator pipeline IDs before taking an idempotency lock', async () => {
     for (const bad of ['nope', 'constructor', '__proto__']) {
-      const res = await cronApp.request('/api/cron/agents', {
+      const res = await operatorApp.request('/api/ops/agents/tdt_qa/run', {
         method: 'POST',
-        headers: { authorization: `Bearer ${env.cronSecret}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ agent_id: 'tdt_qa', input: 'probe the pipeline gate', pipeline_id: bad }),
+        headers: { 'x-session-token': userToken, 'content-type': 'application/json' },
+        body: JSON.stringify({ input: 'probe the pipeline gate', pipeline_id: bad, idempotency_key: `bad-${bad}` }),
       })
       assert.equal(res.status, 400, `pipeline_id ${bad} must be refused`)
-      const body = (await res.json()) as any
+      const body = await res.json() as any
       assert.match(body.error.message, /Unknown pipeline_id/)
     }
   })
 
-  it('does not leave the idempotency slot locked after refusing a bad pipeline_id', async () => {
-    const payload = { agent_id: 'tdt_qa', input: 'probe the lock', pipeline_id: 'nope', idempotency_key: 'k1' }
-    const first = await cronApp.request('/api/cron/agents', {
+  it('does not leave the idempotency slot locked after refusing a bad operator pipeline_id', async () => {
+    const payload = { input: 'probe the lock', pipeline_id: 'nope', idempotency_key: 'k1' }
+    const first = await operatorApp.request('/api/ops/agents/tdt_qa/run', {
       method: 'POST',
-      headers: { authorization: `Bearer ${env.cronSecret}`, 'content-type': 'application/json' },
+      headers: { 'x-session-token': userToken, 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     })
     assert.equal(first.status, 400)
-    const held = await query(`SELECT count(*)::int AS n FROM agent_schedule_lock WHERE lock_key = 'ops:k1'`)
+    const held = await query(`SELECT count(*)::int AS n FROM agent_schedule_lock WHERE lock_key = 'operator:k1'`)
     assert.equal((held.rows[0] as any).n, 0, 'a refused request must not hold the slot')
   })
 })
