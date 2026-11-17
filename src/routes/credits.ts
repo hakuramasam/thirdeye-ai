@@ -36,24 +36,22 @@ async function creditVerified(
   intentId?: string | null
 ) {
   /**
-   * `credited` answers "did this call move the money". `settled` answers the question the settlement
-   * bookkeeping actually needs: "is this transfer's money on this user's balance now", which is also
-   * true when an earlier call credited it and the process died before the payment row was updated.
-   * Without that distinction a crash between the two left the payment `confirmed` forever, with no
-   * credited event, and every retry reported nothing to do.
-   *
-   * Known limit: the `deposits` row records which user was paid but not which destination (key or
-   * account) funded it, so a transfer first claimed untagged and only later tagged with a key intent
-   * reads as settled while the key itself was never loaded. Nothing is credited twice and the user
-   * keeps the earlier account credit; recording the destination belongs in the versioned migration
-   * work, not in a settlement fix.
+   * `credited` answers "did this call move the money". `settled` answers whether the same user's
+   * transfer was already credited to the same destination. The destination is part of the
+   * idempotency record: an account credit cannot satisfy a later request to load an API key, and a
+   * key credit cannot satisfy a later request for the account ledger.
    */
-  const wrap = (dep: any, to: 'key' | 'account') => ({
-    credited: Boolean(dep?.credited),
-    settled: Boolean(dep?.credited) || dep?.existingUserId === userId,
-    to,
-    dep,
-  })
+  const wrap = (dep: any, to: 'key' | 'account', requestedKeyId: string | null = null) => {
+    const sameOwner = dep?.existingUserId === userId
+    const sameDestination = (dep?.existingToKeyId ?? null) === requestedKeyId
+    return {
+      credited: Boolean(dep?.credited),
+      settled: Boolean(dep?.credited) || (sameOwner && sameDestination),
+      destinationConflict: Boolean(dep?.destinationConflict) || (sameOwner && !sameDestination && !dep?.credited),
+      to,
+      dep,
+    }
+  }
   if (intentId) {
     const it = await one('SELECT api_key_id FROM payment_intents WHERE id = $1 AND user_id = $2', [intentId, userId])
     if (it?.api_key_id) {
@@ -62,10 +60,11 @@ async function creditVerified(
       // increment inside one transaction, and its UNIQUE (chain, tx_hash, token) is what makes a
       // replay a no-op instead of a second payout.
       const dep = await creditDeposit(userId, usdMicros, args, { toKeyId: it.api_key_id })
-      const w = wrap(dep, 'key')
+      const w = wrap(dep, 'key', it.api_key_id)
       return {
         credited: w.credited,
         settled: w.settled,
+        destinationConflict: w.destinationConflict,
         to: 'key' as const,
         api_key_id: it.api_key_id,
         key_credit_usd_micros: (dep as any).keyCredit ?? null,
@@ -73,7 +72,7 @@ async function creditVerified(
     }
   }
   const w = wrap(await creditDeposit(userId, usdMicros, args), 'account')
-  return { credited: w.credited, settled: w.settled, to: 'account' as const, deposit: w.dep }
+  return { credited: w.credited, settled: w.settled, destinationConflict: w.destinationConflict, to: 'account' as const, deposit: w.dep }
 }
 
 export function shouldCreditPayment(args: { status: string; duplicate: boolean; usdMicros: number }): boolean {
@@ -305,7 +304,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       // A transfer we already recorded that is no longer on the chain is a reorg, not a bad claim.
       // It is marked and audited rather than ignored, and a credited one is flagged because its
       // ledger entry now has no backing transfer and reversing it is a human decision.
-      if (found.code === 'not_found') {
+      if (found.code === 'reorg_confirmed') {
         // Only an absence the chain actually confirmed reaches here: findIncomingTransfer now
         // reports an RPC outage as `rpc_error`, which falls through to the 422 below, so one
         // flaky read can no longer mark a real deposit reorged.
@@ -451,6 +450,9 @@ export function registerCreditsRoutes(app: SessionApp): void {
       })
       if (policyChain && policyDecision.status === 'credited' && policySettle.action === 'credit') {
         const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
+        if (dep.destinationConflict) {
+          return c.json({ accepted: false, error: { code: 'deposit_destination_conflict', message: 'This transfer was already credited to a different destination. It cannot be moved to this account or API key automatically.' } }, 409)
+        }
         policyCredited = Boolean(dep.credited)
         // The transition runs whenever the money is on this user's balance, whether this call put it
         // there or a previous attempt did. markCredited is guarded and idempotent, so a replay only
@@ -554,6 +556,9 @@ export function registerCreditsRoutes(app: SessionApp): void {
     })
     if (chainSlug && settle.action === 'credit') {
       const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
+      if (dep.destinationConflict) {
+        return c.json({ accepted: false, error: { code: 'deposit_destination_conflict', message: 'This transfer was already credited to a different destination. It cannot be moved to this account or API key automatically.' } }, 409)
+      }
       credited = Boolean(dep.credited)
       if (dep.settled) {
         const rec = await markCredited(recorded.paymentId, usdMicros)
@@ -724,6 +729,9 @@ export function registerCreditsRoutes(app: SessionApp): void {
         return c.json({ error: { message: 'api_key_id must be one of your active keys', type: 'validation' } }, 400)
       }
       const dep = await creditDeposit(user.id, verification.amount_usd_micros, { chain, txHash: tx_hash, token: verification.token }, { toKeyId: targetKeyId })
+      if (dep.destinationConflict) {
+        return c.json({ credited: false, loaded_to: 'key', api_key_id: targetKeyId, error: { code: 'deposit_destination_conflict', message: 'This transfer was already credited to a different destination.' } }, 409)
+      }
       if (!dep.credited) {
         return c.json({ credited: false, loaded_to: 'key', api_key_id: targetKeyId, reason: 'already_credited' })
       }
@@ -742,6 +750,9 @@ export function registerCreditsRoutes(app: SessionApp): void {
       token: verification.token,
     })
 
+    if (depositResult.destinationConflict) {
+      return c.json({ credited: false, error: { code: 'deposit_destination_conflict', message: 'This transfer was already credited to a different destination.' } }, 409)
+    }
     return c.json({
       credited: depositResult.credited,
       balance_usd_micros: depositResult.balance,
