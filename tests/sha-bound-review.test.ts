@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { independentApprovalCandidates } from '../.github/scripts/verify-sha-bound-review.mjs'
 
-const review = (id, user, state, sha, submittedAt) => ({
+const review = (id: number, user: string, state: string, sha: string, submittedAt: string) => ({
   id,
   user: { login: user },
   state,
@@ -18,7 +18,7 @@ test('only the latest review by a non-author on the exact current head qualifies
     review(4, 'stale-reviewer', 'APPROVED', 'old-sha', '2026-11-17T13:00:00Z'),
   ]
   assert.deepEqual(
-    independentApprovalCandidates(reviews, 'current-sha', 'author').map((r) => r.user.login),
+    independentApprovalCandidates(reviews, 'current-sha', 'author').map((r: { user: { login: string } }) => r.user.login),
     ['reviewer'],
   )
 })
