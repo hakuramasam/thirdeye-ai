@@ -652,4 +652,36 @@ describe('settlement integrity', () => {
     assert.equal(keyReplay.existingToKeyId, keyId)
   })
 
+  it('serializes concurrent credit and reorg transitions on real PostgreSQL', { skip: !process.env.DATABASE_URL }, async () => {
+    const txHash = '0x' + 'b6'.repeat(32)
+    const payment = await claim({ tx_hash: txHash })
+
+    const [credit, reorg] = await Promise.all([
+      creditPaymentDeposit(
+        payment.paymentId,
+        owner.id,
+        5_000_000,
+        { chain: 'base', txHash, token: TOKEN },
+        { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+      ),
+      markReorged(CHAIN, txHash, { token: TOKEN, received_by: VAULT }),
+    ])
+
+    assert.ok(reorg, 'the reorg transition must find the payment row')
+    const row = await one(`SELECT state FROM payments WHERE id = $1`, [payment.paymentId])
+    const deposits = await one(
+      `SELECT count(*)::int AS n FROM deposits WHERE chain = 'base' AND tx_hash = $1 AND token = $2`,
+      [txHash, TOKEN.toLowerCase()]
+    )
+
+    if (row.state === 'reorged') {
+      assert.equal(credit.credited, false, 'a reorg that wins the row lock must prevent the credit')
+      assert.equal(deposits.n, 0, 'no deposit row or balance write may survive the reorg-first ordering')
+    } else {
+      assert.equal(row.state, 'needs_reconciliation', 'a reorg after credit must escalate, never erase the credit')
+      assert.equal(credit.credited, true, 'the credit transaction must have completed before reorg reconciliation')
+      assert.equal(deposits.n, 1, 'the credit-first ordering must persist exactly one deposit claim')
+    }
+  })
+
 })
