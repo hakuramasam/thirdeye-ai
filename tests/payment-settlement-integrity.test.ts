@@ -90,6 +90,29 @@ describe('settlement integrity', () => {
     )
   })
 
+  it('applies the WO-02 schema migration once and records its version', async () => {
+    const applied = await query(
+      `SELECT version, name FROM schema_migrations WHERE version = $1`,
+      ['0001_wo02_deposit_scope_and_payment_event_guard']
+    )
+    assert.equal(applied.rows.length, 1)
+    assert.match(applied.rows[0].name, /Bind deposits to payment scope/)
+    const columns = await query(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'deposits' AND column_name IN ('to_key_id', 'payment_id', 'received_by')`
+    )
+    assert.deepEqual(
+      columns.rows.map((row: any) => row.column_name).sort(),
+      ['payment_id', 'received_by', 'to_key_id'],
+    )
+    await migrate()
+    const again = await query(
+      `SELECT count(*)::int AS n FROM schema_migrations WHERE version = $1`,
+      ['0001_wo02_deposit_scope_and_payment_event_guard']
+    )
+    assert.equal(again.rows[0].n, 1, 'a second migrate call must not duplicate the version record')
+  })
+
   it('a duplicate claim returns the row that exists, not a new id', async () => {
     const first = await claim()
     assert.equal(first.duplicate, false)
