@@ -536,6 +536,33 @@ describe('settlement integrity', () => {
     assert.equal(row.state, 'credited', 'a replay cannot move the existing key credit to the account')
   })
 
+  it('does not mark a second receiver row credited by reusing the first receiver deposit', async () => {
+    const txHash = '0x' + 'b5'.repeat(32)
+    const firstPayment = await claim({ tx_hash: txHash }, { receivedAt: VAULT })
+    const first = await creditPaymentDeposit(
+      firstPayment.paymentId,
+      owner.id,
+      5_000_000,
+      { chain: 'base', txHash, token: TOKEN },
+      { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+    )
+    assert.equal(first.credited, true)
+
+    const secondPayment = await claim({ tx_hash: txHash }, { receivedAt: WALLET })
+    const second = await creditPaymentDeposit(
+      secondPayment.paymentId,
+      owner.id,
+      5_000_000,
+      { chain: 'base', txHash, token: TOKEN },
+      { receivedBy: WALLET, confirmations: 12, requiredConfirmations: 10 },
+    )
+    assert.equal(second.credited, false)
+    assert.equal(second.settled, false)
+    assert.equal(second.scopeConflict, true)
+    const secondRow = await one(`SELECT state FROM payments WHERE id = $1`, [secondPayment.paymentId])
+    assert.equal(secondRow.state, 'confirmed')
+  })
+
   it('atomic payment settlement refuses an insufficient confirmation count', async () => {
     const txHash = '0x' + 'b4'.repeat(32)
     const payment = await claim({ tx_hash: txHash })
