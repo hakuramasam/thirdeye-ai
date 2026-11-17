@@ -292,6 +292,19 @@ CREATE TABLE IF NOT EXISTS payment_events (
 );
 CREATE INDEX IF NOT EXISTS idx_payment_events_payment ON payment_events(payment_id, created_at);
 
+-- Payment history is an audit record, not mutable application state. Enforce append-only at the
+-- database boundary so a later writer cannot rewrite or erase evidence of a credit/reorg.
+CREATE OR REPLACE FUNCTION payment_events_append_only() RETURNS trigger AS $
+BEGIN
+  RAISE EXCEPTION 'payment_events is append-only (%; write a new event instead)', TG_OP;
+END;
+$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS payment_events_no_rewrite ON payment_events;
+CREATE TRIGGER payment_events_no_rewrite
+  BEFORE UPDATE OR DELETE ON payment_events
+  FOR EACH ROW EXECUTE FUNCTION payment_events_append_only();
+
 -- Partner hub: a private, scoped workspace shared between the owner, this agent and
 -- named external partners. Keys are stored hashed and shown once at issue time.
 CREATE TABLE IF NOT EXISTS partner_agents (
