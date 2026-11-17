@@ -7,6 +7,8 @@ import { rawAmountToNumber } from '../lib/money.js'
 
 export type VerifyErrorCode =
   | 'not_found'
+  | 'receipt_unavailable'
+  | 'invalid_tx_hash'
   | 'failed_tx'
   | 'unsupported_token'
   | 'wrong_recipient'
@@ -17,6 +19,7 @@ export type VerifyErrorCode =
   | 'deposit_too_large'
   | 'insufficient_confirmations'
   | 'rpc_error'
+  | 'reorg_confirmed'
 
 export type VerifyResult =
   | {
@@ -364,7 +367,7 @@ export async function findIncomingTransfer(params: {
     return { ok: false, code: 'unsupported_chain', message: `Chain ${params.chainId} is not configured` }
   }
   if (!/^0x[0-9a-fA-F]{64}$/.test(params.txHash)) {
-    return { ok: false, code: 'not_found', message: 'tx_hash must be a 32-byte hex hash' }
+    return { ok: false, code: 'invalid_tx_hash', message: 'tx_hash must be a 32-byte hex hash' }
   }
   const receivers = params.receivers.map((r) => String(r || '').toLowerCase()).filter((r) => /^0x[0-9a-f]{40}$/.test(r))
   if (receivers.length === 0) {
@@ -380,7 +383,12 @@ export async function findIncomingTransfer(params: {
     // flaky call mark a real deposit reorged, and the row then refused to credit forever.
     return { ok: false, code: 'rpc_error', message: `Could not read receipt: ${err?.shortMessage || err?.message || 'rpc error'}` }
   }
-  if (!receipt) return { ok: false, code: 'not_found', message: 'Transaction not found on this chain' }
+  if (!receipt) {
+    // A single RPC null response is not proof of a reorg: a lagging or inconsistent node can
+    // temporarily omit a receipt. Keep the stored payment untouched and make the caller retry;
+    // only independently confirmed canonical-chain evidence may trigger reorg reconciliation.
+    return { ok: false, code: 'receipt_unavailable', message: 'This RPC did not return a receipt. This is not proof of a reorg; retry later. No payment state was changed.' }
+  }
   if (!(receipt.status === '0x1' || receipt.status === 1 || receipt.status === true)) {
     return { ok: false, code: 'failed_tx', message: 'Transaction did not succeed' }
   }

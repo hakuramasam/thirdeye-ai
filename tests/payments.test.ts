@@ -238,9 +238,9 @@ describe('Payments & Credits Module B Tests', () => {
       },
       body: JSON.stringify({ chain: 'base', tx_hash: fakeZeroTxHash }),
     })
-    assert.equal(fakeZeroRes.status, 404)
+    assert.equal(fakeZeroRes.status, 422)
     const fakeZeroJson = await fakeZeroRes.json()
-    assert.equal(fakeZeroJson.error.code, 'not_found')
+    assert.equal(fakeZeroJson.error.code, 'receipt_unavailable')
 
     // Unconfigured receiver address behavior
     const origReceiver = env.platformReceiverAddress

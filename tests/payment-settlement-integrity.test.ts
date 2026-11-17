@@ -28,7 +28,7 @@ const { migrate, query, one } = await import('../src/db/index.js')
 const { markCredited, markReorged, paymentStateFor, paymentRowFor } = await import('../src/payments/settle.js')
 const { decideSettlement, finalityVerdict, finalityPolicy } = await import('../src/payments/finality.js')
 const { recordPayment } = await import('../src/routes/credits.js')
-const { creditDeposit } = await import('../src/lib/billing.js')
+const { creditDeposit, creditPaymentDeposit } = await import('../src/lib/billing.js')
 
 const CHAIN = 8453
 const TOKEN = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'
@@ -88,6 +88,29 @@ describe('settlement integrity', () => {
       `INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix) VALUES ($1, $2, 'test', $3, 'sk-thirdeye-Test')`,
       [keyId, owner.id, randomUUID().replace(/-/g, '')]
     )
+  })
+
+  it('applies the WO-02 schema migration once and records its version', async () => {
+    const applied = await query(
+      `SELECT version, name FROM schema_migrations WHERE version = $1`,
+      ['0001_wo02_deposit_scope_and_payment_event_guard']
+    )
+    assert.equal(applied.rows.length, 1)
+    assert.match(applied.rows[0].name, /Bind deposits to payment scope/)
+    const columns = await query(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'deposits' AND column_name IN ('to_key_id', 'payment_id', 'received_by')`
+    )
+    assert.deepEqual(
+      columns.rows.map((row: any) => row.column_name).sort(),
+      ['payment_id', 'received_by', 'to_key_id'],
+    )
+    await migrate()
+    const again = await query(
+      `SELECT count(*)::int AS n FROM schema_migrations WHERE version = $1`,
+      ['0001_wo02_deposit_scope_and_payment_event_guard']
+    )
+    assert.equal(again.rows[0].n, 1, 'a second migrate call must not duplicate the version record')
   })
 
   it('a duplicate claim returns the row that exists, not a new id', async () => {
@@ -346,6 +369,22 @@ describe('settlement integrity', () => {
     assert.equal(ghost.state, null)
   })
 
+  it('payment event history is append-only at the database boundary', async () => {
+    const payment = await claim({ tx_hash: '0x' + 'af'.repeat(32) })
+    await markCredited(payment.paymentId, 5_000_000)
+    const event = (await eventsFor(payment.paymentId, 'credited'))[0]
+    assert.ok(event?.id)
+    await assert.rejects(
+      query(`UPDATE payment_events SET detail = '{}'::jsonb WHERE id = $1`, [event.id]),
+      /payment_events is append-only/
+    )
+    await assert.rejects(
+      query(`DELETE FROM payment_events WHERE id = $1`, [event.id]),
+      /payment_events is append-only/
+    )
+    assert.equal((await eventsFor(payment.paymentId, 'credited')).length, 1)
+  })
+
   it('a legacy refusal that predates the rejected state still cannot be credited', async () => {
     // Rows written before this change stored a refusal as status 'refused' with state 'detected',
     // which the state whitelist alone would happily move to credited on a later retry.
@@ -441,4 +480,208 @@ describe('settlement integrity', () => {
     assert.notEqual((res as any).code, 'not_found', 'a failed read must not tell the caller the deposit does not exist')
     assert.equal((res as any).code, 'rpc_error')
   })
+  it('moves the deposit, payment state and credited audit event in one transaction', async () => {
+    const txHash = '0x' + 'b1'.repeat(32)
+    const payment = await claim({ tx_hash: txHash })
+    const result = await creditPaymentDeposit(
+      payment.paymentId,
+      owner.id,
+      5_000_000,
+      { chain: 'base', txHash, token: TOKEN },
+      { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+    )
+    assert.equal(result.credited, true)
+    assert.equal(result.settled, true)
+    assert.equal(result.state, 'credited')
+    const row = await one(`SELECT state, status FROM payments WHERE id = $1`, [payment.paymentId])
+    assert.equal(row.state, 'credited')
+    assert.equal(row.status, 'recorded')
+    assert.equal((await eventsFor(payment.paymentId, 'credited')).length, 1)
+    const ledger = await one(`SELECT count(*)::int AS n FROM ledger WHERE user_id = $1 AND ref = $2`, [owner.id, `base:${txHash}`])
+    assert.equal(ledger.n, 1)
+
+    const replay = await creditPaymentDeposit(
+      payment.paymentId,
+      owner.id,
+      5_000_000,
+      { chain: 'base', txHash, token: TOKEN },
+      { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+    )
+    assert.equal(replay.credited, false)
+    assert.equal(replay.settled, true)
+    assert.equal(replay.balance, result.balance)
+    assert.equal((await eventsFor(payment.paymentId, 'credited')).length, 1)
+  })
+
+  it('rechecks the locked payment state so a reorg that wins first prevents the credit', async () => {
+    const txHash = '0x' + 'b2'.repeat(32)
+    const payment = await claim({ tx_hash: txHash })
+    await markReorged(CHAIN, txHash, { token: TOKEN, received_by: VAULT })
+
+    const result = await creditPaymentDeposit(
+      payment.paymentId,
+      owner.id,
+      5_000_000,
+      { chain: 'base', txHash, token: TOKEN },
+      { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+    )
+    assert.equal(result.credited, false)
+    assert.equal(result.settled, false)
+    assert.equal(result.state, 'reorged')
+    assert.equal(result.reason, 'payment_requires_reconciliation')
+    const deposits = await one(`SELECT count(*)::int AS n FROM deposits WHERE tx_hash = $1`, [txHash])
+    assert.equal(deposits.n, 0)
+  })
+
+  it('atomic payment settlement refuses an existing deposit credited to a different destination', async () => {
+    const txHash = '0x' + 'b3'.repeat(32)
+    const payment = await claim({ tx_hash: txHash })
+    const first = await creditPaymentDeposit(
+      payment.paymentId,
+      owner.id,
+      5_000_000,
+      { chain: 'base', txHash, token: TOKEN },
+      { toKeyId: keyId, receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+    )
+    assert.equal(first.credited, true)
+
+    const result = await creditPaymentDeposit(
+      payment.paymentId,
+      owner.id,
+      5_000_000,
+      { chain: 'base', txHash, token: TOKEN },
+      { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+    )
+    assert.equal(result.credited, false)
+    assert.equal(result.settled, false)
+    assert.equal(result.destinationConflict, true)
+    const row = await one(`SELECT state FROM payments WHERE id = $1`, [payment.paymentId])
+    assert.equal(row.state, 'credited', 'a replay cannot move the existing key credit to the account')
+  })
+
+  it('does not mark a second receiver row credited by reusing the first receiver deposit', async () => {
+    const txHash = '0x' + 'b5'.repeat(32)
+    const firstPayment = await claim({ tx_hash: txHash }, { receivedAt: VAULT })
+    const first = await creditPaymentDeposit(
+      firstPayment.paymentId,
+      owner.id,
+      5_000_000,
+      { chain: 'base', txHash, token: TOKEN },
+      { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+    )
+    assert.equal(first.credited, true)
+
+    const secondPayment = await claim({ tx_hash: txHash }, { receivedAt: WALLET })
+    const second = await creditPaymentDeposit(
+      secondPayment.paymentId,
+      owner.id,
+      5_000_000,
+      { chain: 'base', txHash, token: TOKEN },
+      { receivedBy: WALLET, confirmations: 12, requiredConfirmations: 10 },
+    )
+    assert.equal(second.credited, false)
+    assert.equal(second.settled, false)
+    assert.equal(second.scopeConflict, true)
+    const secondRow = await one(`SELECT state FROM payments WHERE id = $1`, [secondPayment.paymentId])
+    assert.equal(secondRow.state, 'confirmed')
+  })
+
+  it('atomic payment settlement refuses an insufficient confirmation count', async () => {
+    const txHash = '0x' + 'b4'.repeat(32)
+    const payment = await claim({ tx_hash: txHash })
+    const result = await creditPaymentDeposit(
+      payment.paymentId,
+      owner.id,
+      5_000_000,
+      { chain: 'base', txHash, token: TOKEN },
+      { receivedBy: VAULT, confirmations: 9, requiredConfirmations: 10 },
+    )
+    assert.equal(result.credited, false)
+    assert.equal(result.reason, 'insufficient_confirmations')
+    const deposits = await one(`SELECT count(*)::int AS n FROM deposits WHERE tx_hash = $1`, [txHash])
+    assert.equal(deposits.n, 0)
+  })
+
+  it('does not treat an account-credit replay as settled for a key destination', async () => {
+    const beforeKey = await one(`SELECT credit_usd_micros FROM api_keys WHERE id = $1`, [keyId])
+    const args = { chain: 'base', txHash: '0x' + 'a1'.repeat(32), token: TOKEN }
+    const account = await creditDeposit(owner.id, 2_000_000, args)
+    assert.equal(account.credited, true)
+
+    const replayToKey = await creditDeposit(owner.id, 2_000_000, args, { toKeyId: keyId })
+    assert.equal(replayToKey.credited, false)
+    assert.equal(replayToKey.existingUserId, owner.id)
+    assert.equal(replayToKey.existingToKeyId, null)
+    assert.equal(replayToKey.destinationConflict, true)
+
+    const key = await one(`SELECT credit_usd_micros FROM api_keys WHERE id = $1`, [keyId])
+    assert.equal(Number(key.credit_usd_micros), Number(beforeKey.credit_usd_micros), 'the account credit must not be mistaken for a key credit')
+  })
+
+  it('does not treat a key-credit replay as settled for the account destination', async () => {
+    const args = { chain: 'base', txHash: '0x' + 'a2'.repeat(32), token: TOKEN }
+    const key = await creditDeposit(owner.id, 2_000_000, args, { toKeyId: keyId })
+    assert.equal(key.credited, true)
+
+    const replayToAccount = await creditDeposit(owner.id, 2_000_000, args)
+    assert.equal(replayToAccount.credited, false)
+    assert.equal(replayToAccount.existingUserId, owner.id)
+    assert.equal(replayToAccount.existingToKeyId, keyId)
+    assert.equal(replayToAccount.destinationConflict, true)
+
+    const accountLedger = await one(
+      `SELECT count(*)::int AS n FROM ledger WHERE user_id = $1 AND ref = $2`,
+      [owner.id, `base:${args.txHash}`]
+    )
+    assert.equal(accountLedger.n, 0, 'the key credit must not be mistaken for an account credit')
+  })
+
+  it('same-destination replays remain idempotent and do not conflict', async () => {
+    const accountArgs = { chain: 'base', txHash: '0x' + 'a3'.repeat(32), token: TOKEN }
+    await creditDeposit(owner.id, 1_000_000, accountArgs)
+    const accountReplay = await creditDeposit(owner.id, 1_000_000, accountArgs)
+    assert.equal(accountReplay.credited, false)
+    assert.equal(accountReplay.destinationConflict, false)
+    assert.equal(accountReplay.existingToKeyId, null)
+
+    const keyArgs = { chain: 'base', txHash: '0x' + 'a4'.repeat(32), token: TOKEN }
+    await creditDeposit(owner.id, 1_000_000, keyArgs, { toKeyId: keyId })
+    const keyReplay = await creditDeposit(owner.id, 1_000_000, keyArgs, { toKeyId: keyId })
+    assert.equal(keyReplay.credited, false)
+    assert.equal(keyReplay.destinationConflict, false)
+    assert.equal(keyReplay.existingToKeyId, keyId)
+  })
+
+  it('serializes concurrent credit and reorg transitions on real PostgreSQL', { skip: !process.env.DATABASE_URL }, async () => {
+    const txHash = '0x' + 'b6'.repeat(32)
+    const payment = await claim({ tx_hash: txHash })
+
+    const [credit, reorg] = await Promise.all([
+      creditPaymentDeposit(
+        payment.paymentId,
+        owner.id,
+        5_000_000,
+        { chain: 'base', txHash, token: TOKEN },
+        { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+      ),
+      markReorged(CHAIN, txHash, { token: TOKEN, received_by: VAULT }),
+    ])
+
+    assert.ok(reorg, 'the reorg transition must find the payment row')
+    const row = await one(`SELECT state FROM payments WHERE id = $1`, [payment.paymentId])
+    const deposits = await one(
+      `SELECT count(*)::int AS n FROM deposits WHERE chain = 'base' AND tx_hash = $1 AND token = $2`,
+      [txHash, TOKEN.toLowerCase()]
+    )
+
+    if (row.state === 'reorged') {
+      assert.equal(credit.credited, false, 'a reorg that wins the row lock must prevent the credit')
+      assert.equal(deposits.n, 0, 'no deposit row or balance write may survive the reorg-first ordering')
+    } else {
+      assert.equal(row.state, 'needs_reconciliation', 'a reorg after credit must escalate, never erase the credit')
+      assert.equal(credit.credited, true, 'the credit transaction must have completed before reorg reconciliation')
+      assert.equal(deposits.n, 1, 'the credit-first ordering must persist exactly one deposit claim')
+    }
+  })
+
 })

@@ -2,15 +2,15 @@ import type { SessionApp } from '../lib/session.js'
 import { requireUser } from '../lib/session.js'
 import { env, depositAddress, platformReceivers } from '../lib/env.js'
 import { query } from '../db/index.js'
-import { getBalanceMicros, creditDeposit } from '../lib/billing.js'
+import { getBalanceMicros, creditPaymentDeposit } from '../lib/billing.js'
 import { one } from '../db/index.js'
 import { decideCredit } from '../lib/creditPolicy.js'
 import { CHAINS, isPolicyPricedToken, platformTokenUsdMicros } from '../payments/chains.js'
 import { verifyDeposit } from '../payments/verify.js'
 import { findIncomingTransfer, checkSenderOwnership } from '../payments/verify.js'
 import { prepareAutoConvert, autoConvertPolicyFromEnv } from '../payments/autoConvert.js'
-import { decideSettlement } from '../payments/finality.js'
-import { markCredited, markReorged, paymentStateFor, logPaymentEvent } from '../payments/settle.js'
+import { decideSettlement, type FinalityVerdict } from '../payments/finality.js'
+import { markReorged, paymentStateFor, logPaymentEvent } from '../payments/settle.js'
 import { randomBytes } from 'node:crypto'
 import type { IncomingTransfer } from '../payments/verify.js'
 
@@ -33,47 +33,50 @@ async function creditVerified(
   userId: string,
   usdMicros: number,
   args: { chain: string; txHash: string; token: string },
-  intentId?: string | null
+  intentId: string | null | undefined,
+  paymentId: string,
+  finality: FinalityVerdict,
+  receivedBy: string
 ) {
-  /**
-   * `credited` answers "did this call move the money". `settled` answers the question the settlement
-   * bookkeeping actually needs: "is this transfer's money on this user's balance now", which is also
-   * true when an earlier call credited it and the process died before the payment row was updated.
-   * Without that distinction a crash between the two left the payment `confirmed` forever, with no
-   * credited event, and every retry reported nothing to do.
-   *
-   * Known limit: the `deposits` row records which user was paid but not which destination (key or
-   * account) funded it, so a transfer first claimed untagged and only later tagged with a key intent
-   * reads as settled while the key itself was never loaded. Nothing is credited twice and the user
-   * keeps the earlier account credit; recording the destination belongs in the versioned migration
-   * work, not in a settlement fix.
-   */
-  const wrap = (dep: any, to: 'key' | 'account') => ({
-    credited: Boolean(dep?.credited),
-    settled: Boolean(dep?.credited) || dep?.existingUserId === userId,
-    to,
-    dep,
-  })
+  const settle = (toKeyId: string | null = null) =>
+    creditPaymentDeposit(paymentId, userId, usdMicros, args, {
+      toKeyId,
+      receivedBy,
+      confirmations: finality.confirmations,
+      requiredConfirmations: finality.required,
+    })
+
   if (intentId) {
     const it = await one('SELECT api_key_id FROM payment_intents WHERE id = $1 AND user_id = $2', [intentId, userId])
     if (it?.api_key_id) {
-      // Through creditDeposit, not creditKey. creditKey is a bare `credit = credit + $1`, so a
-      // retried claim added the amount again; creditDeposit writes the deposits row and the key
-      // increment inside one transaction, and its UNIQUE (chain, tx_hash, token) is what makes a
-      // replay a no-op instead of a second payout.
-      const dep = await creditDeposit(userId, usdMicros, args, { toKeyId: it.api_key_id })
-      const w = wrap(dep, 'key')
+      const dep = await settle(it.api_key_id)
       return {
-        credited: w.credited,
-        settled: w.settled,
+        credited: dep.credited,
+        settled: dep.settled,
+        destinationConflict: dep.destinationConflict,
+        scopeConflict: dep.scopeConflict,
+        ownershipConflict: dep.ownershipConflict,
+        reconciliation: dep.reconciliation,
+        reason: dep.reason,
         to: 'key' as const,
         api_key_id: it.api_key_id,
-        key_credit_usd_micros: (dep as any).keyCredit ?? null,
+        key_credit_usd_micros: dep.keyCredit ?? null,
+        deposit: dep,
       }
     }
   }
-  const w = wrap(await creditDeposit(userId, usdMicros, args), 'account')
-  return { credited: w.credited, settled: w.settled, to: 'account' as const, deposit: w.dep }
+  const dep = await settle(null)
+  return {
+    credited: dep.credited,
+    settled: dep.settled,
+    destinationConflict: dep.destinationConflict,
+    scopeConflict: dep.scopeConflict,
+    ownershipConflict: dep.ownershipConflict,
+    reconciliation: dep.reconciliation,
+    reason: dep.reason,
+    to: 'account' as const,
+    deposit: dep,
+  }
 }
 
 export function shouldCreditPayment(args: { status: string; duplicate: boolean; usdMicros: number }): boolean {
@@ -305,7 +308,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       // A transfer we already recorded that is no longer on the chain is a reorg, not a bad claim.
       // It is marked and audited rather than ignored, and a credited one is flagged because its
       // ledger entry now has no backing transfer and reversing it is a human decision.
-      if (found.code === 'not_found') {
+      if (found.code === 'reorg_confirmed') {
         // Only an absence the chain actually confirmed reaches here: findIncomingTransfer now
         // reports an RPC outage as `rpc_error`, which falls through to the 422 below, so one
         // flaky read can no longer mark a real deposit reorged.
@@ -449,16 +452,20 @@ export function registerCreditsRoutes(app: SessionApp): void {
         confirmations: finality.confirmations,
         required: finality.required,
       })
-      if (policyChain && policyDecision.status === 'credited' && policySettle.action === 'credit') {
-        const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
-        policyCredited = Boolean(dep.credited)
-        // The transition runs whenever the money is on this user's balance, whether this call put it
-        // there or a previous attempt did. markCredited is guarded and idempotent, so a replay only
-        // completes the bookkeeping a crash left behind.
-        if (dep.settled) {
-          const rec = await markCredited(policyRecord.paymentId, usdMicros)
-          policyReconciliation = rec.reconciliation
+      if (policyChain && policyDecision.status === 'credited' && (policySettle.action === 'credit' || policySettle.action === 'already_credited')) {
+        const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, policyRecord.paymentId, finality, received_at)
+        if (dep.destinationConflict || dep.scopeConflict || dep.ownershipConflict || !dep.settled) {
+          return c.json({
+            accepted: false,
+            reconciliation: dep.reconciliation,
+            error: {
+              code: dep.destinationConflict ? 'deposit_destination_conflict' : dep.scopeConflict ? 'deposit_payment_scope_conflict' : dep.ownershipConflict ? 'deposit_already_owned' : dep.reason ?? 'payment_not_settled',
+              message: 'The payment could not be safely settled to the requested destination. No new credit was issued.',
+            },
+          }, 409)
         }
+        policyCredited = Boolean(dep.credited)
+        policyReconciliation = Boolean(dep.reconciliation)
       }
       return c.json({
         accepted: true,
@@ -552,13 +559,20 @@ export function registerCreditsRoutes(app: SessionApp): void {
       confirmations: finality.confirmations,
       required: finality.required,
     })
-    if (chainSlug && settle.action === 'credit') {
-      const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
-      credited = Boolean(dep.credited)
-      if (dep.settled) {
-        const rec = await markCredited(recorded.paymentId, usdMicros)
-        reconciliation = rec.reconciliation
+    if (chainSlug && (settle.action === 'credit' || settle.action === 'already_credited')) {
+      const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, recorded.paymentId, finality, received_at)
+      if (dep.destinationConflict || dep.scopeConflict || dep.ownershipConflict || !dep.settled) {
+        return c.json({
+          accepted: false,
+          reconciliation: dep.reconciliation,
+          error: {
+            code: dep.destinationConflict ? 'deposit_destination_conflict' : dep.scopeConflict ? 'deposit_payment_scope_conflict' : dep.ownershipConflict ? 'deposit_already_owned' : dep.reason ?? 'payment_not_settled',
+            message: 'The payment could not be safely settled to the requested destination. No new credit was issued.',
+          },
+        }, 409)
       }
+      credited = Boolean(dep.credited)
+      reconciliation = Boolean(dep.reconciliation)
       balanceMicros = dep.to === 'account' ? (dep.deposit as any).balance : await getBalanceMicros(c.get('user')!.id)
     } else if (recorded.duplicate) {
       balanceMicros = await getBalanceMicros(c.get('user')!.id)
@@ -629,122 +643,176 @@ export function registerCreditsRoutes(app: SessionApp): void {
   })
 
   // POST /api/credits/deposit
+  // Compatibility entry point. It now uses the same payment record and atomic settlement
+  // transaction as /api/credits/payment-review rather than bypassing the payment audit state.
   app.post('/api/credits/deposit', requireUser, async (c) => {
-    // Any wallet we control is a valid place to receive a deposit, so this refuses only when
-    // none is configured at all rather than when the vault specifically is absent.
-    if (platformReceivers().length === 0) {
-      return c.json(
-        {
-          error: {
-            message: 'Platform receiver wallet not configured',
-            type: 'billing',
-          },
-        },
-        503
-      )
+    const receivers = platformReceivers()
+    if (receivers.length === 0) {
+      return c.json({ error: { message: 'Platform receiver wallet not configured', type: 'billing' } }, 503)
     }
 
     const user = c.get('user')!
-    let body: any
-    try {
-      body = await c.req.json()
-    } catch {
-      body = {}
+    const body = await c.req.json().catch(() => ({} as any))
+    const chainInput = String(body?.chain ?? '')
+    const chainConfig = CHAINS.find((chain) => chain.id === chainInput || String(chain.chainId) === chainInput)
+    const txHash = String(body?.tx_hash ?? body?.txHash ?? '')
+    if (!chainConfig) {
+      return c.json({ error: { message: 'Unsupported chain', type: 'not_found', code: 'not_found' } }, 404)
+    }
+    if (!txHash) {
+      return c.json({ error: { message: 'tx_hash is required', type: 'validation', code: 'invalid_request' } }, 400)
     }
 
-    const chain = body?.chain
-    const tx_hash = body?.tx_hash || body?.txHash
+    const found = await findIncomingTransfer({ chainId: chainConfig.chainId, txHash, receivers })
+    if (!found.ok) {
+      return c.json({ error: { message: found.message, type: 'billing', code: found.code } }, found.code === 'invalid_tx_hash' ? 400 : 422)
+    }
+    const transfer = found.transfer
+    const ownership = checkSenderOwnership({ sender: transfer.from, sessionWallet: user.wallet })
+    if (!ownership.ok) {
+      return c.json({ error: { message: ownership.message, type: 'billing', code: ownership.code } }, 403)
+    }
 
-    if (!chain || !tx_hash) {
-      return c.json(
-        {
-          error: {
-            message: 'Missing required fields: chain, tx_hash',
-            type: 'billing',
-            code: 'invalid_request',
-          },
-        },
-        400
+    const receivedAt = transfer.to === String(env.platformReceiverAddress || '').toLowerCase()
+      ? 'treasury_vault'
+      : transfer.to === String(env.platformAutomationReceiver || '').toLowerCase()
+        ? 'automation_account'
+        : transfer.to === String(env.platformSponsorReceiver || '').toLowerCase()
+          ? 'sponsored_wallet'
+          : 'agent_wallet'
+
+    const targetKeyId = body?.api_key_id ? String(body.api_key_id) : null
+    if (targetKeyId) {
+      const owned = await one(
+        'SELECT id FROM api_keys WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL',
+        [targetKeyId, user.id]
       )
+      if (!owned) return c.json({ error: { message: 'api_key_id must be one of your active keys', type: 'validation' } }, 400)
+    }
+
+    if (found.finality.state === 'confirming') {
+      const waiting = await recordPayment({
+        intent: null,
+        userId: user.id,
+        transfer,
+        receivedAt,
+        usdMicros: 0,
+        status: 'pending_confirmations',
+        refusalCode: null,
+        state: 'confirming',
+        confirmations: found.finality.confirmations,
+        observedBlock: found.finality.observedBlock,
+      })
+      if (!waiting.duplicate) {
+        await logPaymentEvent(waiting.paymentId, 'confirming', {
+          confirmations: found.finality.confirmations,
+          required: found.finality.required,
+          observed_block: found.finality.observedBlock === null ? null : String(found.finality.observedBlock),
+        })
+      }
+      return c.json({
+        accepted: true,
+        credited: false,
+        credit_status: 'confirming',
+        payment_id: waiting.paymentId,
+        duplicate: waiting.duplicate,
+        confirmations: found.finality.confirmations,
+        required_confirmations: found.finality.required,
+        received_at: receivedAt,
+      }, 202)
     }
 
     const verification = await verifyDeposit({
-      chain,
-      txHash: tx_hash,
+      chain: chainConfig.id,
+      txHash,
       fromWallet: user.wallet,
     })
-
     if (!verification.ok) {
-      const status = verification.code === 'not_found' ? 404 : 400
-      return c.json(
-        {
-          error: {
-            message: verification.message,
-            type: 'billing',
-            code: verification.code,
-          },
-        },
-        status
-      )
+      return c.json({ error: { message: verification.message, type: 'billing', code: verification.code } }, 422)
     }
 
-    // Spendable credit is issued only for money we hold as money: the settlement stablecoin,
-    // or the platform token at its published policy rate. Any other volatile token is an asset
-    // we would have to sell first (see creditPolicy), so it is not credited here.
-    const creditDecision = decideCredit({
-      chainSlug: String(chain),
+    const decision = decideCredit({
+      chainSlug: chainConfig.id,
       token: verification.token,
       oracleMicros: verification.amount_usd_micros,
       policyPriced: isPolicyPricedToken(verification.token),
     })
-    if (creditDecision.status !== 'credited') {
-      return c.json(
-        {
-          credited: false,
-          credit_status: creditDecision.status,
-          credit_reason: creditDecision.reason,
-          token: verification.token,
-          oracle_usd: verification.amount_usd_micros / 1_000_000,
-          next_step:
-            creditDecision.status === 'pending_conversion'
-              ? 'This token is not a settlement asset, so no spendable credit is issued yet. Once it is converted to ' +
-                'the settlement stablecoin, the realised amount is credited. Claim it with POST /api/credits/payment-review.'
-              : 'The received token valued at zero, so nothing was credited.',
-        },
-        202
-      )
-    }
-
-    // Optionally load a specific key instead of the shared account balance. The key must
-    // belong to the caller, so a deposit can never be pointed at someone else's key.
-    const targetKeyId = body?.api_key_id ? String(body.api_key_id) : null
-    if (targetKeyId) {
-      const owned = await one('SELECT id FROM api_keys WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL', [targetKeyId, user.id])
-      if (!owned) {
-        return c.json({ error: { message: 'api_key_id must be one of your active keys', type: 'validation' } }, 400)
-      }
-      const dep = await creditDeposit(user.id, verification.amount_usd_micros, { chain, txHash: tx_hash, token: verification.token }, { toKeyId: targetKeyId })
-      if (!dep.credited) {
-        return c.json({ credited: false, loaded_to: 'key', api_key_id: targetKeyId, reason: 'already_credited' })
-      }
-      return c.json({
-        credited: true,
-        loaded_to: 'key',
-        api_key_id: targetKeyId,
-        key_credit_usd_micros: dep.keyCredit ?? null,
-        balance_usd_micros: dep.balance,
-      })
-    }
-
-    const depositResult = await creditDeposit(user.id, verification.amount_usd_micros, {
-      chain,
-      txHash: tx_hash,
-      token: verification.token,
+    const status = decision.status === 'credited'
+      ? 'recorded'
+      : decision.status === 'pending_conversion'
+        ? 'pending_conversion'
+        : 'refused'
+    const state = decision.status === 'credited'
+      ? 'confirmed'
+      : decision.status === 'pending_conversion'
+        ? 'confirmed'
+        : 'rejected'
+    const payment = await recordPayment({
+      intent: null,
+      userId: user.id,
+      transfer,
+      receivedAt,
+      usdMicros: verification.amount_usd_micros,
+      status,
+      refusalCode: decision.status === 'credited' ? null : decision.reason,
+      state,
+      confirmations: found.finality.confirmations,
+      observedBlock: found.finality.observedBlock,
+      priceUsd: verification.price_usd ?? null,
     })
+
+    if (decision.status !== 'credited') {
+      return c.json({
+        accepted: true,
+        credited: false,
+        payment_id: payment.paymentId,
+        duplicate: payment.duplicate,
+        credit_status: decision.status,
+        credit_reason: decision.reason,
+        oracle_usd: verification.amount_usd_micros / 1_000_000,
+        next_step: decision.status === 'pending_conversion'
+          ? 'This token must be converted before spendable credit can be issued. Retry after settlement or use the payment-review flow.'
+          : 'The received token valued at zero, so nothing was credited.',
+      }, decision.status === 'pending_conversion' ? 202 : 422)
+    }
+
+    const settled = await creditPaymentDeposit(
+      payment.paymentId,
+      user.id,
+      verification.amount_usd_micros,
+      { chain: chainConfig.id, txHash, token: verification.token },
+      {
+        ...(targetKeyId ? { toKeyId: targetKeyId } : {}),
+        receivedBy: receivedAt,
+        confirmations: found.finality.confirmations,
+        requiredConfirmations: found.finality.required,
+      }
+    )
+    if (settled.destinationConflict || settled.scopeConflict || settled.ownershipConflict || !settled.settled) {
+      return c.json({
+        accepted: false,
+        reconciliation: settled.reconciliation,
+        error: {
+          code: settled.destinationConflict ? 'deposit_destination_conflict'
+            : settled.scopeConflict ? 'deposit_payment_scope_conflict'
+              : settled.ownershipConflict ? 'deposit_already_owned'
+                : settled.reason ?? 'payment_not_settled',
+          message: 'The payment could not be safely settled to the requested destination. No new credit was issued.',
+        },
+      }, 409)
+    }
 
     return c.json({
-      credited: depositResult.credited,
-      balance_usd_micros: depositResult.balance,
+      accepted: true,
+      credited: settled.credited,
+      payment_id: payment.paymentId,
+      duplicate: payment.duplicate,
+      loaded_to: targetKeyId ? 'key' : 'account',
+      api_key_id: targetKeyId,
+      key_credit_usd_micros: settled.keyCredit ?? null,
+      balance_usd_micros: settled.balance,
+      oracle_usd: verification.amount_usd_micros / 1_000_000,
     })
   })
+
 }

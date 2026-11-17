@@ -1,4 +1,5 @@
 import { env } from '../lib/env.js'
+import { DB_MIGRATIONS } from './migrations/index.js'
 
 /**
  * Dual-driver database layer.
@@ -120,15 +121,46 @@ export async function tx<T>(fn: (q: (sql: string, params?: any[]) => Promise<Que
 }
 
 let migrated = false
+let migrationPromise: Promise<void> | null = null
 
 export async function migrate(): Promise<void> {
   if (migrated) return
-  const schema = (await import('node:fs')).readFileSync(new URL('./schema.sql', import.meta.url), 'utf8')
-  if (env.databaseUrl) {
-    await query(schema) // pg simple-query protocol allows multi-statement when unparameterized
-  } else {
-    const db = await getPglite()
-    await db.exec(schema)
+  if (migrationPromise) return migrationPromise
+  migrationPromise = (async () => {
+    const schema = (await import('node:fs')).readFileSync(new URL('./schema.sql', import.meta.url), 'utf8')
+    if (env.databaseUrl) {
+      await query(schema) // pg simple-query protocol allows multi-statement when unparameterized
+    } else {
+      const db = await getPglite()
+      await db.exec(schema)
+    }
+
+    // Versioned migrations are claimed and applied in one transaction. The unique version row
+    // serializes concurrent serverless cold starts: only the transaction that inserts the version
+    // executes its statements, and a failed statement rolls the version claim back.
+    await query(`CREATE TABLE IF NOT EXISTS schema_migrations (
+      version text PRIMARY KEY,
+      name text NOT NULL,
+      applied_at timestamptz NOT NULL DEFAULT now()
+    )`)
+    for (const migration of DB_MIGRATIONS) {
+      await tx(async (q) => {
+        const claimed = await q(
+          `INSERT INTO schema_migrations (version, name)
+           VALUES ($1, $2)
+           ON CONFLICT (version) DO NOTHING
+           RETURNING version`,
+          [migration.version, migration.name]
+        )
+        if (claimed.rows.length === 0) return
+        for (const statement of migration.statements) await q(statement)
+      })
+    }
+    migrated = true
+  })()
+  try {
+    await migrationPromise
+  } finally {
+    migrationPromise = null
   }
-  migrated = true
 }

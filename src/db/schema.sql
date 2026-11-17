@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS deposits (
   UNIQUE (chain, tx_hash, token)
 );
 
+
 CREATE TABLE IF NOT EXISTS ledger (
   id               bigserial PRIMARY KEY,
   user_id          text NOT NULL,
