@@ -23,7 +23,5 @@ jobs:
       - name: Verify merged PRs, independent approvals, CI and branch rules
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_ACTOR: ${{ github.actor }}
           OWNER_ATTESTATION: ${{ inputs.owner_attestation }}
         run: node .github/scripts/verify-hermes-phase-b-graduation.mjs
