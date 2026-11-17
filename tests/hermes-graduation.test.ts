@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { latestIndependentApprovals } from '../.github/scripts/verify-hermes-phase-b-graduation.mjs'
 
-const review = (id, login, state, sha, at, type = 'User') => ({
+const review = (id: number, login: string, state: string, sha: string, at: string, type = 'User') => ({
   id, user: { login, type }, state, commit_id: sha, submitted_at: at,
 })
 
@@ -14,7 +14,7 @@ test('graduation accepts only the latest independent human approval on the exact
     review(4, 'bot-reviewer', 'APPROVED', 'head', '2026-11-17T13:00:00Z', 'Bot'),
   ]
   assert.deepEqual(
-    latestIndependentApprovals(reviews, 'head', 'author').map((x) => x.user.login),
+    latestIndependentApprovals(reviews, 'head', 'author').map((x: { user: { login: string } }) => x.user.login),
     ['reviewer'],
   )
 })
