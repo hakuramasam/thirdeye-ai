@@ -16,14 +16,15 @@ export function latestIndependentApprovals(reviews, headSha, authorLogin) {
     review.state === 'APPROVED' &&
     review.commit_id === headSha &&
     review.user.login !== authorLogin &&
-    review.user.type !== 'Bot'
+    review.user.type !== 'Bot' &&
+    ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(review.author_association)
   )
 }
 
 async function main() {
   const repo = process.env.GITHUB_REPOSITORY
-  const token = process.env.GITHUB_TOKEN
-  if (!repo || !token) throw new Error('GITHUB_REPOSITORY and GITHUB_TOKEN are required')
+  const token = process.env.GITHUB_ADMIN_TOKEN || process.env.GITHUB_TOKEN
+  if (!repo || !token) throw new Error('GITHUB_REPOSITORY and a GitHub token are required')
 
   const manifest = JSON.parse(readFileSync('docs/authority/hermes-phase-b-graduation.json', 'utf8'))
   if (manifest.automation_may_grant_authority !== false) {
@@ -69,13 +70,9 @@ async function main() {
 
     const reviews = await paged(`/pulls/${number}/reviews`)
     const approvals = latestIndependentApprovals(reviews, pr.head?.sha, pr.user?.login)
-    const reviewers = []
-    for (const review of approvals) {
-      const permission = await request(`/collaborators/${encodeURIComponent(review.user.login)}/permission`)
-      if (permission.status === 200 && ['write', 'maintain', 'admin'].includes(permission.body.permission)) {
-        reviewers.push(review.user.login)
-      }
-    }
+    // Collaborator association is available on review records. GitHub branch protection itself
+    // enforces that required approvals come from write-eligible reviewers.
+    const reviewers = approvals.map((review) => review.user.login)
     const reviewGatePassed = reviewers.length >= manifest.minimum_independent_approvals
     if (!reviewGatePassed) {
       blockers.push(`${gate}: requires ${manifest.minimum_independent_approvals} latest independent approval(s) on exact head SHA ${pr.head?.sha}; found ${reviewers.length}`)
@@ -100,10 +97,12 @@ async function main() {
   // Read both classic branch protection and rulesets: repositories can use either or both.
   let contexts = []
   let strict = false
+  let requiredApprovals = 0
   const protection = await request('/branches/main/protection')
   if (protection.status === 200) {
     contexts.push(...(protection.body.required_status_checks?.contexts ?? []))
     strict ||= protection.body.required_status_checks?.strict === true
+    requiredApprovals = Math.max(requiredApprovals, protection.body.required_pull_request_reviews?.required_approving_review_count ?? 0)
   } else if (protection.status !== 404) {
     blockers.push(`Unable to inspect main branch protection (HTTP ${protection.status})`)
   }
@@ -112,6 +111,9 @@ async function main() {
   if (rulesetsResult.status === 200 && Array.isArray(rulesetsResult.body)) {
     for (const ruleset of rulesetsResult.body.filter((r) => r.enforcement === 'active')) {
       for (const rule of ruleset.rules ?? []) {
+        if (rule.type === 'pull_request') {
+          requiredApprovals = Math.max(requiredApprovals, rule.parameters?.required_approving_review_count ?? 0)
+        }
         if (rule.type === 'required_status_checks') {
           contexts.push(...(rule.parameters?.required_status_checks ?? []).map((x) => x.context))
           strict ||= rule.parameters?.strict_required_status_checks_policy === true
@@ -124,10 +126,10 @@ async function main() {
 
   const hasCi = contexts.some((x) => [manifest.required_branch_protection_contexts[0], 'ci / verify'].includes(x))
   const hasReview = contexts.some((x) => manifest.required_review_check_names.includes(x))
-  if (!hasCi || !hasReview || !strict) {
-    blockers.push(`main branch protection/rulesets must require current CI and SHA-bound review with strict up-to-date checks (found: ${contexts.join(', ') || 'none'})`)
+  if (!hasCi || !hasReview || !strict || requiredApprovals < manifest.minimum_independent_approvals) {
+    blockers.push(`main branch protection/rulesets must require at least ${manifest.minimum_independent_approvals} approving review(s), current CI, SHA-bound review, and strict up-to-date checks (found approvals: ${requiredApprovals}; contexts: ${contexts.join(', ') || 'none'})`)
   } else {
-    evidence.push('PASS main branch rules require CI + SHA-bound independent review with strict up-to-date checks')
+    evidence.push('PASS main branch rules require ${requiredApprovals} approving review(s), CI + SHA-bound independent review, and strict up-to-date checks')
   }
 
   const attestation = process.env.OWNER_ATTESTATION || ''
