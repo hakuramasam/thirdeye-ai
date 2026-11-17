@@ -80,13 +80,20 @@ async function main() {
     if (!reviewGatePassed) {
       blockers.push(`${gate}: requires ${manifest.minimum_independent_approvals} latest independent approval(s) on exact head SHA ${pr.head?.sha}; found ${reviewers.length}`)
     }
+    const currentPr = await api(`/pulls/${number}`)
+    const snapshotStable =
+      currentPr.head?.sha === pr.head?.sha &&
+      currentPr.merge_commit_sha === pr.merge_commit_sha &&
+      currentPr.merged_at === pr.merged_at
+    if (!snapshotStable) blockers.push(`${gate}: PR head or merge snapshot changed during graduation verification`)
+
     const checks = await api(`/commits/${pr.merge_commit_sha}/check-runs?per_page=100`)
     const successful = manifest.required_ci_check_names.every((name) =>
       checks.check_runs?.some((check) => check.name === name && check.conclusion === 'success')
     )
     if (!successful) blockers.push(`${gate}: required CI check(s) are not successful on merge commit ${pr.merge_commit_sha}`)
 
-    evidence.push(`${reviewGatePassed && successful ? 'PASS' : 'BLOCKED'} ${gate}: merged PR #${number}; independent reviewers=${reviewers.join(', ') || 'missing'}; merge CI=${successful ? 'success' : 'not green'}`)
+    evidence.push(`${reviewGatePassed && successful && snapshotStable ? 'PASS' : 'BLOCKED'} ${gate}: merged PR #${number}; independent reviewers=${reviewers.join(', ') || 'missing'}; merge CI=${successful ? 'success' : 'not green'}; snapshot=${snapshotStable ? 'stable' : 'changed'}`)
   }
 
   // A green workflow is not merge-blocking unless repository rules require it.
