@@ -174,11 +174,21 @@ export async function creditPaymentDeposit(
       const row = existing.rows[0]
       const sameOwner = row?.user_id === userId
       const sameDestination = (row?.to_key_id ?? null) === (opts.toKeyId ?? null)
+      const balanceRow = await q(
+        `SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal FROM ledger WHERE user_id = $1`,
+        [userId]
+      )
+      let existingKeyCredit: number | undefined
+      if (opts.toKeyId && sameOwner && sameDestination) {
+        const key = await q('SELECT credit_usd_micros FROM api_keys WHERE id = $1 AND user_id = $2', [opts.toKeyId, userId])
+        existingKeyCredit = key.rows[0] ? Number(key.rows[0].credit_usd_micros) : undefined
+      }
       return {
         credited: false, settled: Boolean(sameOwner && sameDestination), state: 'credited',
         reconciliation: false, destinationConflict: Boolean(sameOwner && !sameDestination),
         ownershipConflict: Boolean(row && !sameOwner),
-        reason: 'already_credited', balance: 0,
+        reason: 'already_credited', balance: Number(balanceRow.rows[0]?.bal ?? 0),
+        keyCredit: existingKeyCredit,
       }
     }
     if (!CREDITABLE_STATES.has(payment.state) || !CREDITABLE_STATUSES.includes(payment.status)) {
@@ -222,6 +232,10 @@ export async function creditPaymentDeposit(
           destinationConflict: true, ownershipConflict: false,
           reason: 'deposit_destination_conflict', balance: 0,
         }
+      }
+      if (opts.toKeyId) {
+        const key = await q('SELECT credit_usd_micros FROM api_keys WHERE id = $1 AND user_id = $2', [opts.toKeyId, userId])
+        keyCredit = key.rows[0] ? Number(key.rows[0].credit_usd_micros) : undefined
       }
     } else if (opts.toKeyId) {
       const key = await q(
