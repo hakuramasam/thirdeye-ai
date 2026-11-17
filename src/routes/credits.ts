@@ -454,9 +454,6 @@ export function registerCreditsRoutes(app: SessionApp): void {
       })
       if (policyChain && policyDecision.status === 'credited' && (policySettle.action === 'credit' || policySettle.action === 'already_credited')) {
         const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, policyRecord.paymentId, finality, received_at)
-        if (dep.destinationConflict) {
-          return c.json({ accepted: false, error: { code: 'deposit_destination_conflict', message: 'This transfer was already credited to a different destination. It cannot be moved to this account or API key automatically.' } }, 409)
-        }
         if (dep.destinationConflict || dep.scopeConflict || dep.ownershipConflict || !dep.settled) {
           return c.json({
             accepted: false,
@@ -564,15 +561,12 @@ export function registerCreditsRoutes(app: SessionApp): void {
     })
     if (chainSlug && (settle.action === 'credit' || settle.action === 'already_credited')) {
       const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, recorded.paymentId, finality, received_at)
-      if (dep.destinationConflict) {
-        return c.json({ accepted: false, error: { code: 'deposit_destination_conflict', message: 'This transfer was already credited to a different destination. It cannot be moved to this account or API key automatically.' } }, 409)
-      }
-      if (dep.destinationConflict || dep.ownershipConflict || !dep.settled) {
+      if (dep.destinationConflict || dep.scopeConflict || dep.ownershipConflict || !dep.settled) {
         return c.json({
           accepted: false,
           reconciliation: dep.reconciliation,
           error: {
-            code: dep.destinationConflict ? 'deposit_destination_conflict' : dep.ownershipConflict ? 'deposit_already_owned' : dep.reason ?? 'payment_not_settled',
+            code: dep.destinationConflict ? 'deposit_destination_conflict' : dep.scopeConflict ? 'deposit_payment_scope_conflict' : dep.ownershipConflict ? 'deposit_already_owned' : dep.reason ?? 'payment_not_settled',
             message: 'The payment could not be safely settled to the requested destination. No new credit was issued.',
           },
         }, 409)
