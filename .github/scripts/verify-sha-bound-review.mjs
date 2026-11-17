@@ -1,9 +1,9 @@
 /**
  * Fail-closed SHA-bound independent review gate.
  *
- * An approval is valid only when the reviewer's latest submitted review is APPROVED
- * on the PR's current head SHA, the reviewer is not the PR author, and GitHub reports
- * a repository-collaborator association for that reviewer; branch protection enforces eligible write access.
+ * An approval qualifies only when it is the reviewer's latest review, is APPROVED
+ * on the PR's exact current head SHA, is not self-authored or bot-authored, and
+ * GitHub independently confirms write, maintain, or admin repository permission.
  */
 export function independentApprovalCandidates(reviews, headSha, authorLogin) {
   const latest = new Map()
@@ -22,16 +22,19 @@ export function independentApprovalCandidates(reviews, headSha, authorLogin) {
     review.state === 'APPROVED' &&
     review.commit_id === headSha &&
     review.user.login !== authorLogin &&
-    review.user.type !== 'Bot' &&
-    ['OWNER', 'MEMBER', 'COLLABORATOR'].includes(review.author_association)
+    review.user.type !== 'Bot'
   )
+}
+
+export function isWriteEligiblePermission(permission) {
+  return ['write', 'maintain', 'admin'].includes(permission)
 }
 
 async function main() {
   const repo = process.env.GITHUB_REPOSITORY
   const prNumber = process.env.PR_NUMBER
   const token = process.env.GITHUB_TOKEN
-  if (!repo || !/^\d+$/.test(prNumber || '') || !token) {
+  if (!repo || !/^\\d+$/.test(prNumber || '') || !token) {
     throw new Error('GITHUB_REPOSITORY, PR_NUMBER and GITHUB_TOKEN are required')
   }
 
@@ -63,19 +66,31 @@ async function main() {
   }
 
   const candidates = independentApprovalCandidates(reviews, headSha, authorLogin)
-  const review = candidates[0]
-  if (review) {
+  let acceptedReviewer
+  for (const review of candidates) {
+    try {
+      const permission = await api(`/collaborators/${encodeURIComponent(review.user.login)}/permission`)
+      if (isWriteEligiblePermission(permission.permission)) {
+        acceptedReviewer = { login: review.user.login, permission: permission.permission }
+        break
+      }
+    } catch {
+      // Unknown or inaccessible permission is never sufficient authority.
+    }
+  }
+
+  if (acceptedReviewer) {
     const currentPr = await api(`/pulls/${prNumber}`)
     if (currentPr.state !== 'open' || currentPr.head?.sha !== headSha) {
       console.error('PR head or state changed during review verification; re-run against the current open PR.')
       process.exitCode = 1
       return
     }
-    console.log(`Independent approval verified for current head ${headSha.slice(0, 12)} by ${review.user.login} (${review.author_association}).`)
+    console.log(`Independent approval verified for current head ${headSha.slice(0, 12)} by ${acceptedReviewer.login} (${acceptedReviewer.permission}).`)
     return
   }
 
-  console.error(`No qualifying independent approval for current head ${headSha}. A repository collaborator other than ${authorLogin} must submit their latest APPROVED review on this exact SHA; branch protection must enforce write-eligible reviewers.`)
+  console.error(`No qualifying independent approval for current head ${headSha}. A non-author human reviewer must have their latest APPROVED review on this exact SHA and independently verified write, maintain, or admin permission.`)
   process.exitCode = 1
 }
 
