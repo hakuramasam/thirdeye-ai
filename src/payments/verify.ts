@@ -184,10 +184,15 @@ export async function verifyDeposit({
   chain,
   txHash,
   fromWallet,
+  selectedTransfer,
+  selectedFinality,
 }: {
   chain: string
   txHash: string
   fromWallet: string
+  /** When supplied, value this exact transfer instead of reparsing the transaction independently. */
+  selectedTransfer?: IncomingTransfer
+  selectedFinality?: FinalityVerdict
 }): Promise<VerifyResult> {
   const chainConfig = getChain(chain)
   if (!chainConfig) {
@@ -197,63 +202,95 @@ export async function verifyDeposit({
   const hash = (txHash.startsWith('0x') ? txHash : `0x${txHash}`).toLowerCase() as `0x${string}`
 
   try {
-    const client = createPublicClient({
-      transport: http(chainConfig.rpc),
-    })
-    // A failed *read* and an *absent* transaction are different answers. The old single catch below
-    // turned an RPC outage into `not_found`, which told the caller a real deposit did not exist and,
-    // on the review path, was enough to have one classified as a reorg.
-    let receipt: any
-    try {
-      receipt = await client.getTransactionReceipt({ hash })
-    } catch (err: any) {
-      // viem throws both when the receipt does not exist and when the read itself fails, so the two
-      // are separated here. An absent receipt is `not_found`, which is the answer the caller needs; a
-      // failed read is `rpc_error`, which is retryable. The old single catch could not tell them
-      // apart and reported an outage as a missing transaction.
-      const name = String(err?.name ?? '')
+    let parsed: VerifyResult
+    let verdict: FinalityVerdict
+
+    if (selectedTransfer) {
+      // The compatibility route already selected a specific incoming transfer from the receipt.
+      // Do not make a second RPC read and independently choose a possibly different transfer.
+      const receiverSet = new Set(platformReceivers().map((value) => String(value).toLowerCase()))
       if (
-        err instanceof TransactionReceiptNotFoundError ||
-        err instanceof TransactionNotFoundError ||
-        name === 'ReceiptNotFoundError' ||
-        name === 'TransactionNotFoundError'
+        selectedTransfer.chain_id !== chainConfig.chainId ||
+        selectedTransfer.tx_hash.toLowerCase() !== hash ||
+        selectedTransfer.from.toLowerCase() !== fromWallet.toLowerCase() ||
+        !receiverSet.has(selectedTransfer.to.toLowerCase())
       ) {
-        return { ok: false, code: 'not_found', message: 'Transaction receipt not found' }
+        return { ok: false, code: 'wrong_recipient', message: 'The selected transfer does not match this claim.' }
       }
-      return {
-        ok: false,
-        code: 'rpc_error',
-        message: `Could not read the transaction receipt: ${err?.shortMessage || err?.message || 'rpc error'}`,
+      const tokenConfig = chainConfig.tokens.find((t) => t.address.toLowerCase() === selectedTransfer.token.toLowerCase())
+      if (!tokenConfig) {
+        return { ok: false, code: 'unsupported_token', message: 'Token is not supported on this chain' }
       }
-    }
-    if (!receipt) {
-      return { ok: false, code: 'not_found', message: 'Transaction receipt not found' }
+      if (!selectedFinality) {
+        return { ok: false, code: 'insufficient_confirmations', message: 'Finality evidence is required before this transfer can be valued.' }
+      }
+      let rawAmount: bigint
+      try {
+        rawAmount = BigInt(selectedTransfer.raw_amount)
+      } catch {
+        return { ok: false, code: 'zero_amount', message: 'Deposit transfer amount is invalid.' }
+      }
+      if (rawAmount <= 0n || selectedTransfer.decimals !== tokenConfig.decimals) {
+        return { ok: false, code: 'zero_amount', message: 'Deposit transfer amount or token scale is invalid.' }
+      }
+      const amountUsdMicros = tokenConfig.oracle
+        ? 0
+        : Number((rawAmount * 1_000_000n) / (10n ** BigInt(tokenConfig.decimals)))
+      parsed = {
+        ok: true,
+        token: selectedTransfer.token.toLowerCase(),
+        amount_usd_micros: amountUsdMicros,
+        raw_amount: rawAmount.toString(),
+      }
+      verdict = selectedFinality
+    } else {
+      const client = createPublicClient({
+        transport: http(chainConfig.rpc),
+      })
+      let receipt: any
+      try {
+        receipt = await client.getTransactionReceipt({ hash })
+      } catch (err: any) {
+        const name = String(err?.name ?? '')
+        if (
+          err instanceof TransactionReceiptNotFoundError ||
+          err instanceof TransactionNotFoundError ||
+          name === 'ReceiptNotFoundError' ||
+          name === 'TransactionNotFoundError'
+        ) {
+          return { ok: false, code: 'receipt_unavailable', message: 'Transaction receipt is not available yet. Please retry shortly.' }
+        }
+        return {
+          ok: false,
+          code: 'rpc_error',
+          message: 'Could not verify this transaction right now. Please retry shortly.',
+        }
+      }
+      if (!receipt) {
+        return { ok: false, code: 'receipt_unavailable', message: 'Transaction receipt is not available yet. Please retry shortly.' }
+      }
+
+      parsed = parseTransferLogs(receipt, chainConfig, platformReceivers(), fromWallet)
+      if (!parsed.ok) return parsed
+
+      let headBlock: bigint | null = null
+      try {
+        headBlock = await client.getBlockNumber()
+      } catch {
+        headBlock = null
+      }
+      verdict = finalityVerdict({
+        chainId: chainConfig.chainId,
+        receiptBlock: receipt.blockNumber ?? null,
+        headBlock: headBlock ?? 0n,
+      })
     }
 
-    const parsed = parseTransferLogs(receipt, chainConfig, platformReceivers(), fromWallet)
-    if (!parsed.ok) return parsed
-
-    // Finality gate. A receipt at one confirmation can still be replaced by a reorg, so the
-    // transfer is neither valued nor credited until block depth meets the chain's policy.
-    // An unreadable head is a wait, not a missing transaction: reporting it as `not_found` told
-    // the caller a real deposit did not exist. It matches findIncomingTransfer, which counts an
-    // unreadable head as zero confirmations.
-    let headBlock: bigint | null = null
-    try {
-      headBlock = await client.getBlockNumber()
-    } catch {
-      headBlock = null
-    }
-    const verdict = finalityVerdict({
-      chainId: chainConfig.chainId,
-      receiptBlock: receipt.blockNumber ?? null,
-      headBlock: headBlock ?? 0n,
-    })
     if (verdict.state !== 'confirmed') {
       return {
         ok: false,
         code: 'insufficient_confirmations',
-        message: verdict.unverifiable === 'unreadable_head' || headBlock === null
+        message: verdict.unverifiable === 'unreadable_head'
           ? `The current block height on chain ${chainConfig.chainId} could not be read, so this transfer cannot be shown to be final yet. Nothing is credited; retry shortly.`
           : `This transfer has ${verdict.confirmations} of ${verdict.required} required confirmations on ${chainConfig.chainId}. Nothing is credited until it is buried that deep; retry this claim then.`,
       }
@@ -264,7 +301,6 @@ export async function verifyDeposit({
     )
     if (!tokenConfig?.oracle || !parsed.raw_amount) return parsed
 
-    // Oracle-priced deposit token: quote, guard, then credit with a haircut.
     const quote = await getTokenPriceUsd(tokenConfig)
     if (!quote) {
       return {
@@ -285,15 +321,12 @@ export async function verifyDeposit({
     }
 
     const rawAmount = BigInt(parsed.raw_amount)
-    // Exact first, dollar-scale float second: Number(raw) loses precision on 18-decimal values.
     const tokenAmount = rawAmountToNumber(rawAmount, tokenConfig.decimals)
     const haircut = 1 - tokenConfig.oracle.haircutBps / 10_000
     const bonusBps = Number(tokenConfig.oracle.bonusBps ?? 0)
     const grossUsd = tokenAmount * quote.priceUsd
     const netUsd = grossUsd * haircut
 
-    // The cap is applied to the valued amount, never to the bonus, so the perk cannot be
-    // used to walk past the per-deposit limit.
     if (netUsd > tokenConfig.oracle.maxDepositUsd) {
       return {
         ok: false,
@@ -323,8 +356,6 @@ export async function verifyDeposit({
       base_usd: netUsd,
     }
   } catch (err: any) {
-    // Anything reaching here is a path we did not classify (a price fetch, a log parse): it is a
-    // failed verification, not proof the transaction is missing, so it must stay retryable.
     return {
       ok: false,
       code: 'rpc_error',
@@ -387,7 +418,7 @@ export async function findIncomingTransfer(params: {
     // A single RPC null response is not proof of a reorg: a lagging or inconsistent node can
     // temporarily omit a receipt. Keep the stored payment untouched and make the caller retry;
     // only independently confirmed canonical-chain evidence may trigger reorg reconciliation.
-    return { ok: false, code: 'receipt_unavailable', message: 'This RPC did not return a receipt. This is not proof of a reorg; retry later. No payment state was changed.' }
+    return { ok: false, code: 'receipt_unavailable', message: 'Transaction receipt is not available yet. Please retry shortly.' }
   }
   if (!(receipt.status === '0x1' || receipt.status === 1 || receipt.status === true)) {
     return { ok: false, code: 'failed_tx', message: 'Transaction did not succeed' }
