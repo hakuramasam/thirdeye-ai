@@ -66,23 +66,24 @@ async function main() {
 
     const reviews = await paged(`/pulls/${number}/reviews`)
     const approvals = latestIndependentApprovals(reviews, pr.head?.sha, pr.user?.login)
-    let reviewer = null
+    const reviewers = []
     for (const review of approvals) {
       const permission = await request(`/collaborators/${encodeURIComponent(review.user.login)}/permission`)
       if (permission.status === 200 && ['write', 'maintain', 'admin'].includes(permission.body.permission)) {
-        reviewer = review.user.login
-        break
+        reviewers.push(review.user.login)
       }
     }
-    if (!reviewer) blockers.push(`${gate}: no latest independent approval on exact head SHA ${pr.head?.sha}`)
-
+    const reviewGatePassed = reviewers.length >= manifest.minimum_independent_approvals
+    if (!reviewGatePassed) {
+      blockers.push(`${gate}: requires ${manifest.minimum_independent_approvals} latest independent approval(s) on exact head SHA ${pr.head?.sha}; found ${reviewers.length}`)
+    }
     const checks = await api(`/commits/${pr.merge_commit_sha}/check-runs?per_page=100`)
     const successful = manifest.required_ci_check_names.every((name) =>
       checks.check_runs?.some((check) => check.name === name && check.conclusion === 'success')
     )
     if (!successful) blockers.push(`${gate}: required CI check(s) are not successful on merge commit ${pr.merge_commit_sha}`)
 
-    evidence.push(`${reviewer && successful ? 'PASS' : 'BLOCKED'} ${gate}: merged PR #${number}; independent reviewer=${reviewer || 'missing'}; merge CI=${successful ? 'success' : 'not green'}`)
+    evidence.push(`${reviewGatePassed && successful ? 'PASS' : 'BLOCKED'} ${gate}: merged PR #${number}; independent reviewers=${reviewers.join(', ') || 'missing'}; merge CI=${successful ? 'success' : 'not green'}`)
   }
 
   // A green workflow is not merge-blocking unless repository rules require it.
