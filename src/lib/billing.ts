@@ -153,7 +153,7 @@ export async function creditPaymentDeposit(
     if (!payment) {
       return {
         credited: false, settled: false, state: null, reconciliation: false,
-        destinationConflict: false, ownershipConflict: false,
+        destinationConflict: false, scopeConflict: false, ownershipConflict: false,
         reason: 'payment_not_found', balance: 0,
       }
     }
@@ -162,7 +162,7 @@ export async function creditPaymentDeposit(
       return {
         credited: false, settled: false, state: payment.state,
         reconciliation: payment.state === 'needs_reconciliation',
-        destinationConflict: false, ownershipConflict: false,
+        destinationConflict: false, scopeConflict: false, ownershipConflict: false,
         reason: 'payment_requires_reconciliation', balance: 0,
       }
     }
@@ -197,17 +197,17 @@ export async function creditPaymentDeposit(
     if (!CREDITABLE_STATES.has(payment.state) || !CREDITABLE_STATUSES.includes(payment.status)) {
       return {
         credited: false, settled: false, state: payment.state, reconciliation: false,
-        destinationConflict: false, ownershipConflict: false,
+        destinationConflict: false, scopeConflict: false, ownershipConflict: false,
         reason: 'payment_not_creditable', balance: 0,
       }
     }
 
     const inserted = await q(
-      `INSERT INTO deposits (id, user_id, chain, token, tx_hash, amount_usd_micros, to_key_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO deposits (id, user_id, chain, token, tx_hash, amount_usd_micros, to_key_id, payment_id, received_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (chain, tx_hash, token) DO NOTHING
        RETURNING id`,
-      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros, opts.toKeyId ?? null]
+      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros, opts.toKeyId ?? null, paymentId, opts.receivedBy]
     )
 
     let creditedNow = Boolean(inserted.rows[0])
