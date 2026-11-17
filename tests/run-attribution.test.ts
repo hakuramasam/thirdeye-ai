@@ -23,3 +23,24 @@ test('audit events preserve the trusted initiating actor and redact its context'
     authorization: '[redacted]',
   })
 })
+
+
+test('audit events accept trusted service initiators without losing source attribution', async () => {
+  const written: { value?: Record<string, unknown> } = {}
+  await createAuditEvent({
+    correlationId: 'corr_service',
+    runId: 'run_service',
+    eventType: 'run.started',
+    actorType: 'service',
+    authorizationContext: {
+      invoker_id: 'inngest:team-agent-run',
+      invocation_source: 'inngest.team_agent_run',
+    },
+  }, { writer: async (row) => { written.value = row } })
+
+  assert.equal(written.value?.actor_type, 'service')
+  assert.deepEqual(written.value?.authorization_context, {
+    invoker_id: 'inngest:team-agent-run',
+    invocation_source: 'inngest.team_agent_run',
+  })
+})
