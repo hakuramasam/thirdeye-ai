@@ -2,7 +2,7 @@ import type { SessionApp } from '../lib/session.js'
 import { requireUser } from '../lib/session.js'
 import { env, depositAddress, platformReceivers } from '../lib/env.js'
 import { query } from '../db/index.js'
-import { getBalanceMicros, creditDeposit, creditPaymentDeposit } from '../lib/billing.js'
+import { getBalanceMicros, creditPaymentDeposit } from '../lib/billing.js'
 import { one } from '../db/index.js'
 import { decideCredit } from '../lib/creditPolicy.js'
 import { CHAINS, isPolicyPricedToken, platformTokenUsdMicros } from '../payments/chains.js'
@@ -643,128 +643,173 @@ export function registerCreditsRoutes(app: SessionApp): void {
   })
 
   // POST /api/credits/deposit
+  // Compatibility entry point. It now uses the same payment record and atomic settlement
+  // transaction as /api/credits/payment-review rather than bypassing the payment audit state.
   app.post('/api/credits/deposit', requireUser, async (c) => {
-    // Any wallet we control is a valid place to receive a deposit, so this refuses only when
-    // none is configured at all rather than when the vault specifically is absent.
-    if (platformReceivers().length === 0) {
-      return c.json(
-        {
-          error: {
-            message: 'Platform receiver wallet not configured',
-            type: 'billing',
-          },
-        },
-        503
-      )
+    const receivers = platformReceivers()
+    if (receivers.length === 0) {
+      return c.json({ error: { message: 'Platform receiver wallet not configured', type: 'billing' } }, 503)
     }
 
     const user = c.get('user')!
-    let body: any
-    try {
-      body = await c.req.json()
-    } catch {
-      body = {}
+    const body = await c.req.json().catch(() => ({} as any))
+    const chainInput = String(body?.chain ?? '')
+    const chainConfig = CHAINS.find((chain) => chain.id === chainInput || String(chain.chainId) === chainInput)
+    const txHash = String(body?.tx_hash ?? body?.txHash ?? '')
+    if (!chainConfig || !txHash) {
+      return c.json({ error: { message: 'A supported chain and tx_hash are required', type: 'validation' } }, 400)
     }
 
-    const chain = body?.chain
-    const tx_hash = body?.tx_hash || body?.txHash
+    const found = await findIncomingTransfer({ chainId: chainConfig.chainId, txHash, receivers })
+    if (!found.ok) {
+      return c.json({ error: { message: found.message, type: 'billing', code: found.code } }, found.code === 'invalid_tx_hash' ? 400 : 422)
+    }
+    const transfer = found.transfer
+    const ownership = checkSenderOwnership({ sender: transfer.from, sessionWallet: user.wallet })
+    if (!ownership.ok) {
+      return c.json({ error: { message: ownership.message, type: 'billing', code: ownership.code } }, 403)
+    }
 
-    if (!chain || !tx_hash) {
-      return c.json(
-        {
-          error: {
-            message: 'Missing required fields: chain, tx_hash',
-            type: 'billing',
-            code: 'invalid_request',
-          },
-        },
-        400
+    const receivedAt = transfer.to === String(env.platformReceiverAddress || '').toLowerCase()
+      ? 'treasury_vault'
+      : transfer.to === String(env.platformAutomationReceiver || '').toLowerCase()
+        ? 'automation_account'
+        : transfer.to === String(env.platformSponsorReceiver || '').toLowerCase()
+          ? 'sponsored_wallet'
+          : 'agent_wallet'
+
+    const targetKeyId = body?.api_key_id ? String(body.api_key_id) : null
+    if (targetKeyId) {
+      const owned = await one(
+        'SELECT id FROM api_keys WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL',
+        [targetKeyId, user.id]
       )
+      if (!owned) return c.json({ error: { message: 'api_key_id must be one of your active keys', type: 'validation' } }, 400)
+    }
+
+    if (found.finality.state === 'confirming') {
+      const waiting = await recordPayment({
+        intent: null,
+        userId: user.id,
+        transfer,
+        receivedAt,
+        usdMicros: 0,
+        status: 'pending_confirmations',
+        refusalCode: null,
+        state: 'confirming',
+        confirmations: found.finality.confirmations,
+        observedBlock: found.finality.observedBlock,
+      })
+      if (!waiting.duplicate) {
+        await logPaymentEvent(waiting.paymentId, 'confirming', {
+          confirmations: found.finality.confirmations,
+          required: found.finality.required,
+          observed_block: found.finality.observedBlock === null ? null : String(found.finality.observedBlock),
+        })
+      }
+      return c.json({
+        accepted: true,
+        credited: false,
+        credit_status: 'confirming',
+        payment_id: waiting.paymentId,
+        duplicate: waiting.duplicate,
+        confirmations: found.finality.confirmations,
+        required_confirmations: found.finality.required,
+        received_at: receivedAt,
+      }, 202)
     }
 
     const verification = await verifyDeposit({
-      chain,
-      txHash: tx_hash,
+      chain: chainConfig.id,
+      txHash,
       fromWallet: user.wallet,
     })
-
     if (!verification.ok) {
-      const status = verification.code === 'not_found' ? 404 : 400
-      return c.json(
-        {
-          error: {
-            message: verification.message,
-            type: 'billing',
-            code: verification.code,
-          },
-        },
-        status
-      )
+      return c.json({ error: { message: verification.message, type: 'billing', code: verification.code } }, 422)
     }
 
-    // Spendable credit is issued only for money we hold as money: the settlement stablecoin,
-    // or the platform token at its published policy rate. Any other volatile token is an asset
-    // we would have to sell first (see creditPolicy), so it is not credited here.
-    const creditDecision = decideCredit({
-      chainSlug: String(chain),
+    const decision = decideCredit({
+      chainSlug: chainConfig.id,
       token: verification.token,
       oracleMicros: verification.amount_usd_micros,
       policyPriced: isPolicyPricedToken(verification.token),
     })
-    if (creditDecision.status !== 'credited') {
-      return c.json(
-        {
-          credited: false,
-          credit_status: creditDecision.status,
-          credit_reason: creditDecision.reason,
-          token: verification.token,
-          oracle_usd: verification.amount_usd_micros / 1_000_000,
-          next_step:
-            creditDecision.status === 'pending_conversion'
-              ? 'This token is not a settlement asset, so no spendable credit is issued yet. Once it is converted to ' +
-                'the settlement stablecoin, the realised amount is credited. Claim it with POST /api/credits/payment-review.'
-              : 'The received token valued at zero, so nothing was credited.',
-        },
-        202
-      )
-    }
-
-    // Optionally load a specific key instead of the shared account balance. The key must
-    // belong to the caller, so a deposit can never be pointed at someone else's key.
-    const targetKeyId = body?.api_key_id ? String(body.api_key_id) : null
-    if (targetKeyId) {
-      const owned = await one('SELECT id FROM api_keys WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL', [targetKeyId, user.id])
-      if (!owned) {
-        return c.json({ error: { message: 'api_key_id must be one of your active keys', type: 'validation' } }, 400)
-      }
-      const dep = await creditDeposit(user.id, verification.amount_usd_micros, { chain, txHash: tx_hash, token: verification.token }, { toKeyId: targetKeyId })
-      if (dep.destinationConflict) {
-        return c.json({ credited: false, loaded_to: 'key', api_key_id: targetKeyId, error: { code: 'deposit_destination_conflict', message: 'This transfer was already credited to a different destination.' } }, 409)
-      }
-      if (!dep.credited) {
-        return c.json({ credited: false, loaded_to: 'key', api_key_id: targetKeyId, reason: 'already_credited' })
-      }
-      return c.json({
-        credited: true,
-        loaded_to: 'key',
-        api_key_id: targetKeyId,
-        key_credit_usd_micros: dep.keyCredit ?? null,
-        balance_usd_micros: dep.balance,
-      })
-    }
-
-    const depositResult = await creditDeposit(user.id, verification.amount_usd_micros, {
-      chain,
-      txHash: tx_hash,
-      token: verification.token,
+    const status = decision.status === 'credited'
+      ? 'recorded'
+      : decision.status === 'pending_conversion'
+        ? 'pending_conversion'
+        : 'refused'
+    const state = decision.status === 'credited'
+      ? 'confirmed'
+      : decision.status === 'pending_conversion'
+        ? 'confirmed'
+        : 'rejected'
+    const payment = await recordPayment({
+      intent: null,
+      userId: user.id,
+      transfer,
+      receivedAt,
+      usdMicros: verification.amount_usd_micros,
+      status,
+      refusalCode: decision.status === 'credited' ? null : decision.reason,
+      state,
+      confirmations: found.finality.confirmations,
+      observedBlock: found.finality.observedBlock,
+      priceUsd: verification.price_usd ?? null,
     })
 
-    if (depositResult.destinationConflict) {
-      return c.json({ credited: false, error: { code: 'deposit_destination_conflict', message: 'This transfer was already credited to a different destination.' } }, 409)
+    if (decision.status !== 'credited') {
+      return c.json({
+        accepted: true,
+        credited: false,
+        payment_id: payment.paymentId,
+        duplicate: payment.duplicate,
+        credit_status: decision.status,
+        credit_reason: decision.reason,
+        oracle_usd: verification.amount_usd_micros / 1_000_000,
+        next_step: decision.status === 'pending_conversion'
+          ? 'This token must be converted before spendable credit can be issued. Retry after settlement or use the payment-review flow.'
+          : 'The received token valued at zero, so nothing was credited.',
+      }, decision.status === 'pending_conversion' ? 202 : 422)
     }
+
+    const settled = await creditPaymentDeposit(
+      payment.paymentId,
+      user.id,
+      verification.amount_usd_micros,
+      { chain: chainConfig.id, txHash, token: verification.token },
+      {
+        ...(targetKeyId ? { toKeyId: targetKeyId } : {}),
+        receivedBy: receivedAt,
+        confirmations: found.finality.confirmations,
+        requiredConfirmations: found.finality.required,
+      }
+    )
+    if (settled.destinationConflict || settled.scopeConflict || settled.ownershipConflict || !settled.settled) {
+      return c.json({
+        accepted: false,
+        reconciliation: settled.reconciliation,
+        error: {
+          code: settled.destinationConflict ? 'deposit_destination_conflict'
+            : settled.scopeConflict ? 'deposit_payment_scope_conflict'
+              : settled.ownershipConflict ? 'deposit_already_owned'
+                : settled.reason ?? 'payment_not_settled',
+          message: 'The payment could not be safely settled to the requested destination. No new credit was issued.',
+        },
+      }, 409)
+    }
+
     return c.json({
-      credited: depositResult.credited,
-      balance_usd_micros: depositResult.balance,
+      accepted: true,
+      credited: settled.credited,
+      payment_id: payment.paymentId,
+      duplicate: payment.duplicate,
+      loaded_to: targetKeyId ? 'key' : 'account',
+      api_key_id: targetKeyId,
+      key_credit_usd_micros: settled.keyCredit ?? null,
+      balance_usd_micros: settled.balance,
+      oracle_usd: verification.amount_usd_micros / 1_000_000,
     })
   })
+
 }
