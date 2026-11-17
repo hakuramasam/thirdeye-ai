@@ -51,26 +51,35 @@ export async function creditDeposit(
    * balance" from "somebody else claimed this transfer first", which are opposite conclusions.
    */
   existingUserId?: string | null
+  /** Destination persisted on the first successful claim: null = account, otherwise API key id. */
+  existingToKeyId?: string | null
+  /** True when this user is replaying the same transfer but asking for a different destination. */
+  destinationConflict?: boolean
 }> {
   return tx(async (q) => {
     await q('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId])
     const dep = await q(
-      `INSERT INTO deposits (id, user_id, chain, token, tx_hash, amount_usd_micros)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO deposits (id, user_id, chain, token, tx_hash, amount_usd_micros, to_key_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (chain, tx_hash, token) DO NOTHING RETURNING id`,
-      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros]
+      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros, opts.toKeyId ?? null]
     )
     if (!dep.rows[0]) {
-      const owner = await q('SELECT user_id FROM deposits WHERE chain = $1 AND tx_hash = $2 AND token = $3', [
+      const owner = await q('SELECT user_id, to_key_id FROM deposits WHERE chain = $1 AND tx_hash = $2 AND token = $3', [
         ref.chain,
         ref.txHash.toLowerCase(),
         ref.token.toLowerCase(),
       ])
       const b = await q('SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal FROM ledger WHERE user_id = $1', [userId])
+      const existingUserId = (owner.rows[0]?.user_id as string | undefined) ?? null
+      const existingToKeyId = (owner.rows[0]?.to_key_id as string | undefined) ?? null
+      const requestedToKeyId = opts.toKeyId ?? null
       return {
         credited: false,
         balance: Number(b.rows[0]?.bal ?? 0),
-        existingUserId: (owner.rows[0]?.user_id as string | undefined) ?? null,
+        existingUserId,
+        existingToKeyId,
+        destinationConflict: existingUserId === userId && existingToKeyId !== requestedToKeyId,
       }
     }
     // A key-tagged deposit loads that key: the deposits row keeps the real amount and the
