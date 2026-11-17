@@ -1,4 +1,5 @@
 process.env.PGLITE_DIR = 'memory://'
+process.env.PLATFORM_RECEIVER_ADDRESS = '0x' + '2'.repeat(40)
 
 /**
  * Settlement integrity regressions (WO-02 review).
@@ -28,6 +29,7 @@ const { migrate, query, one } = await import('../src/db/index.js')
 const { markCredited, markReorged, paymentStateFor, paymentRowFor } = await import('../src/payments/settle.js')
 const { decideSettlement, finalityVerdict, finalityPolicy } = await import('../src/payments/finality.js')
 const { recordPayment } = await import('../src/routes/credits.js')
+const { verifyDeposit } = await import('../src/payments/verify.js')
 const { creditDeposit, creditPaymentDeposit } = await import('../src/lib/billing.js')
 
 const CHAIN = 8453
@@ -105,6 +107,16 @@ describe('settlement integrity', () => {
       columns.rows.map((row: any) => row.column_name).sort(),
       ['payment_id', 'received_by', 'to_key_id'],
     )
+    const destinationMigration = await query(
+      `SELECT version FROM schema_migrations WHERE version = $1`,
+      ['0002_wo02_payment_intent_destination_binding']
+    )
+    assert.equal(destinationMigration.rows.length, 1)
+    const paymentDestinationColumn = await query(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'payments' AND column_name = 'to_key_id'`
+    )
+    assert.equal(paymentDestinationColumn.rows.length, 1)
     await migrate()
     const again = await query(
       `SELECT count(*)::int AS n FROM schema_migrations WHERE version = $1`,
@@ -132,6 +144,119 @@ describe('settlement integrity', () => {
     await claim({ tx_hash: '0x' + 'b'.repeat(64) })
     const after = await one(`SELECT count(*)::int AS n FROM payments WHERE user_id = $1`, [owner.id])
     assert.equal(after.n, before.n)
+  })
+
+  it('binds a payment to its original intent and destination until atomic credit', async () => {
+    const intentA = 'pi_' + randomUUID().slice(0, 8)
+    const intentB = 'pi_' + randomUUID().slice(0, 8)
+    await query(
+      `INSERT INTO payment_intents (id, user_id, purpose, expected_usd_micros, api_key_id, expires_at)
+       VALUES ($1, $2, 'api_credits', 5000000, $3, now() + interval '30 minutes')`,
+      [intentA, owner.id, keyId]
+    )
+    await query(
+      `INSERT INTO payment_intents (id, user_id, purpose, expected_usd_micros, expires_at)
+       VALUES ($1, $2, 'api_credits', 5000000, now() + interval '30 minutes')`,
+      [intentB, owner.id]
+    )
+    const txHash = '0x' + 'e1'.repeat(32)
+    const payment = await recordPayment({
+      intent: { id: intentA, api_key_id: keyId },
+      toKeyId: keyId,
+      userId: owner.id,
+      transfer: transfer({ tx_hash: txHash }),
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 12,
+      observedBlock: 100,
+    })
+    assert.equal(payment.toKeyId, keyId)
+    assert.equal(payment.intentId, intentA)
+    const beforeCredit = await one(`SELECT status FROM payment_intents WHERE id = $1`, [intentA])
+    assert.equal(beforeCredit.status, 'open', 'recording a payment must not mark its intent paid before credit commits')
+
+    const replay = await recordPayment({
+      intent: { id: intentB, api_key_id: null },
+      userId: owner.id,
+      transfer: transfer({ tx_hash: txHash }),
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 12,
+      observedBlock: 100,
+    })
+    assert.equal(replay.duplicate, true)
+    assert.equal(replay.scopeConflict, true)
+    assert.equal(replay.destinationConflict, true)
+
+    const wrongDestination = await creditPaymentDeposit(
+      payment.paymentId,
+      owner.id,
+      5_000_000,
+      { chain: 'base', txHash, token: TOKEN },
+      { intentId: intentB, toKeyId: null, receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+    )
+    assert.equal(wrongDestination.credited, false)
+    assert.equal(wrongDestination.scopeConflict, true)
+    assert.equal((await one(`SELECT count(*)::int AS n FROM deposits WHERE tx_hash = $1`, [txHash])).n, 0)
+
+    const credited = await creditPaymentDeposit(
+      payment.paymentId,
+      owner.id,
+      5_000_000,
+      { chain: 'base', txHash, token: TOKEN },
+      { intentId: intentA, toKeyId: keyId, receivedBy: VAULT, confirmations: 14, requiredConfirmations: 10 },
+    )
+    assert.equal(credited.credited, true)
+    const afterCredit = await one(`SELECT status FROM payment_intents WHERE id = $1`, [intentA])
+    assert.equal(afterCredit.status, 'paid', 'intent settlement commits with the payment credit')
+    const paymentRow = await one(`SELECT confirmations, to_key_id FROM payments WHERE id = $1`, [payment.paymentId])
+    assert.equal(paymentRow.confirmations, 14)
+    assert.equal(paymentRow.to_key_id, keyId)
+  })
+
+  it('writes the confirming audit event with the payment claim', async () => {
+    const txHash = '0x' + 'e2'.repeat(32)
+    const payment = await recordPayment({
+      intent: null,
+      userId: owner.id,
+      transfer: transfer({ tx_hash: txHash }),
+      receivedAt: VAULT,
+      usdMicros: 0,
+      status: 'pending_confirmations',
+      refusalCode: null,
+      state: 'confirming',
+      confirmations: 3,
+      requiredConfirmations: 10,
+      observedBlock: 100,
+    })
+    const events = await eventsFor(payment.paymentId, 'confirming')
+    assert.equal(events.length, 1)
+    assert.equal(events[0].detail.confirmations, 3)
+    assert.equal(events[0].detail.required, 10)
+  })
+
+  it('values the exact transfer selected by the receipt parser without a second chain read', async () => {
+    const txHash = '0x' + 'e3'.repeat(32)
+    const selected = transfer({ tx_hash: txHash, to: '0x' + '2'.repeat(40), token: TOKEN, raw_amount: '5000000', decimals: 6 })
+    const finality = finalityVerdict({ chainId: CHAIN, receiptBlock: 100n, headBlock: 109n, env: { FINALITY_CONFIRMATIONS_BASE: '10' } })
+    const result = await verifyDeposit({
+      chain: 'base',
+      txHash,
+      fromWallet: selected.from,
+      selectedTransfer: selected,
+      selectedFinality: finality,
+    })
+    assert.equal(result.ok, true)
+    if (result.ok) {
+      assert.equal(result.token, TOKEN)
+      assert.equal(result.amount_usd_micros, 5_000_000)
+    }
   })
 
   it('markCredited credits once, promotes the row and its intent, and writes one event', async () => {
@@ -535,7 +660,7 @@ describe('settlement integrity', () => {
 
   it('atomic payment settlement refuses an existing deposit credited to a different destination', async () => {
     const txHash = '0x' + 'b3'.repeat(32)
-    const payment = await claim({ tx_hash: txHash })
+    const payment = await claim({ tx_hash: txHash }, { toKeyId: keyId })
     const first = await creditPaymentDeposit(
       payment.paymentId,
       owner.id,
