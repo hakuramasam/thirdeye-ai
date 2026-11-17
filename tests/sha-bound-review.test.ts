@@ -5,6 +5,7 @@ import { independentApprovalCandidates } from '../.github/scripts/verify-sha-bou
 const review = (id: number, user: string, state: string, sha: string, submittedAt: string) => ({
   id,
   user: { login: user },
+  author_association: 'COLLABORATOR',
   state,
   commit_id: sha,
   submitted_at: submittedAt,
