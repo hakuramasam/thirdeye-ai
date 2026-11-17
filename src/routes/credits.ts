@@ -2,14 +2,14 @@ import type { SessionApp } from '../lib/session.js'
 import { requireUser } from '../lib/session.js'
 import { env, depositAddress, platformReceivers } from '../lib/env.js'
 import { query } from '../db/index.js'
-import { getBalanceMicros, creditDeposit } from '../lib/billing.js'
+import { getBalanceMicros, creditDeposit, creditPaymentDeposit } from '../lib/billing.js'
 import { one } from '../db/index.js'
 import { decideCredit } from '../lib/creditPolicy.js'
 import { CHAINS, isPolicyPricedToken, platformTokenUsdMicros } from '../payments/chains.js'
 import { verifyDeposit } from '../payments/verify.js'
 import { findIncomingTransfer, checkSenderOwnership } from '../payments/verify.js'
 import { prepareAutoConvert, autoConvertPolicyFromEnv } from '../payments/autoConvert.js'
-import { decideSettlement } from '../payments/finality.js'
+import { decideSettlement, type FinalityVerdict } from '../payments/finality.js'
 import { markCredited, markReorged, paymentStateFor, logPaymentEvent } from '../payments/settle.js'
 import { randomBytes } from 'node:crypto'
 import type { IncomingTransfer } from '../payments/verify.js'
@@ -33,46 +33,46 @@ async function creditVerified(
   userId: string,
   usdMicros: number,
   args: { chain: string; txHash: string; token: string },
-  intentId?: string | null
+  intentId: string | null | undefined,
+  paymentId: string,
+  finality: FinalityVerdict
 ) {
-  /**
-   * `credited` answers "did this call move the money". `settled` answers whether the same user's
-   * transfer was already credited to the same destination. The destination is part of the
-   * idempotency record: an account credit cannot satisfy a later request to load an API key, and a
-   * key credit cannot satisfy a later request for the account ledger.
-   */
-  const wrap = (dep: any, to: 'key' | 'account', requestedKeyId: string | null = null) => {
-    const sameOwner = dep?.existingUserId === userId
-    const sameDestination = (dep?.existingToKeyId ?? null) === requestedKeyId
-    return {
-      credited: Boolean(dep?.credited),
-      settled: Boolean(dep?.credited) || (sameOwner && sameDestination),
-      destinationConflict: Boolean(dep?.destinationConflict) || (sameOwner && !sameDestination && !dep?.credited),
-      to,
-      dep,
-    }
-  }
+  const settle = (toKeyId: string | null = null) =>
+    creditPaymentDeposit(paymentId, userId, usdMicros, args, {
+      toKeyId,
+      confirmations: finality.confirmations,
+      requiredConfirmations: finality.required,
+    })
+
   if (intentId) {
     const it = await one('SELECT api_key_id FROM payment_intents WHERE id = $1 AND user_id = $2', [intentId, userId])
     if (it?.api_key_id) {
-      // Through creditDeposit, not creditKey. creditKey is a bare `credit = credit + $1`, so a
-      // retried claim added the amount again; creditDeposit writes the deposits row and the key
-      // increment inside one transaction, and its UNIQUE (chain, tx_hash, token) is what makes a
-      // replay a no-op instead of a second payout.
-      const dep = await creditDeposit(userId, usdMicros, args, { toKeyId: it.api_key_id })
-      const w = wrap(dep, 'key', it.api_key_id)
+      const dep = await settle(it.api_key_id)
       return {
-        credited: w.credited,
-        settled: w.settled,
-        destinationConflict: w.destinationConflict,
+        credited: dep.credited,
+        settled: dep.settled,
+        destinationConflict: dep.destinationConflict,
+        ownershipConflict: dep.ownershipConflict,
+        reconciliation: dep.reconciliation,
+        reason: dep.reason,
         to: 'key' as const,
         api_key_id: it.api_key_id,
-        key_credit_usd_micros: (dep as any).keyCredit ?? null,
+        key_credit_usd_micros: dep.keyCredit ?? null,
+        deposit: dep,
       }
     }
   }
-  const w = wrap(await creditDeposit(userId, usdMicros, args), 'account')
-  return { credited: w.credited, settled: w.settled, destinationConflict: w.destinationConflict, to: 'account' as const, deposit: w.dep }
+  const dep = await settle(null)
+  return {
+    credited: dep.credited,
+    settled: dep.settled,
+    destinationConflict: dep.destinationConflict,
+    ownershipConflict: dep.ownershipConflict,
+    reconciliation: dep.reconciliation,
+    reason: dep.reason,
+    to: 'account' as const,
+    deposit: dep,
+  }
 }
 
 export function shouldCreditPayment(args: { status: string; duplicate: boolean; usdMicros: number }): boolean {
@@ -449,18 +449,22 @@ export function registerCreditsRoutes(app: SessionApp): void {
         required: finality.required,
       })
       if (policyChain && policyDecision.status === 'credited' && policySettle.action === 'credit') {
-        const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
+        const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, policyRecord.paymentId, finality)
         if (dep.destinationConflict) {
           return c.json({ accepted: false, error: { code: 'deposit_destination_conflict', message: 'This transfer was already credited to a different destination. It cannot be moved to this account or API key automatically.' } }, 409)
         }
-        policyCredited = Boolean(dep.credited)
-        // The transition runs whenever the money is on this user's balance, whether this call put it
-        // there or a previous attempt did. markCredited is guarded and idempotent, so a replay only
-        // completes the bookkeeping a crash left behind.
-        if (dep.settled) {
-          const rec = await markCredited(policyRecord.paymentId, usdMicros)
-          policyReconciliation = rec.reconciliation
+        if (dep.destinationConflict || dep.ownershipConflict || !dep.settled) {
+          return c.json({
+            accepted: false,
+            reconciliation: dep.reconciliation,
+            error: {
+              code: dep.destinationConflict ? 'deposit_destination_conflict' : dep.ownershipConflict ? 'deposit_already_owned' : dep.reason ?? 'payment_not_settled',
+              message: 'The payment could not be safely settled to the requested destination. No new credit was issued.',
+            },
+          }, 409)
         }
+        policyCredited = Boolean(dep.credited)
+        policyReconciliation = Boolean(dep.reconciliation)
       }
       return c.json({
         accepted: true,
@@ -555,15 +559,22 @@ export function registerCreditsRoutes(app: SessionApp): void {
       required: finality.required,
     })
     if (chainSlug && settle.action === 'credit') {
-      const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
+      const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, recorded.paymentId, finality)
       if (dep.destinationConflict) {
         return c.json({ accepted: false, error: { code: 'deposit_destination_conflict', message: 'This transfer was already credited to a different destination. It cannot be moved to this account or API key automatically.' } }, 409)
       }
-      credited = Boolean(dep.credited)
-      if (dep.settled) {
-        const rec = await markCredited(recorded.paymentId, usdMicros)
-        reconciliation = rec.reconciliation
+      if (dep.destinationConflict || dep.ownershipConflict || !dep.settled) {
+        return c.json({
+          accepted: false,
+          reconciliation: dep.reconciliation,
+          error: {
+            code: dep.destinationConflict ? 'deposit_destination_conflict' : dep.ownershipConflict ? 'deposit_already_owned' : dep.reason ?? 'payment_not_settled',
+            message: 'The payment could not be safely settled to the requested destination. No new credit was issued.',
+          },
+        }, 409)
       }
+      credited = Boolean(dep.credited)
+      reconciliation = Boolean(dep.reconciliation)
       balanceMicros = dep.to === 'account' ? (dep.deposit as any).balance : await getBalanceMicros(c.get('user')!.id)
     } else if (recorded.duplicate) {
       balanceMicros = await getBalanceMicros(c.get('user')!.id)
