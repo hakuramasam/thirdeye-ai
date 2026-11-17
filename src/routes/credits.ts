@@ -60,12 +60,12 @@ async function creditVerified(
   }
 }
 
-function claimConflictResponse(c: any, claim: { scopeConflict: boolean; destinationConflict: boolean; ownershipConflict: boolean }) {
-  if (!claim.scopeConflict && !claim.destinationConflict && !claim.ownershipConflict) return null
+function claimConflictResponse(c: any, claim: { scopeConflict: boolean; destinationConflict: boolean; ownershipConflict: boolean; intentConflict: boolean }) {
+  if (!claim.scopeConflict && !claim.destinationConflict && !claim.ownershipConflict && !claim.intentConflict) return null
   return c.json({
     accepted: false,
     error: {
-      code: claim.ownershipConflict ? 'payment_already_claimed' : claim.scopeConflict ? 'payment_intent_conflict' : 'payment_destination_conflict',
+      code: claim.ownershipConflict ? 'payment_already_claimed' : claim.intentConflict ? 'payment_intent_unavailable' : claim.scopeConflict ? 'payment_intent_conflict' : 'payment_destination_conflict',
       message: 'This transfer is already bound to a different payment intent or credit destination. No new credit was issued.',
     },
   }, 409)
@@ -98,7 +98,6 @@ export async function recordPayment(args: {
   pool?: string | null
   /** Immutable account-vs-key destination captured when the transfer is first claimed. */
   toKeyId?: string | null
-  /** Settlement state and the confirmation evidence behind it. */
   state?: string
   confirmations?: number
   requiredConfirmations?: number
@@ -112,6 +111,7 @@ export async function recordPayment(args: {
   scopeConflict: boolean
   destinationConflict: boolean
   ownershipConflict: boolean
+  intentConflict: boolean
 }> {
   const t = args.transfer
   const id = 'pay_' + randomBytes(9).toString('hex')
@@ -119,31 +119,102 @@ export async function recordPayment(args: {
   const requestedToKeyId = args.toKeyId ?? args.intent?.api_key_id ?? null
 
   return tx(async (q) => {
-    const inserted = await q(
-      `INSERT INTO payments (id, intent_id, to_key_id, user_id, chain_id, token, tx_hash, received_by, sender,
-                             raw_amount, decimals, usd_value_micros, price_usd, pool, purpose, memo, status, refusal_code,
-                             state, confirmations, observed_block)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
-       ON CONFLICT (chain_id, tx_hash, token, received_by) DO NOTHING
-       RETURNING id, user_id, intent_id, to_key_id, state`,
-      [id, requestedIntentId, requestedToKeyId, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt,
-       t.from, t.raw_amount, t.decimals, args.usdMicros, args.priceUsd ?? null, args.pool ?? null,
-       args.intent?.purpose ?? null, args.intent?.memo ?? null, args.status, args.refusalCode,
-       args.state ?? (args.status === 'recorded' ? 'confirmed' : 'detected'),
-       args.confirmations ?? null, args.observedBlock ?? t.block_number ?? null]
-    )
+    // An exact transfer replay is checked first so it remains idempotent even after its intent
+    // has become paid. A different transfer must claim an open, unexpired, unused intent.
+    let payment = (await q(
+      `SELECT id, user_id, intent_id, to_key_id, state FROM payments
+        WHERE chain_id = $1 AND lower(tx_hash) = lower($2) AND lower(token) = lower($3) AND received_by = $4
+        FOR UPDATE`,
+      [t.chain_id, t.tx_hash, t.token, args.receivedAt]
+    )).rows[0]
+    let duplicate = Boolean(payment)
 
-    const duplicate = inserted.rows.length === 0
-    let payment = inserted.rows[0]
-    if (duplicate) {
-      const existing = await q(
-        `SELECT id, user_id, intent_id, to_key_id, state FROM payments
-          WHERE chain_id = $1 AND lower(tx_hash) = lower($2) AND lower(token) = lower($3) AND received_by = $4
+    if (!payment && requestedIntentId) {
+      const intentResult = await q(
+        `SELECT id, api_key_id, status, (expires_at > now()) AS not_expired
+           FROM payment_intents
+          WHERE id = $1 AND user_id = $2
           FOR UPDATE`,
-        [t.chain_id, t.tx_hash, t.token, args.receivedAt]
+        [requestedIntentId, args.userId]
       )
-      payment = existing.rows[0]
+      const intentRow = intentResult.rows[0]
+      if (
+        !intentRow ||
+        intentRow.status !== 'open' ||
+        intentRow.not_expired !== true ||
+        (intentRow.api_key_id ?? null) !== requestedToKeyId
+      ) {
+        return {
+          paymentId: '', duplicate: true, state: null,
+          intentId: requestedIntentId, toKeyId: requestedToKeyId,
+          scopeConflict: !intentRow, destinationConflict: Boolean(intentRow && (intentRow.api_key_id ?? null) !== requestedToKeyId),
+          ownershipConflict: false, intentConflict: true,
+        }
+      }
+
+      const existingIntentPayment = await q(
+        `SELECT id, user_id, intent_id, to_key_id, state
+           FROM payments
+          WHERE intent_id = $1
+          FOR UPDATE`,
+        [requestedIntentId]
+      )
+      if (existingIntentPayment.rows[0]) {
+        return {
+          paymentId: existingIntentPayment.rows[0].id, duplicate: true,
+          state: existingIntentPayment.rows[0].state ?? null,
+          intentId: existingIntentPayment.rows[0].intent_id ?? null,
+          toKeyId: existingIntentPayment.rows[0].to_key_id ?? null,
+          scopeConflict: false, destinationConflict: false,
+          ownershipConflict: existingIntentPayment.rows[0].user_id !== args.userId,
+          intentConflict: true,
+        }
+      }
     }
+
+    if (!payment) {
+      const inserted = await q(
+        `INSERT INTO payments (id, intent_id, to_key_id, user_id, chain_id, token, tx_hash, received_by, sender,
+                               raw_amount, decimals, usd_value_micros, price_usd, pool, purpose, memo, status, refusal_code,
+                               state, confirmations, observed_block)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+         ON CONFLICT DO NOTHING
+         RETURNING id, user_id, intent_id, to_key_id, state`,
+        [id, requestedIntentId, requestedToKeyId, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt,
+         t.from, t.raw_amount, t.decimals, args.usdMicros, args.priceUsd ?? null, args.pool ?? null,
+         args.intent?.purpose ?? null, args.intent?.memo ?? null, args.status, args.refusalCode,
+         args.state ?? (args.status === 'recorded' ? 'confirmed' : 'detected'),
+         args.confirmations ?? null, args.observedBlock ?? t.block_number ?? null]
+      )
+      payment = inserted.rows[0]
+      duplicate = !payment
+      if (!payment) {
+        payment = (await q(
+          `SELECT id, user_id, intent_id, to_key_id, state FROM payments
+            WHERE chain_id = $1 AND lower(tx_hash) = lower($2) AND lower(token) = lower($3) AND received_by = $4
+            FOR UPDATE`,
+          [t.chain_id, t.tx_hash, t.token, args.receivedAt]
+        )).rows[0]
+        if (!payment && requestedIntentId) {
+          const existingIntentPayment = (await q(
+            `SELECT id, user_id, intent_id, to_key_id, state FROM payments WHERE intent_id = $1 FOR UPDATE`,
+            [requestedIntentId]
+          )).rows[0]
+          if (existingIntentPayment) {
+            return {
+              paymentId: existingIntentPayment.id, duplicate: true,
+              state: existingIntentPayment.state ?? null,
+              intentId: existingIntentPayment.intent_id ?? null,
+              toKeyId: existingIntentPayment.to_key_id ?? null,
+              scopeConflict: false, destinationConflict: false,
+              ownershipConflict: existingIntentPayment.user_id !== args.userId,
+              intentConflict: true,
+            }
+          }
+        }
+      }
+    }
+
     if (!payment?.id) throw new Error('Payment claim insert or replay lookup did not return a payment row')
 
     const intentId = payment.intent_id ?? null
@@ -152,8 +223,6 @@ export async function recordPayment(args: {
     const destinationConflict = toKeyId !== requestedToKeyId
     const ownershipConflict = payment.user_id !== args.userId
 
-    // The confirming audit event shares the payment insert transaction. If an earlier process
-    // crashed between those writes, a retry repairs the missing event without duplicating it.
     if (!scopeConflict && !destinationConflict && !ownershipConflict && args.status === 'pending_confirmations') {
       const existingEvent = await q(
         `SELECT id FROM payment_events WHERE payment_id = $1 AND kind = 'confirming' LIMIT 1`,
@@ -185,6 +254,7 @@ export async function recordPayment(args: {
       scopeConflict,
       destinationConflict,
       ownershipConflict,
+      intentConflict: false,
     }
   })
 }
