@@ -19,8 +19,8 @@ Every value below was read from the chain or from a live public endpoint, not fr
 | Launch block and time | 56,365,145, 12 Nov 2026 06:03:24 UTC |
 | Launch platform | Doppler (DopplerHookInitializer `0xBDF938149ac6a781F94FAa0ed45E6A0e984c6544`) |
 | Pool | Uniswap v4 pool `0x6309d838712108206856c9ce1ab743c8f50863b9b4c4389c828fe1c950256066` (THIRDEYE/WETH, 0.3%) |
-| Creator address (outer sender) | `0xb09f37a1110a126d63463Ec08a0C0B97612D90ab` |
-| Contract creator (factory clone) | Created via CREATE2 by Doppler token factory `0xf1542Dd2D46394C16372FB00f2c339b53CeF2cE5` |
+| Launch transaction sender | `0xb09f37a1110a126d63463Ec08a0C0B97612D90ab` (a wallet, but not the contract creator) |
+| Contract creator | No wallet. ERC-1167 clone created inside the launch transaction by Doppler token factory `0xf1542Dd2D46394C16372FB00f2c339b53CeF2cE5` |
 
 ## Listing fields to submit
 
@@ -39,7 +39,13 @@ Every value below was read from the chain or from a live public endpoint, not fr
 | Banner, 1600x466 | https://gateway.pinata.cloud/ipfs/QmYCgiEpfWNsj38zTk6m3vwh4ADotru1H7ykyqfHk4a8ba |
 | Logo, 32x32 PNG (explorer size) | https://gateway.pinata.cloud/ipfs/bafkreie6fvwfncjbjcrllbqzculjxqpu7nw7hcrlnwvmt447azcr4q3nne |
 | Logo, 32x32 SVG (explorer size) | https://gateway.pinata.cloud/ipfs/bafkreievqluyhkk3vopa55ulkwe2qp2gx3cr6j6ukqziasduybmhw5hf4y |
-| Description | Thirdeye AI Platform is an OpenAI-compatible inference API with wallet-native accounts, prepaid USDC credits and metered billing, run by autonomous agents it operates itself. The THIRDEYE token is the platform's settlement unit. |
+| Description | Thirdeye AI Platform is an OpenAI-compatible inference API with wallet-native accounts, prepaid credits and metered billing. THIRDEYE is the platform token: it is accepted as a credited deposit at a published policy rate, so holders can convert it into inference credit on the platform. |
+
+## Before submitting
+
+Submit only once the site change that publishes these channels on `/contact` is deployed to production.
+A reviewer following this application to a stale `/contact` page cannot confirm the Telegram and Abund
+handles, and an application that fails that check is worse than one sent a day later.
 
 ## Why the self-serve flow cannot be used
 
@@ -61,5 +67,6 @@ pinned IPFS bundle above as proof of authorship.
 - The pool has traded: the first swap is transaction
   `0xc53d51fc1bf30ed7a0f59eecbbc6ed91fdee2e6614b9e19576e45e7c3a8ff1e4` on 17 Nov 2026, so the pair is
   indexed by DexScreener and GeckoTerminal rather than sitting as an untraded launch.
-- The same values appear on the project's own /contact page, so the listing can be cross-checked against
-  the project rather than trusted from this document.
+- The same token, pool, hook, factory, launch, first-swap and asset values appear on the project's own
+  /contact page, so the listing can be cross-checked against the project rather than trusted from this
+  document. The 32px icons and the description above are the only fields here that /contact does not carry.
