@@ -176,7 +176,7 @@ export async function creditPaymentDeposit(
         reason: 'payment_intent_mismatch', balance: 0,
       }
     }
-    if (storedToKeyId !== (storedToKeyId)) {
+    if (storedToKeyId !== (opts.toKeyId ?? null)) {
       return {
         credited: false, settled: false, state: payment.state, reconciliation: false,
         destinationConflict: true, scopeConflict: false, ownershipConflict: false,
