@@ -38,3 +38,9 @@ test('an approval on an older head cannot approve a later push', () => {
   const reviews = [review(1, 'reviewer', 'APPROVED', 'sha-before-push', '2026-11-17T10:00:00Z')]
   assert.deepEqual(independentApprovalCandidates(reviews, 'sha-after-push', 'author'), [])
 })
+
+
+test('does not accept an approval from a non-collaborator account', () => {
+  const outsider = { ...review(6, 'outsider', 'APPROVED', 'current-sha', '2026-11-17T15:00:00Z'), author_association: 'CONTRIBUTOR' }
+  assert.deepEqual(independentApprovalCandidates([outsider], 'current-sha', 'author'), [])
+})
