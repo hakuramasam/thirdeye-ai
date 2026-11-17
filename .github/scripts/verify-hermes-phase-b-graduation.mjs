@@ -86,15 +86,20 @@ async function main() {
   }
 
   // A green workflow is not merge-blocking unless repository rules require it.
-  const protection = await request('/branches/main/protection')
+  // Read both classic branch protection and rulesets: repositories can use either or both.
   let contexts = []
   let strict = false
+  const protection = await request('/branches/main/protection')
   if (protection.status === 200) {
-    contexts = protection.body.required_status_checks?.contexts ?? []
-    strict = protection.body.required_status_checks?.strict === true
-  } else if (protection.status === 404) {
-    const rulesets = await api('/rulesets?includes_parents=true&per_page=100')
-    for (const ruleset of rulesets.filter((r) => r.enforcement === 'active')) {
+    contexts.push(...(protection.body.required_status_checks?.contexts ?? []))
+    strict ||= protection.body.required_status_checks?.strict === true
+  } else if (protection.status !== 404) {
+    blockers.push(`Unable to inspect main branch protection (HTTP ${protection.status})`)
+  }
+
+  const rulesetsResult = await request('/rulesets?includes_parents=true&per_page=100')
+  if (rulesetsResult.status === 200 && Array.isArray(rulesetsResult.body)) {
+    for (const ruleset of rulesetsResult.body.filter((r) => r.enforcement === 'active')) {
       for (const rule of ruleset.rules ?? []) {
         if (rule.type === 'required_status_checks') {
           contexts.push(...(rule.parameters?.required_status_checks ?? []).map((x) => x.context))
@@ -103,7 +108,7 @@ async function main() {
       }
     }
   } else {
-    blockers.push(`Unable to inspect main branch protection (HTTP ${protection.status})`)
+    blockers.push(`Unable to inspect repository rulesets (HTTP ${rulesetsResult.status})`)
   }
 
   const hasCi = contexts.some((x) => ['verify', 'ci / verify'].includes(x))
