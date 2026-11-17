@@ -10,3 +10,4 @@ export function independentApprovalCandidates(
   headSha: string,
   authorLogin: string,
 ): ShaBoundReview[]
+export function isWriteEligiblePermission(permission: string | undefined): boolean
