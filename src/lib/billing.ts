@@ -62,10 +62,10 @@ export async function creditDeposit(
   return tx(async (q) => {
     await q('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId])
     const dep = await q(
-      `INSERT INTO deposits (id, user_id, chain, token, tx_hash, amount_usd_micros, to_key_id, payment_id, received_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO deposits (id, user_id, chain, token, tx_hash, amount_usd_micros, to_key_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (chain, tx_hash, token) DO NOTHING RETURNING id`,
-      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros, opts.toKeyId ?? null, paymentId, opts.receivedBy]
+      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros, opts.toKeyId ?? null]
     )
     if (!dep.rows[0]) {
       const owner = await q('SELECT user_id, to_key_id FROM deposits WHERE chain = $1 AND tx_hash = $2 AND token = $3', [
@@ -310,7 +310,7 @@ export async function creditPaymentDeposit(
     )
     return {
       credited: creditedNow, settled: true, state: 'credited', reconciliation: false,
-      destinationConflict: false, ownershipConflict: false,
+      destinationConflict: false, scopeConflict: false, ownershipConflict: false,
       balance: Number(balance.rows[0]?.bal ?? 0), keyCredit,
     }
   })
