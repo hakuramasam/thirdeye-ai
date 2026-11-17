@@ -656,8 +656,11 @@ export function registerCreditsRoutes(app: SessionApp): void {
     const chainInput = String(body?.chain ?? '')
     const chainConfig = CHAINS.find((chain) => chain.id === chainInput || String(chain.chainId) === chainInput)
     const txHash = String(body?.tx_hash ?? body?.txHash ?? '')
-    if (!chainConfig || !txHash) {
-      return c.json({ error: { message: 'A supported chain and tx_hash are required', type: 'validation' } }, 400)
+    if (!chainConfig) {
+      return c.json({ error: { message: 'Unsupported chain', type: 'not_found', code: 'not_found' } }, 404)
+    }
+    if (!txHash) {
+      return c.json({ error: { message: 'tx_hash is required', type: 'validation', code: 'invalid_request' } }, 400)
     }
 
     const found = await findIncomingTransfer({ chainId: chainConfig.chainId, txHash, receivers })
