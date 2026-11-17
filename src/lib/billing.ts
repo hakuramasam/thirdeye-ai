@@ -65,7 +65,7 @@ export async function creditDeposit(
       `INSERT INTO deposits (id, user_id, chain, token, tx_hash, amount_usd_micros, to_key_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (chain, tx_hash, token) DO NOTHING RETURNING id`,
-      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros, storedToKeyId]
+      [newId(), userId, ref.chain, ref.token.toLowerCase(), ref.txHash.toLowerCase(), amountMicros, opts.toKeyId]
     )
     if (!dep.rows[0]) {
       const owner = await q('SELECT user_id, to_key_id FROM deposits WHERE chain = $1 AND tx_hash = $2 AND token = $3', [
@@ -76,7 +76,7 @@ export async function creditDeposit(
       const b = await q('SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal FROM ledger WHERE user_id = $1', [userId])
       const existingUserId = (owner.rows[0]?.user_id as string | undefined) ?? null
       const existingToKeyId = (owner.rows[0]?.to_key_id as string | undefined) ?? null
-      const requestedToKeyId = storedToKeyId
+      const requestedToKeyId = opts.toKeyId
       return {
         credited: false,
         balance: Number(b.rows[0]?.bal ?? 0),
@@ -91,7 +91,7 @@ export async function creditDeposit(
       const b = await q('SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal FROM ledger WHERE user_id = $1', [userId])
       return Number(b.rows[0]?.bal ?? 0)
     }
-    if (storedToKeyId) {
+    if (opts.toKeyId) {
       const k = await q('UPDATE api_keys SET credit_usd_micros = credit_usd_micros + $1 WHERE id = $2 RETURNING credit_usd_micros', [amountMicros, opts.toKeyId])
       if (!k.rows[0]) throw new Error('api key not found for deposit credit')
       return { credited: true, balance: await balNow(), keyCredit: Number(k.rows[0].credit_usd_micros) }
