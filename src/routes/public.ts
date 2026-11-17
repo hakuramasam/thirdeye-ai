@@ -28,6 +28,13 @@ const SITE = 'https://thirdeye-ai-alpha.vercel.app'
  * address it belongs to. Keep this value in sync with any listing submission.
  */
 export const PROJECT_EMAIL = 'thirdeye-ai@agentmail.to'
+// Official channels. Read by the contact page, the verification table and the public footer so the
+// three surfaces cannot drift apart. Verify a handle here before adding it anywhere else.
+export const X_URL = 'https://x.com/Thirdeye_Infra'
+export const TELEGRAM_URL = 'https://t.me/Thirdeye_AI_Bot'
+export const ABUND_URL = 'https://abund.ai/agent/thirdeye'
+export const LOGO_CID = 'QmPhbBSHrtL8G8YAMcyTYYD3i7mtcoTWCvBNQXm6r3tYcA'
+export const BANNER_CID = 'QmYCgiEpfWNsj38zTk6m3vwh4ADotru1H7ykyqfHk4a8ba'
 const OG_DESCRIPTION = 'Pay per call, not per seat. OpenAI-compatible inference, wallet-native accounts, USDC credits.'
 
 /**
@@ -135,7 +142,8 @@ ${head(title, path)}
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet"><style>${CSS}</style></head><body>
 <header><div class="wrap"><div class="brand"><img src="/brand/mark-micro.svg" alt="" width="20" height="20">Thirdeye AI <span>pay-per-call inference</span></div><nav>${links}<a href="/">App</a></nav></div></header>
 <main><div class="wrap">${body}</div></main>
-<footer><div class="wrap"><p style="margin:0 0 6px">Official project email: <a href="mailto:${PROJECT_EMAIL}">${PROJECT_EMAIL}</a> &middot; <a href="/contact">Contact and verification</a></p>Public pages show what we choose to publish. Account balances, keys, partner terms and security findings are private and never rendered here.</div></footer>
+<footer><div class="wrap"><p style="margin:0 0 6px">Official project email: <a href="mailto:${PROJECT_EMAIL}">${PROJECT_EMAIL}</a> &middot; <a href="/contact">Contact and verification</a></p>
+<p style="margin:0 0 6px">Official channels: <a href="${X_URL}" rel="me noopener">X @Thirdeye_Infra</a> &middot; <a href="${TELEGRAM_URL}" rel="noopener">Telegram @Thirdeye_AI_Bot</a> &middot; <a href="${ABUND_URL}" rel="me noopener">Abund agent</a></p>Public pages show what we choose to publish. Account balances, keys, partner terms and security findings are private and never rendered here.</div></footer>
 <script>window.va=window.va||function(){(window.vaq=window.vaq||[]).push(arguments)};</script>
 <script defer src="/_vercel/insights/script.js"></script>
 <script>window.si=window.si||function(){(window.siq=window.siq||[]).push(arguments)};</script>
@@ -542,7 +550,11 @@ const CONTACT = `
 <tr><td>Creator address</td><td><code>0xb09f37a1110a126d63463Ec08a0C0B97612D90ab</code></td></tr>
 <tr><td>Launch contract</td><td><code>0x660eaaedebc968f8f3694354fa8ec0b4c5ba8d12</code></td></tr>
 <tr><td>Source repository</td><td><a href="https://github.com/hakuramasam/thirdeye-ai" rel="noopener">github.com/hakuramasam/thirdeye-ai</a></td></tr>
-<tr><td>X</td><td><a href="https://x.com/Thirdeye_Infra" rel="noopener">@Thirdeye_Infra</a></td></tr>
+<tr><td>X</td><td><a href="${X_URL}" rel="me noopener">@Thirdeye_Infra</a></td></tr>
+<tr><td>Telegram</td><td><a href="${TELEGRAM_URL}" rel="noopener">@Thirdeye_AI_Bot</a></td></tr>
+<tr><td>Abund.ai agent</td><td><a href="${ABUND_URL}" rel="me noopener">abund.ai/agent/thirdeye</a></td></tr>
+<tr><td>Logo (512px, IPFS)</td><td><a href="https://gateway.pinata.cloud/ipfs/${LOGO_CID}" rel="noopener">${LOGO_CID}</a></td></tr>
+<tr><td>Banner (1600&times;466, IPFS)</td><td><a href="https://gateway.pinata.cloud/ipfs/${BANNER_CID}" rel="noopener">${BANNER_CID}</a></td></tr>
 </tbody></table>
 <h2>What this address will never ask for</h2>
 <p>No one writing from this address will ask for a seed phrase, a private key, a signed transaction you did not initiate, or a payment to anywhere other than the deposit path documented in <a href="/docs/api">the API guide</a>. A message from a lookalike domain is not from us: the address on this page is the only one the project uses.</p>

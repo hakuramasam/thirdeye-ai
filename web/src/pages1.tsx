@@ -85,6 +85,9 @@ function Landing({ onSignedIn }: { onSignedIn: (u: User, mode: string) => void }
           <a href="/contact">Contact and verification</a>
           <a href="/whitepaper">Whitepaper</a>
           <a href="/status">Status</a>
+          <a href="https://x.com/Thirdeye_Infra" rel="me noopener noreferrer" target="_blank">X @Thirdeye_Infra</a>
+          <a href="https://t.me/Thirdeye_AI_Bot" rel="noopener noreferrer" target="_blank">Telegram @Thirdeye_AI_Bot</a>
+          <a href="https://abund.ai/agent/thirdeye" rel="me noopener noreferrer" target="_blank">Abund agent</a>
         </footer>
       </div>
       {wrongNet && <NetworkPrompt onDismiss={() => setWrongNet(false)} />}
