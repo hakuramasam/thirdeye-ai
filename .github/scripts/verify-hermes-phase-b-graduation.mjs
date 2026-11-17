@@ -26,6 +26,9 @@ async function main() {
   if (!repo || !token) throw new Error('GITHUB_REPOSITORY and GITHUB_TOKEN are required')
 
   const manifest = JSON.parse(readFileSync('docs/authority/hermes-phase-b-graduation.json', 'utf8'))
+  if (manifest.automation_may_grant_authority !== false) {
+    throw new Error('Graduation verifier must remain technical-only and may never grant authority')
+  }
   const headers = {
     accept: 'application/vnd.github+json',
     authorization: `Bearer ${token}`,
@@ -112,8 +115,8 @@ async function main() {
     blockers.push(`Unable to inspect repository rulesets (HTTP ${rulesetsResult.status})`)
   }
 
-  const hasCi = contexts.some((x) => ['verify', 'ci / verify'].includes(x))
-  const hasReview = contexts.some((x) => manifest.required_branch_protection_contexts.slice(1).includes(x))
+  const hasCi = contexts.some((x) => [manifest.required_branch_protection_contexts[0], 'ci / verify'].includes(x))
+  const hasReview = contexts.some((x) => manifest.required_review_check_names.includes(x))
   if (!hasCi || !hasReview || !strict) {
     blockers.push(`main branch protection/rulesets must require current CI and SHA-bound review with strict up-to-date checks (found: ${contexts.join(', ') || 'none'})`)
   } else {
