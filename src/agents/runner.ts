@@ -740,7 +740,7 @@ async function runAgentInner(
                         // the task id, so one id traces the whole delegated action.
                         correlationId,
                         actorType: deps.actorType ?? 'agent',
-                        invokerId: deps.invokerId ?? null,
+                        invokerId: deps.invokerId,
                         invocationSource: deps.invocationSource ?? 'agent.internal',
                         parentRunId: runId,
                         taskId: taskDoc.task_id,
