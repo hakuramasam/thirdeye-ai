@@ -82,12 +82,16 @@ CREATE TABLE IF NOT EXISTS deposits (
   tx_hash           text NOT NULL,
   amount_usd_micros bigint NOT NULL,
   to_key_id         text,                    -- NULL = account ledger; otherwise the exact prepaid API key
+  payment_id        text,                    -- payment-review row that authorized this one-time credit
+  received_by       text,                    -- exact platform receiver associated with that payment row
   status            text NOT NULL DEFAULT 'confirmed',
   created_at        timestamptz NOT NULL DEFAULT now(),
   UNIQUE (chain, tx_hash, token)
 );
 
 ALTER TABLE deposits ADD COLUMN IF NOT EXISTS to_key_id text;
+ALTER TABLE deposits ADD COLUMN IF NOT EXISTS payment_id text;
+ALTER TABLE deposits ADD COLUMN IF NOT EXISTS received_by text;
 
 CREATE TABLE IF NOT EXISTS ledger (
   id               bigserial PRIMARY KEY,
