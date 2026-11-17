@@ -346,6 +346,22 @@ describe('settlement integrity', () => {
     assert.equal(ghost.state, null)
   })
 
+  it('payment event history is append-only at the database boundary', async () => {
+    const payment = await claim({ tx_hash: '0x' + 'af'.repeat(32) })
+    await markCredited(payment.paymentId, 5_000_000)
+    const event = (await eventsFor(payment.paymentId, 'credited'))[0]
+    assert.ok(event?.id)
+    await assert.rejects(
+      query(`UPDATE payment_events SET detail = '{}'::jsonb WHERE id = $1`, [event.id]),
+      /payment_events is append-only/
+    )
+    await assert.rejects(
+      query(`DELETE FROM payment_events WHERE id = $1`, [event.id]),
+      /payment_events is append-only/
+    )
+    assert.equal((await eventsFor(payment.paymentId, 'credited')).length, 1)
+  })
+
   it('a legacy refusal that predates the rejected state still cannot be credited', async () => {
     // Rows written before this change stored a refusal as status 'refused' with state 'detected',
     // which the state whitelist alone would happily move to credited on a later retry.
