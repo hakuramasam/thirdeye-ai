@@ -60,6 +60,17 @@ async function creditVerified(
   }
 }
 
+function claimConflictResponse(c: any, claim: { scopeConflict: boolean; destinationConflict: boolean }) {
+  if (!claim.scopeConflict && !claim.destinationConflict) return null
+  return c.json({
+    accepted: false,
+    error: {
+      code: claim.scopeConflict ? 'payment_intent_conflict' : 'payment_destination_conflict',
+      message: 'This transfer is already bound to a different payment intent or credit destination. No new credit was issued.',
+    },
+  }, 409)
+}
+
 export function shouldCreditPayment(args: { status: string; duplicate: boolean; usdMicros: number }): boolean {
   return args.status === 'recorded' && !args.duplicate && args.usdMicros > 0
 }
@@ -399,8 +410,9 @@ export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRout
       const waiting = await recordPayment({
         intent, userId: c.get('user')!.id, transfer: t, receivedAt: receivedAtOf(t),
         usdMicros: 0, status: 'pending_confirmations', refusalCode: null,
-        state: 'confirming', confirmations: finality.confirmations, observedBlock: finality.observedBlock,
+        state: 'confirming', confirmations: finality.confirmations, requiredConfirmations: finality.required, observedBlock: finality.observedBlock,
       })
+      const claimConflict = claimConflictResponse(c, waiting); if (claimConflict) return claimConflict
       return c.json(
         {
           accepted: true,
@@ -438,6 +450,7 @@ export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRout
           // inside the credit gate, so a later retry could credit a deposit we had refused.
           state: 'rejected',
         })
+        const claimConflict = claimConflictResponse(c, refused); if (claimConflict) return claimConflict
         return c.json({
           accepted: false,
           received_at,
@@ -462,6 +475,7 @@ export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRout
         usdMicros, status: policyDecision.status === 'credited' ? 'recorded' : 'pending_conversion',
         refusalCode: policyDecision.status === 'credited' ? null : policyDecision.status,
       })
+      const claimConflict = claimConflictResponse(c, policyRecord); if (claimConflict) return claimConflict
       // The stored row decides, on a first claim as much as on a retry. Reading the state we just
       // wrote, keyed by the whole uniqueness key, removes the branch that assumed a fresh claim
       // was 'confirmed' and lets a refused or reorged row speak for itself.
@@ -517,11 +531,12 @@ export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRout
             ? 'sponsored_wallet'
             : 'agent_wallet'
     if (!prepared.ok) {
-      await recordPayment({
+      const refused = await recordPayment({
         intent, userId: c.get('user')!.id, transfer: t, receivedAt: received_at,
         usdMicros: 0, status: 'refused', refusalCode: prepared.code,
         state: 'rejected',
       })
+      const claimConflict = claimConflictResponse(c, refused); if (claimConflict) return claimConflict
       return c.json(
         { accepted: false, received_at, verification: { ok: true, ...t }, intent: memoOf(intent), refusal: { code: prepared.code, message: prepared.message } },
         422
@@ -544,8 +559,9 @@ export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRout
       // How deep the transfer was when we decided, kept rather than discarded: a later question
       // about a credit ("was it final?") is answered from the row, not re-derived from a chain that
       // has moved on.
-      confirmations: finality.confirmations, observedBlock: finality.observedBlock,
+      confirmations: finality.confirmations, requiredConfirmations: finality.required, observedBlock: finality.observedBlock,
     })
+    const claimConflict = claimConflictResponse(c, recorded); if (claimConflict) return claimConflict
 
     // Release credit only for a first-time, tradable payment. creditDeposit is
     // itself idempotent per (chain, tx, token), so a replay cannot double-credit
@@ -722,8 +738,10 @@ export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRout
         refusalCode: null,
         state: 'confirming',
         confirmations: found.finality.confirmations,
+        requiredConfirmations: found.finality.required,
         observedBlock: found.finality.observedBlock,
       })
+      const claimConflict = claimConflictResponse(c, waiting); if (claimConflict) return claimConflict
       return c.json({
         accepted: true,
         credited: false,
@@ -773,7 +791,9 @@ export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRout
       confirmations: found.finality.confirmations,
       observedBlock: found.finality.observedBlock,
       priceUsd: verification.price_usd ?? null,
+      toKeyId: targetKeyId,
     })
+    const claimConflict = claimConflictResponse(c, payment); if (claimConflict) return claimConflict
 
     if (decision.status !== 'credited') {
       return c.json({
@@ -796,7 +816,8 @@ export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRout
       verification.amount_usd_micros,
       { chain: chainConfig.id, txHash, token: verification.token },
       {
-        ...(targetKeyId ? { toKeyId: targetKeyId } : {}),
+        toKeyId: payment.toKeyId,
+        intentId: payment.intentId,
         receivedBy: receivedAt,
         confirmations: found.finality.confirmations,
         requiredConfirmations: found.finality.required,
@@ -821,8 +842,8 @@ export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRout
       credited: settled.credited,
       payment_id: payment.paymentId,
       duplicate: payment.duplicate,
-      loaded_to: targetKeyId ? 'key' : 'account',
-      api_key_id: targetKeyId,
+      loaded_to: payment.toKeyId ? 'key' : 'account',
+      api_key_id: payment.toKeyId,
       key_credit_usd_micros: settled.keyCredit ?? null,
       balance_usd_micros: settled.balance,
       oracle_usd: verification.amount_usd_micros / 1_000_000,
