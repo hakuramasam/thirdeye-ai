@@ -309,12 +309,12 @@ describe('settlement integrity', () => {
 
   it('rolls back the payment claim if its confirming audit event cannot be inserted', async () => {
     const txHash = '0x' + 'e4'.repeat(32)
-    await query(`CREATE OR REPLACE FUNCTION test_fail_confirming_event() RETURNS trigger AS $
+    await query(`CREATE OR REPLACE FUNCTION test_fail_confirming_event() RETURNS trigger AS $test_fail_confirming_event$
       BEGIN
         IF NEW.kind = 'confirming' THEN RAISE EXCEPTION 'forced confirming event failure'; END IF;
         RETURN NEW;
       END;
-    $ LANGUAGE plpgsql`)
+    $test_fail_confirming_event$ LANGUAGE plpgsql`)
     await query(`CREATE TRIGGER test_fail_confirming_event_trigger
       BEFORE INSERT ON payment_events FOR EACH ROW EXECUTE FUNCTION test_fail_confirming_event()`)
     try {
@@ -493,6 +493,7 @@ describe('settlement integrity', () => {
 
   it('a key-tagged deposit credits its key once, however often it is claimed', async () => {
     const args = { chain: 'base', txHash: '0x' + '6'.repeat(64), token: TOKEN }
+    const keyBefore = Number((await one(`SELECT credit_usd_micros FROM api_keys WHERE id = $1`, [keyId])).credit_usd_micros)
     const first = await creditDeposit(owner.id, 2_000_000, args, { toKeyId: keyId })
     assert.equal(first.credited, true)
 
@@ -500,7 +501,7 @@ describe('settlement integrity', () => {
     assert.equal(second.credited, false, 'the deposits row is the replay guard')
 
     const key = await one(`SELECT credit_usd_micros FROM api_keys WHERE id = $1`, [keyId])
-    assert.equal(Number(key.credit_usd_micros), 2_000_000, 'the key was loaded exactly once')
+    assert.equal(Number(key.credit_usd_micros), keyBefore + 2_000_000, 'the key was loaded exactly once')
 
     const rows = await one(`SELECT count(*)::int AS n FROM deposits WHERE tx_hash = $1`, [args.txHash])
     assert.equal(rows.n, 1)
