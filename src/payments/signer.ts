@@ -10,6 +10,8 @@
 import { privateKeyToAccount } from 'viem/accounts'
 import type { Hex } from 'viem'
 
+import { withAttribution } from '../lib/builderCode.js'
+
 export type SendTxArgs = { to: `0x${string}`; data?: `0x${string}`; value?: bigint; chainId: number }
 
 export type Signer = {
@@ -35,7 +37,8 @@ function localSigner(key: string): Signer {
       const client = createWalletClient({ account, chain: base, transport: http(process.env.BASE_RPC_URL || 'https://mainnet.base.org') })
       const hash = await client.sendTransaction({
         to: args.to,
-        data: args.data,
+        // ERC-8021: attribute the send to the agent's builder code. Never throws; see builderCode.ts.
+        data: withAttribution(args.data),
         value: args.value ?? 0n,
         chain: base,
       })
@@ -107,7 +110,8 @@ export function privySigner(
           params: {
             transaction: {
               to: args.to,
-              data: args.data ?? '0x',
+              // ERC-8021: same attribution on the Privy path, which builds the tx JSON itself.
+              data: withAttribution(args.data) ?? '0x',
               value: args.value ? '0x' + args.value.toString(16) : '0x0',
               chain_id: args.chainId,
             },
