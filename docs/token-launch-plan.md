@@ -1,9 +1,16 @@
 # Platform token (THIRDEYE): launch pipeline
 
-Status: **superseded by the live launch.** THIRDEYE deployed on Base on 2026-11-12 as a Doppler launch
-with a fixed 1,000,000,000 supply, not the shape planned below. This document is kept as the design
-record; do not read its pool, airdrop or vault figures as current. Sale terms live in
-[the sale policy](token-sale-policy.md), and the chain is the authority for holdings and schedules.
+Status: **superseded by the live launch, 2026-11-12.** THIRDEYE deployed on Base through Doppler with a
+fixed **1,000,000,000** supply, not the shape planned below.
+
+The figures in this document were never deployed and must not be read as current: a
+**50,000,000** pool, a **250,000,000** day-one airdrop, a **700,000,000** vault, and the 100B
+venue-fixed supply the earlier Clanker design implied. What actually exists, verified onchain:
+**200,000,000** THIRDEYE in the Uniswap v4 pool and **800,000,000** premint held by the token contract
+across immutable cliffed schedules, the earliest release being the 110,000,000 bucket on 2026-12-12.
+
+This document is kept as the design record. Sale eligibility is decided by
+[the sale policy](token-sale-policy.md) and by the chain, and by nothing in this file.
 
 ## Why the token exists
 

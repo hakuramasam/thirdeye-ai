@@ -61,9 +61,15 @@ test('the binding minimum is at least the documented $88,000 and consistent with
   const minimum = priceRow('binding minimum, today')
   // A higher minimum than documented stays compliant; a lower one does not.
   assert.ok(minimum.fdv >= 88_000, `the binding minimum dropped to $${minimum.fdv}`)
+  // Two-sided: a price that implies a HIGHER FDV than the row states is equally inconsistent, and the
+  // earlier one-sided check let exactly that through. Tolerance covers rounding of the printed price
+  // (six decimals at 1e9 supply is half a dollar per unit, so $500 is generous and still catches a
+  // contradiction like 98,800 against 88,000).
+  const tolerance = SUPPLY * 5e-7
+  const implied = minimum.usdPerToken * SUPPLY
   assert.ok(
-    minimum.usdPerToken * SUPPLY >= minimum.fdv - 1e-6,
-    `${minimum.usdPerToken} per token does not reach the stated $${minimum.fdv} of FDV`,
+    Math.abs(implied - minimum.fdv) <= tolerance,
+    `${minimum.usdPerToken} per token implies $${implied.toFixed(0)} of FDV, not the stated $${minimum.fdv}`,
   )
 })
 
@@ -86,4 +92,20 @@ test('the floor stays below the binding minimum, so the band it forbids is never
 test('sales are permitted now and the waiting period stays deleted', () => {
   assert.match(doc, /Sales are permitted from adoption/)
   assert.match(doc, /"no sales before month six" condition is deleted/)
+})
+
+test('the policy documents the market fallback instead of claiming an unpublished rate is a refusal', () => {
+  // The deposit path falls back to a GeckoTerminal read when no policy rate is published, so the
+  // claim that an unset rate refuses valuation was wrong and must not come back.
+  assert.match(doc, /GeckoTerminal/)
+  assert.match(doc, /PLATFORM_TOKEN_MIN_LIQUIDITY_USD/)
+  assert.doesNotMatch(doc, /refuses to value the token at all/)
+})
+
+test('the superseded launch shapes are named, so a sale decision has one source of truth', () => {
+  for (const stale of ['50,000,000', '250,000,000', '700,000,000']) {
+    assert.ok(doc.includes(stale), `the policy no longer names the superseded ${stale} figure`)
+  }
+  const plan = readFileSync(fileURLToPath(new URL('../docs/token-launch-plan.md', import.meta.url)), 'utf8')
+  assert.match(plan, /superseded by the live launch/)
 })

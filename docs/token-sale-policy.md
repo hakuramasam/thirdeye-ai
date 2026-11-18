@@ -17,7 +17,9 @@ Related: [token launch pipeline](token-launch-plan.md), [tokenomics](tokenomics.
    value.** Deposits credit THIRDEYE at the live policy rate plus the live deposit bonus, which today is
    $0.00008 x 1.1 = **$0.000088 per token** ($88,000 FDV). A buyer who pays less than that and deposits
    gets back more credit than the token cost, so selling anywhere in the $50,000 to $88,000 band is
-   refused too, on every venue, not just quoted against. The $50,000 floor only becomes the binding
+   refused too, on every venue, not just quoted against. If no policy rate is published the credit
+   value comes from the market read described below, and the same rule applies to that figure: an
+   unpublished rate is not a licence to sell cheap. The $50,000 floor only becomes the binding
    number if the credit rate falls below $0.00004545, where rate x 1.1 slips under $0.00005.
 
 | level | USD per token | FDV at 1B | meaning |
@@ -41,18 +43,29 @@ for `0xa8a65a86e01d227dbfd7c7a94d14344b33603df5` on Base:
 | deposit bonus | `PLATFORM_TOKEN_BONUS_BPS` | 1000 | 0 |
 | per-deposit cap | `PLATFORM_TOKEN_MAX_DEPOSIT_USD` | 25 | 25 |
 
-Those live in the deployment environment, not in the repository, and the defaults are zero: with no rate
-published the deposit path refuses to value the token at all rather than crediting an unvalued amount. So
-this policy has to be read against the live configuration, and whoever changes the rate or the bonus
-changes the binding minimum at the same time. The deposit cap does not rescue a bad sale price: it limits
+Those live in the deployment environment, not in the repository, and the repository defaults are zero.
+Zero is not the same as a refusal, though, and an earlier version of this document said it was:
+`registerPlatformToken` in `src/payments/chains.ts` picks the valuation path from whether a rate is
+published. With a rate, deposits are priced by policy, as above. Without one, our token is priced by a
+public GeckoTerminal read that refuses only while the market sits below
+`PLATFORM_TOKEN_MIN_LIQUIDITY_USD`. The deposit bonus still applies on that path, with no haircut, so a
+market deep enough to clear the floor credits THIRDEYE at market price x (1 + bonus) and the binding
+minimum follows that figure rather than $0.000088. Read this policy against the live configuration:
+whoever changes the rate, the bonus or the liquidity floor changes the binding minimum at the same time.
+
+The test in `tests/token-sale-policy.test.ts` pins the policy-rate path only. It cannot pin a
+market-derived figure, because that figure is whatever the market says on the day a sale is proposed;
+the operator therefore has to price a sale against the live read, and the floor still applies. The deposit cap does not rescue a bad sale price: it limits
 how much credit one deposit can buy, not whether the token was sold below its credit value.
 
 ## What must be true before any sale
 
 Supply is **1,000,000,000**, read from `totalSupply()` on the token at block 58,139,747, and
-every figure in this policy uses that denominator. `docs/tokenomics.md` still carries an abandoned
-100B Clanker shape and now says so at the top; where the two disagree, the chain and this document
-are correct.
+every figure in this policy uses that denominator. Two earlier documents describe shapes that were
+never deployed: `docs/tokenomics.md` carries an abandoned 100B Clanker design, and
+`docs/token-launch-plan.md` carries a 50,000,000 pool, a 250,000,000 day-one airdrop and a 700,000,000 vault. Both now say
+so at the top. Where any of them disagree with this policy, the chain and this document are correct,
+and no sale decision may cite their figures.
 
 Verified onchain 2026-11-16 at block 58,139,747:
 
