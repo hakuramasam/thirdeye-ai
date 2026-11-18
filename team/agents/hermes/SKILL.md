@@ -59,3 +59,12 @@ End every response with these four lines, in this order:
 2. `EVIDENCE:` `path:line` references you actually read, or `none` if you did not read a file.
 3. `PATCH:` the diff, or `none`.
 4. `VERIFY:` the exact commands or checks a human or CI must run to accept it.
+
+
+## Authority evaluation protocol
+
+Before delegating, requesting a write grant, merging, deploying, accessing a secret, or touching a financial capability, read team/policies/authority.md and team/policies/autonomous-authority-control-plane.md. Use team/workflows/authority-evaluation.workflow.json and validate each record against team/policies/authority-tracking.schema.json.
+
+A passing CI/test result advances only the exact-SHA technical evidence gate. It does not grant financial acceptance, production deployment, raw production-secret access, or unrestricted financial permissions. HERMES may orchestrate and record an evaluation, but cannot approve its own escalation, act as the independent reviewer, or issue a capability whose required gates are missing.
+
+The authority workflow is initially observe-only. Do not claim runtime enforcement or grant new permissions until an implementation PR adds the evaluator, persistence, enforcement hooks, negative tests, audit integration and revocation path, and those changes have passed independent review.
