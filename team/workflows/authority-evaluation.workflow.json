@@ -1,0 +1,151 @@
+{
+  "id": "authority-evaluation",
+  "version": 1,
+  "status": "proposed-observe-only",
+  "summary": "Evaluate authority from agent role, task scope, risk and fresh exact-SHA evidence. CI success satisfies only its technical sub-gate.",
+  "policy": "team/policies/autonomous-authority-control-plane.md",
+  "trigger_events": [
+    "task.created",
+    "task.delegated",
+    "stage.completed",
+    "pull_request.synchronize",
+    "check_suite.completed",
+    "deployment.preview.ready",
+    "review.submitted",
+    "security.report.completed",
+    "financial.report.completed",
+    "owner.approval.recorded",
+    "permission.expiring",
+    "incident.opened"
+  ],
+  "stages": [
+    {
+      "n": 1,
+      "id": "identity_scope",
+      "owner": "tdt_hermes",
+      "produces": "identity_scope_report",
+      "gate": "Registered identity, role, task, parent run, correlation id, repository, branch, allowed paths and expiry; unknown identities are read-only."
+    },
+    {
+      "n": 2,
+      "id": "risk_classification",
+      "owner": "tdt_sentinel",
+      "produces": "risk_classification",
+      "gate": "Changed paths, data sensitivity, financial/production impact, reversibility and blast radius classified; unresolved classification is high risk."
+    },
+    {
+      "n": 3,
+      "id": "technical_evidence",
+      "owner": "tdt_qa",
+      "produces": "technical_evidence",
+      "gate": "Required workflows/tests pass on exact current SHA; no skipped, cancelled, neutral, missing, stale or untrusted required check; provenance and artifact digests recorded."
+    },
+    {
+      "n": 4,
+      "id": "independent_review",
+      "owner": "tdt_sentinel",
+      "produces": "independent_review",
+      "gate": "Reviewer is distinct from author/requester/agent, qualified for risk, repository-authorized and approved exact current SHA; unresolved critical/high findings block."
+    },
+    {
+      "n": 5,
+      "id": "domain_acceptance",
+      "owner": "tdt_blockchain",
+      "produces": "domain_acceptance",
+      "gate": "Financial changes require independent financial review, real PostgreSQL evidence, accounting invariants, reconciliation, finality/reorg behavior and bounded exposure. Other changes require relevant domain acceptance."
+    },
+    {
+      "n": 6,
+      "id": "owner_approval",
+      "owner": "founder",
+      "produces": "owner_approval",
+      "gate": "Required for production release, production-secret policy, financial execution/acceptance, high-risk merge exceptions or permission changes; explicit, scoped, time-bounded and exact-SHA-bound."
+    },
+    {
+      "n": 7,
+      "id": "permission_decision",
+      "owner": "tdt_hermes",
+      "produces": "authority_decision",
+      "gate": "Policy engine issues only minimum capability whose gates passed; grants are task-bound, short-lived, audited and revocable. HERMES cannot approve own escalation."
+    },
+    {
+      "n": 8,
+      "id": "monitor_revoke",
+      "owner": "tdt_devops",
+      "produces": "grant_monitor_report",
+      "gate": "Monitor expiry, evidence invalidation, policy drift, incidents, failed health checks and usage limits; revoke automatically and audit reason."
+    }
+  ],
+  "capabilities": {
+    "repository_read": { "risk": "low", "grant": "automatic_after_identity_scope" },
+    "task_branch_write": {
+      "risk": "low_to_medium",
+      "grant": "automatic_after_identity_scope_and_path_policy",
+      "restrictions": ["new task branch only", "no default branch writes", "protected payment/billing/settlement/auth/schema/workflow/authority/secret paths require dedicated gates"]
+    },
+    "open_pull_request": { "risk": "low", "grant": "automatic_after_task_branch_write" },
+    "merge_low_risk_pull_request": {
+      "risk": "medium",
+      "grant": "only_after_graduation_and_all_merge_gates",
+      "requirements": [
+        "B1-B5 merged and exact-SHA verifier pass",
+        "active branch protection requires CI, independent review and up-to-date branch",
+        "all current required checks successful",
+        "qualified independent approval on exact head SHA",
+        "no unresolved review, conflicts or protected-path changes",
+        "immediate pre-merge revalidation"
+      ]
+    },
+    "preview_deploy": { "risk": "medium", "grant": "automatic_after_preview_policy" },
+    "production_deploy": { "risk": "critical", "grant": "owner_approval_and_protected_environment_controller", "agent_self_approval": false },
+    "production_secret_operation": { "risk": "critical", "grant": "brokered_operation_scoped_short_lived_access_only", "raw_secret_in_model_context": false, "agent_self_approval": false },
+    "bounded_financial_operation": {
+      "risk": "critical",
+      "grant": "financial_acceptance_plus_capability_specific_owner_policy",
+      "requires": ["allowlisted asset/chain/contract/recipient", "per-call/per-run/daily limits", "idempotency and replay protection", "finality and reconciliation", "emergency stop and expiry"],
+      "agent_self_approval": false
+    },
+    "unrestricted_financial_operation": { "risk": "prohibited", "grant": "never" },
+    "financial_acceptance": { "risk": "critical", "grant": "independent_financial_review_and_security_review_and_owner_approval", "ci_alone_sufficient": false }
+  },
+  "tracking": {
+    "required_fields": [
+      "evaluation_id", "correlation_id", "run_id", "parent_run_id", "task_id", "workflow_id", "stage_id",
+      "agent_id", "agent_role", "agent_version", "requested_capability", "resource_scope", "environment",
+      "risk_tier", "risk_reasons", "repository", "branch", "head_sha", "base_sha", "changed_paths_digest",
+      "workflow_run_ids", "required_check_names", "check_conclusions", "test_artifact_digests",
+      "postgres_version", "database_mode", "preview_deployment_id", "preview_sha", "smoke_result",
+      "reviewer_ids", "reviewed_sha", "review_decisions", "security_report_id", "financial_report_id",
+      "owner_approval_id", "owner_approved_sha", "owner_approval_scope", "decision", "blocker_codes",
+      "evidence_digest", "grant_id", "grant_scope", "max_amount", "rate_limits", "created_at",
+      "expires_at", "revoked_at", "revocation_reason", "audit_event_id", "policy_version"
+    ],
+    "never_record": ["private keys", "mnemonics", "raw production secrets", "raw session tokens", "full signatures", "plaintext BYOK credentials"],
+    "audit": "Append-only; fail closed if recording a grant, approval, revocation or authority decision fails."
+  },
+  "decision_values": ["ELIGIBLE", "BLOCKED", "EXPIRED", "REVOKED"],
+  "fail_closed_conditions": [
+    "unknown agent or role",
+    "missing or stale evidence",
+    "head SHA changed",
+    "required check skipped, cancelled, neutral or absent",
+    "workflow provenance not trusted",
+    "reviewer is author/requester/agent",
+    "unresolved critical or high finding",
+    "branch protection cannot be verified",
+    "audit persistence unavailable",
+    "policy version mismatch",
+    "owner approval absent where required",
+    "incident kill switch active"
+  ],
+  "rules": {
+    "ci_semantics": "CI success satisfies only the CI evidence predicate for the exact SHA; it never grants universal acceptance or unrestricted permissions.",
+    "no_self_graduation": "An agent cannot request, review, approve or issue its own authority escalation.",
+    "no_self_acceptance": "The builder does not perform independent QA, security or financial acceptance on its own work.",
+    "evidence_invalidation": "Any changed head SHA invalidates downstream approvals and requires re-evaluation.",
+    "grant_lifecycle": "Every grant is least-privilege, task-scoped, short-lived, revocable and append-only audited.",
+    "production_default": "Production deployment and raw production-secret access remain disabled for agents until separate protected policies are implemented and explicitly enabled.",
+    "financial_default": "Unrestricted financial operations are prohibited; bounded capabilities require financial acceptance and explicit scoped authorization.",
+    "rollout": "Observe-only first; do not issue permissions until enforcement tests prove evaluator and policy engine."
+  }
+}
