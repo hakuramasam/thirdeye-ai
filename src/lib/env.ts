@@ -83,6 +83,9 @@ export const env = {
   })(),
 
   agentWalletKey: process.env.AGENT_WALLET_PRIVATE_KEY || '',
+  /** Cross-chain deposits via LI.FI. Off unless explicitly enabled; quoting only, never custodial. */
+  bridgeDepositEnabled: process.env.BRIDGE_DEPOSIT_ENABLED === 'true',
+  lifiApiKey: process.env.LIFI_API_KEY || '',
 
   /** Telegram community bot (optional) */
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',

@@ -12,6 +12,7 @@ import { findIncomingTransfer, checkSenderOwnership } from '../payments/verify.j
 import { prepareAutoConvert, autoConvertPolicyFromEnv } from '../payments/autoConvert.js'
 import { randomBytes } from 'node:crypto'
 import type { IncomingTransfer } from '../payments/verify.js'
+import { quoteBridgeDeposit, parseStatus, isSupportedSource, BRIDGE_DEST_CHAIN, BRIDGE_DEST_TOKEN } from '../payments/bridgeDeposit.js'
 
 /** Chain slug used by the deposits/ledger tables. */
 export function chainSlugFor(chainId: number): string | null {
@@ -429,6 +430,68 @@ export function registerCreditsRoutes(app: SessionApp): void {
   // Body: { chain, token, amount_raw, decimals } | { chain, token, amount }
   // Read-only: it never moves funds or writes credits, so it is safe to call from
   // the deposit page before the user sends anything.
+  // POST /api/credits/bridge-quote — fund credit from another chain, landing USDC on Base.
+  // Quoting only. The payer signs from their own wallet, and the deposit is credited later by the
+  // ordinary onchain verification. This route never credits, and never touches funds.
+  app.post('/api/credits/bridge-quote', requireUser, async (c) => {
+    const user = c.get('user')!
+    let body: any
+    try { body = await c.req.json() } catch { body = {} }
+    const res = await quoteBridgeDeposit(
+      {
+        fromChain: Number(body?.fromChain ?? 0),
+        fromToken: String(body?.fromToken ?? ''),
+        fromAmountRaw: String(body?.amountRaw ?? body?.amount ?? ''),
+        fromAddress: String(body?.fromAddress ?? user.wallet ?? ''),
+        ...(body?.slippage != null ? { slippage: Number(body.slippage) } : {}),
+      },
+      { enabled: env.bridgeDepositEnabled, apiKey: env.lifiApiKey, fetchImpl: fetch }
+    )
+    if (!res.ok) {
+      const code = res.reason === 'disabled' ? 404 : res.reason === 'rate_limited' ? 429 : 400
+      return c.json({ error: { message: res.reason, detail: res.detail ?? null, type: 'bridge_quote', code } }, code)
+    }
+    return c.json({
+      quote: res.quote,
+      destination: { chainId: BRIDGE_DEST_CHAIN, token: BRIDGE_DEST_TOKEN, address: depositAddress() },
+      notice:
+        'Sign this transaction from your own wallet. Credit is issued after the USDC is verified onchain at the deposit address; a bridge status of DONE does not credit anything by itself.',
+    })
+  })
+
+  // GET /api/credits/bridge-status — check a bridge on explicit refresh only. Never credits.
+  app.get('/api/credits/bridge-status', requireUser, async (c) => {
+    if (!env.bridgeDepositEnabled) {
+      return c.json({ error: { message: 'disabled', type: 'bridge_status', code: 404 } }, 404)
+    }
+    const txHash = String(c.req.query('txHash') ?? '')
+    const fromChain = Number(c.req.query('fromChain') ?? 0)
+    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash) || !isSupportedSource(fromChain)) {
+      return c.json({ error: { message: 'fromChain and a 32-byte txHash are required', type: 'validation', code: 400 } }, 400)
+    }
+    const url = new URL('https://li.quest/v1/status')
+    url.searchParams.set('fromChain', String(fromChain))
+    url.searchParams.set('toChain', String(BRIDGE_DEST_CHAIN))
+    url.searchParams.set('txHash', txHash)
+    try {
+      const res = await fetch(url.toString(), {
+        headers: { 'x-lifi-api-key': env.lifiApiKey, accept: 'application/json' },
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (res.status === 429) {
+        return c.json({ error: { message: 'rate_limited', type: 'bridge_status', code: 429 } }, 429)
+      }
+      const state = parseStatus(await res.json())
+      return c.json({
+        ...state,
+        credited: false,
+        notice: 'Status is a hint about when to look. Credit follows onchain verification of the deposit.',
+      })
+    } catch (e) {
+      return c.json({ error: { message: 'unreachable', detail: (e instanceof Error ? e.message : '').slice(0, 160), type: 'bridge_status', code: 502 } }, 502)
+    }
+  })
+
   app.post('/api/credits/auto-convert/check', requireUser, async (c) => {
     const body: any = await c.req.json().catch(() => ({}))
     const chainId = Number(body?.chain_id ?? body?.chainId ?? body?.chain)
