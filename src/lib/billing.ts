@@ -76,7 +76,7 @@ export async function creditDeposit(
       const b = await q('SELECT COALESCE(SUM(amount_usd_micros), 0)::bigint AS bal FROM ledger WHERE user_id = $1', [userId])
       const existingUserId = (owner.rows[0]?.user_id as string | undefined) ?? null
       const existingToKeyId = (owner.rows[0]?.to_key_id as string | undefined) ?? null
-      const requestedToKeyId = opts.toKeyId
+      const requestedToKeyId = opts.toKeyId ?? null
       return {
         credited: false,
         balance: Number(b.rows[0]?.bal ?? 0),
