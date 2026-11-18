@@ -1,7 +1,7 @@
 # Migration strategy: `ops_events` and the cron discrepancy
 
 Written 2026-11-15 against `main` at `c3140a4`. This is a plan and an evidence record, not a claim
-that anything below is applied. Nothing here has been run against production.
+that anything below is applied. No migration in this document has been applied to production; read-only schema and API observations were used to write it.
 
 Two subjects, because they are the same subject seen twice: **the platform has no way to change its
 own database deliberately**, so a table that the code already writes to was never created, and a
@@ -13,13 +13,13 @@ schedule that the code already assumes was never configured. Both fail quietly.
 
 ```
 src/db/index.ts:124  export async function migrate(): Promise<void> {
-src/db/index.ts:126    const schema = readFileSync('./schema.sql', 'utf8')
+src/db/index.ts:126    const schema = readFileSync(new URL('./schema.sql', import.meta.url), 'utf8')
 src/db/index.ts:127    if (env.databaseUrl) {
 src/db/index.ts:128      await query(schema)          // one multi-statement simple-query call
 src/db/index.ts:129    } else { await getPglite().exec(schema) }
 ```
 
-One 625-line file, 34 `CREATE TABLE`, 10 `ALTER TABLE ... ADD COLUMN`, 97 `IF NOT EXISTS` guards,
+One 625-line file, 34 `CREATE TABLE`, 25 `ALTER TABLE ... ADD COLUMN`, 97 `IF NOT EXISTS` guards,
 executed as a single blob on every process boot, once per process (a module-level `migrated` flag
 short-circuits later calls).
 
@@ -31,7 +31,7 @@ migration tooling at all. The question is only whether it still holds for what i
 
 | Property | Today | Consequence |
 | --- | --- | --- |
-| Atomicity | Simple-query protocol autocommits each statement | A failure at statement 60 of 97 leaves the schema half-applied; the next boot resumes from a state nobody recorded |
+| Atomicity | A multi-statement simple query runs as one implicit transaction, so the file applies whole or not at all | The cost is one long DDL transaction holding locks, and no recorded version: a boot cannot tell whether the schema it found is the one the file describes |
 | Ordering | The file is a blob keyed by nothing | No way to say "this environment has applied up to X" |
 | Versioning | No `schema_migrations` table | A fresh database and a year-old one can differ without anyone being able to tell |
 | Reversibility | No down path anywhere | A wrong column type or a destructive change is a one-way door |
@@ -41,7 +41,7 @@ The last row is the one that bites first. `agent_audit_events` is append-only vi
 schema creates it the only way a replayed file can: `DROP TRIGGER IF EXISTS` then `CREATE TRIGGER`.
 That is a destructive statement, executed on every boot, because there is no other way to express
 "change this trigger" in a file that must be safe to re-run. It is correct today. It stops being
-correct the moment a trigger needs a different body for rows that already exist.
+correct only when the trigger's timing or events change. The body itself is replaceable with `CREATE OR REPLACE FUNCTION` without dropping the trigger, and both statements carry guards so a replay is harmless.
 
 ---
 
@@ -53,7 +53,7 @@ src/inngest/functions.ts:35
   ).catch(() => {})
 ```
 
-There is no `ops_events` table. `grep -rn "ops_events"` across `src/`, `tests/`, `docs/` and
+There is no `ops_events` table. The history a backfill would need is only partly missing: `payment_conversion_audit` already records claim and release attempts for blocked conversions, so the new table can be seeded from it rather than started empty. `grep -rn "ops_events"` across `src/` and `tests/`, excluding this document, and
 `*.sql` returns exactly this one line and no DDL. The table exists only in the code's intent.
 
 So, every ten minutes, when the conversion pass has blockers worth recording, the write throws
@@ -95,7 +95,7 @@ deliver.
 
 Two options, with the decision left to the owner:
 
-- **Option A, rename inward.** Make `ops_events` the table, and turn `agent_audit_events` into a view
+- **Option A, rename inward.** Make `ops_events` the table, and turn `agent_audit_events` into a view. This is not a rename alone: the existing writer supplies `kind` and `detail` while `agent_audit_events` keys on `stage_id` and `actor_type`, so the view needs a column mapping
   over it filtered to agent-domain event types. One truth, one writer, existing readers keep working.
   Cost: a rename with data in it, so it is the first migration that cannot be done by replaying
   idempotent DDL.
@@ -110,7 +110,7 @@ the owner's signature, and it must not be smuggled into an unrelated change.
 
 ---
 
-## 3. The cron discrepancy is four-way, not three
+## 3. The cron discrepancy is five-way, not three
 
 The per-agent scheduler is written for frequent invocation and deployed for daily invocation. Every
 artifact that describes it disagrees.
@@ -121,6 +121,7 @@ artifact that describes it disagrees.
 | `web/src/pages2.tsx` | placeholder `*/30 * * * *` on both the agent form and the edit form | `:179`, `:274` |
 | `docs/ARCHITECTURE.md` | "minute-resolution check" | `:115` |
 | `docs/system-architecture.md` | "hourly cron" | `:56` |
+| `README.md` | two contradictory claims in one file: a daily 18:30 UTC cron, and an hourly cron fed by an external pinger | `:28`, `:84` |
 | `src/agents/schedule-lock.ts` | slot key `cron:YYYY-MM-DDTHH:MM` — dedupe per wall-clock **minute** | `:31` |
 | `src/routes/agents.ts` | `SCHEDULE_LOOKBACK_MINUTES = 26 * 60` — a 26-hour "did we miss a slot" window | `:267` |
 
@@ -128,7 +129,7 @@ Read the code and the deployment together and the defect is unambiguous: the slo
 minute-granular and the lookback is 26 hours, which are the signatures of a pinger that fires often
 and tolerates missing several ticks. The deployment fires **once a day**. So:
 
-- an agent with `*/30 * * * *` gets one run per day, not 48, and nothing says so;
+- an agent with `*/30 * * * *` gets one run per day under the deployed daily cron, not 48, unless the external pinger documented at `README.md:84` is wired up, and the UI never says which;
 - the minute-granular slot key can never be exercised for its actual purpose, because two ticks in
   the same minute cannot happen;
 - the 26-hour lookback is quietly doing the work of the schedule: it is what makes a daily tick
@@ -182,7 +183,7 @@ src/db/migrations/
   is what stops the current habit of editing a shipped DDL statement in place, which is invisible
   today and dangerous once an environment has applied it.
 - **Baseline.** A fresh database gets `0000_baseline.sql` and no others; a production database gets
-  `0000` recorded as applied without executing it, because it already has that schema. That is the
+  `0000` recorded as applied without executing it, but only after the live schema has been compared against `schema.sql` and the difference is empty. Recording it blind blesses whatever drift it happens to find. That is the
   one special case, and it is explicit.
 - **Forward only.** No down migrations. A mistake is corrected by the next migration. This is not
   laziness: a down path that has never been executed is a down path that does not work, and the
