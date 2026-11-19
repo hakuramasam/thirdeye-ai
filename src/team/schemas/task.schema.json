@@ -139,6 +139,7 @@
     },
     "correlation_id": {
       "type": "string",
+      "minLength": 1,
       "description": "Ties the task to its parent run and audit trail (operating specification 15)."
     },
     "requester": {
