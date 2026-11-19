@@ -37,6 +37,7 @@ for (const role of roles) if (!idMap[role.id]) throw new Error('Missing database
 const evaluationId = process.env.THIRDEYE_EVAL_RUN_ID || new Date().toISOString().replace(/[:.]/g, '-')
 const records = []
 let totalSpend = 0
+let stopReason = null
 for (const role of roles) {
   const response = await fetch(base + '/api/cron/agents', {
     method: 'POST',
@@ -62,11 +63,11 @@ for (const role of roles) {
   }
   records.push({ role: role.id, scenario: role.scenario, run_id: run.runId, status: run.status, tool_calls: run.tool_calls, spend_usd_micros: run.spend_usd_micros, skill_version: run.skill_version, skill_sha256: run.skill_sha256, section_checks: sectionChecks, critical_gates: critical, provisional_only: true, output, evidence })
   console.log(JSON.stringify({ role: role.id, run_id: run.runId, status: run.status, spend_usd_micros: run.spend_usd_micros, cumulative_spend_usd_micros: totalSpend }))
-  if (totalSpend > maxSpend) throw new Error('Evaluation stopped: cumulative spend ' + totalSpend + ' exceeded configured cap ' + maxSpend + '. Evidence for completed roles will be written.')
+  if (totalSpend > maxSpend) { stopReason = 'Cumulative spend exceeded configured cap after role ' + role.id; break }
 }
 
 const outDir = resolve('artifacts/competency')
 await mkdir(outDir, { recursive: true })
 const out = resolve(outDir, 'competency-' + evaluationId + '.json')
-await writeFile(out, JSON.stringify({ evaluation_id: evaluationId, created_at: new Date().toISOString(), total_spend_usd_micros: totalSpend, roles: records, graduation: 'NOT_GRANTED; independent QA/SENTINEL and human review required' }, null, 2))
+await writeFile(out, JSON.stringify({ evaluation_id: evaluationId, created_at: new Date().toISOString(), total_spend_usd_micros: totalSpend, stop_reason: stopReason, roles: records, graduation: 'NOT_GRANTED; independent QA/SENTINEL and human review required' }, null, 2))
 console.log('Evidence saved to ' + out)
