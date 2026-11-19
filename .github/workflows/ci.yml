@@ -24,6 +24,8 @@ jobs:
         run: npm run check:runtime
       - name: Validate agent skill registry
         run: npm run validate:agent-skills
+      - name: Dry-run agent competency harness
+        run: npm run evaluate:agents
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Suite (PGlite, no DATABASE_URL)
