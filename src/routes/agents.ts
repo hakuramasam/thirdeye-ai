@@ -250,7 +250,7 @@ export function registerAgentsRoutes(app: SessionApp): void {
     const row = await loadOwned(c.req.param('id'), user.id)
     if (!row) return c.json({ error: { message: 'Agent not found', type: 'not_found', code: 404 } }, 404)
     const res = await query(
-      `SELECT id, status, input, output, tool_calls, spend_usd_micros, error, created_at
+      `SELECT id, status, input, output, tool_calls, spend_usd_micros, error, skill_version, skill_sha256, created_at
        FROM agent_runs WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 20`,
       [row.id]
     )
