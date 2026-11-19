@@ -1,7 +1,6 @@
 ---
 name: thirdeye-architect-role
  description: Design ThirdEye system boundaries, data models, APIs, integrations, threat-aware architecture, migrations and technical decision records.
-license: UNLICENSED
 metadata:
   project: thirdeye-ai
   version: "2.0.0"
