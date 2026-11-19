@@ -43,6 +43,7 @@ import {
 } from './artifacts.js'
 import { assertPublicUrl } from '../lib/ssrf.js'
 import { verifyPayment, txHashFrom } from '../lib/partnerVerify.js'
+import { loadRoleSkillPack } from './skill-packs.js'
 import type { ModelRow } from '../lib/pricing.js'
 import type { UserRow } from '../lib/types.js'
 
@@ -146,6 +147,9 @@ export type RunResult = {
    * that produced text, so a caller hands on an address instead of a truncated copy.
    */
   artifact?: StoredArtifact
+  /** Role skill provenance for this exact execution. */
+  skill_version?: string | null
+  skill_sha256?: string | null
 }
 
 const MAX_DELEGATION_DEPTH = 3
@@ -347,7 +351,7 @@ async function runAgentInner(
   if (inserted.rowCount === 0) {
     // Same idempotency key seen before: return the recorded outcome instead of re-running
     // and re-charging. This is what makes a duplicated cron tick harmless.
-    const existing = await one(`SELECT status, output, tool_calls, spend_usd_micros, error FROM agent_runs WHERE id = $1`, [runId])
+    const existing = await one(`SELECT status, output, tool_calls, spend_usd_micros, error, skill_version, skill_sha256 FROM agent_runs WHERE id = $1`, [runId])
     return {
       runId,
       status: (existing?.status === 'success' ? 'success' : 'error') as 'success' | 'error',
@@ -355,13 +359,21 @@ async function runAgentInner(
       tool_calls: Number(existing?.tool_calls ?? 0),
       spend_usd_micros: Number(existing?.spend_usd_micros ?? 0),
       error: existing?.error ?? 'duplicate run id (replay)',
+      skill_version: existing?.skill_version ?? null,
+      skill_sha256: existing?.skill_sha256 ?? null,
       replayed: true,
     }
   }
 
+  // Resolve the reviewed role pack after the durable run row exists. A missing or malformed
+  // pack for a recognized team role fails this run closed and is visible in the run error.
+  const roleSkill = loadRoleSkillPack(agent.id, agent.name)
+  if (roleSkill) {
+    await query(`UPDATE agent_runs SET skill_version=$1, skill_sha256=$2 WHERE id=$3`, [roleSkill.version, roleSkill.sha256, runId])
+  }
   // The run row exists, so the execution is real: make that visible in the audit trail before any
   // work is done. A replay returned above and deliberately writes nothing.
-  await recordRunEvent(audit, 'run.created', { metadata: { model: agent.model, max_steps: maxSteps } })
+  await recordRunEvent(audit, 'run.created', { metadata: { model: agent.model, max_steps: maxSteps, skill_role: roleSkill?.role ?? null, skill_version: roleSkill?.version ?? null, skill_sha256: roleSkill?.sha256 ?? null } })
   await recordRunEvent(audit, 'run.started')
 
   const finish = async (
@@ -442,7 +454,7 @@ async function runAgentInner(
         spendMicros: spend,
       })
     }
-    return { runId, status, output, tool_calls: toolCalls, spend_usd_micros: spend, error, ...(artifact ? { artifact } : {}) }
+    return { runId, status, output, tool_calls: toolCalls, spend_usd_micros: spend, error, skill_version: roleSkill?.version ?? null, skill_sha256: roleSkill?.sha256 ?? null, ...(artifact ? { artifact } : {}) }
   }
 
   // Resolve model + LLM. The catalogue row is resolved even when a model is injected, because it
@@ -480,7 +492,9 @@ async function runAgentInner(
 
   try {
     const messages: any[] = [
-      { role: 'system', content: agent.system_prompt },
+      { role: 'system', content: roleSkill
+        ? `${agent.system_prompt}\n\n--- REVIEWED ROLE SKILL PACK: ${roleSkill.role} v${roleSkill.version} (sha256:${roleSkill.sha256}) ---\n${roleSkill.content}\n--- END ROLE SKILL PACK ---`
+        : agent.system_prompt },
       { role: 'user', content: input },
     ]
     const useTools = tools.length > 0
