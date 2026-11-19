@@ -6,7 +6,7 @@ test('CI dispatch accepts only bounded review branches', () => {
   assert.equal(validateCiRef('work/feature-123'), 'work/feature-123')
   assert.equal(validateCiRef('agent/qa-check'), 'agent/qa-check')
   for (const ref of ['main', 'master', '../main', 'work/../main', 'work//bad', 'release/v1']) {
-    assert.throws(() => validateCiRef(ref), new Error(''))
+    assert.throws(() => validateCiRef(ref))
   }
 })
 
