@@ -25,7 +25,7 @@ import { describe, it, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
-const { migrate, query, one } = await import('../src/db/index.js')
+const { migrate, query, one, tx } = await import('../src/db/index.js')
 const { markCredited, markReorged, paymentStateFor, paymentRowFor } = await import('../src/payments/settle.js')
 const { decideSettlement, finalityVerdict, finalityPolicy } = await import('../src/payments/finality.js')
 const { recordPayment } = await import('../src/routes/credits.js')
@@ -40,6 +40,18 @@ const WALLET = 'agent_wallet'
 
 let owner: any
 let keyId: string
+
+function settlementRef(txHash: string, overrides: Partial<{ chainId: number; token: string; rawAmount: string; decimals: number }> = {}) {
+  return {
+    chain: 'base',
+    chainId: CHAIN,
+    txHash,
+    token: TOKEN,
+    rawAmount: '5000000',
+    decimals: 6,
+    ...overrides,
+  }
+}
 
 function transfer(over: Partial<any> = {}) {
   return {
@@ -233,7 +245,7 @@ describe('settlement integrity', () => {
       payment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { intentId: intentB, toKeyId: null, receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(wrongDestination.credited, false)
@@ -874,6 +886,116 @@ describe('settlement integrity', () => {
     assert.equal(keyReplay.credited, false)
     assert.equal(keyReplay.destinationConflict, false)
     assert.equal(keyReplay.existingToKeyId, keyId)
+  })
+
+  it('rejects settlement when any immutable payment identity or stored value differs', async () => {
+    const mismatches: Array<{ name: string; ref?: any; receivedBy?: string; amountMicros?: number }> = [
+      { name: 'chain id', ref: { chainId: CHAIN + 1 } },
+      { name: 'transaction hash', ref: { txHash: '0x' + 'c7'.repeat(32) } },
+      { name: 'token', ref: { token: '0x' + '9'.repeat(40) } },
+      { name: 'raw amount', ref: { rawAmount: '5000001' } },
+      { name: 'decimals', ref: { decimals: 18 } },
+      { name: 'USD value', amountMicros: 4_999_999 },
+      { name: 'receiving wallet', receivedBy: WALLET },
+    ]
+    for (const [index, mismatch] of mismatches.entries()) {
+      const txHash = '0x' + (index + 20).toString(16).padStart(2, '0').repeat(32)
+      const payment = await claim({ tx_hash: txHash })
+      const result = await creditPaymentDeposit(
+        payment.paymentId,
+        owner.id,
+        mismatch.amountMicros ?? 5_000_000,
+        settlementRef(txHash, mismatch.ref),
+        {
+          receivedBy: mismatch.receivedBy ?? VAULT,
+          confirmations: 12,
+          requiredConfirmations: 10,
+        },
+      )
+      assert.equal(result.credited, false, mismatch.name)
+      assert.equal(result.settled, false, mismatch.name)
+      assert.equal(result.scopeConflict, true, mismatch.name)
+      assert.equal(result.reason, 'payment_identity_mismatch', mismatch.name)
+      const deposit = await one(`SELECT count(*)::int AS n FROM deposits WHERE tx_hash = $1`, [txHash])
+      assert.equal(deposit.n, 0, mismatch.name + ': no deposit or credit may be written')
+      const row = await one(`SELECT state FROM payments WHERE id = $1`, [payment.paymentId])
+      assert.equal(row.state, 'confirmed', mismatch.name + ': payment remains unsettled')
+    }
+  })
+
+  it('settlement and competing intent claim use one lock order without deadlock on PostgreSQL', { skip: !process.env.DATABASE_URL }, async () => {
+    const intentId = 'pi_' + randomUUID().slice(0, 8)
+    const txHash = '0x' + 'd8'.repeat(32)
+    const competingTxHash = '0x' + 'd9'.repeat(32)
+    await query(
+      `INSERT INTO payment_intents (id, user_id, purpose, expected_usd_micros, status, expires_at)
+       VALUES ($1, $2, 'api_credits', 5000000, 'open', now() + interval '1 hour')`,
+      [intentId, owner.id],
+    )
+    const payment = await claim({ tx_hash: txHash }, {
+      intent: { id: intentId, api_key_id: null },
+    })
+
+    let releaseBlocker!: () => void
+    let signalLocked!: () => void
+    const lockAcquired = new Promise<void>((resolve) => { signalLocked = resolve })
+    const hold = new Promise<void>((resolve) => { releaseBlocker = resolve })
+    const blocker = tx(async (q) => {
+      await q(`SELECT id FROM payment_intents WHERE id = $1 FOR UPDATE`, [intentId])
+      signalLocked()
+      await hold
+    })
+    await lockAcquired
+
+    const competingClaim = recordPayment({
+      intent: { id: intentId, api_key_id: null },
+      userId: owner.id,
+      transfer: transfer({ tx_hash: competingTxHash }),
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 12,
+      observedBlock: 100,
+    })
+
+    // Ensure the claim transaction is queued on the intent lock before starting settlement.
+    let queued = false
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const waiting = await one(
+        `SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database()
+            AND wait_event_type = 'Lock'
+            AND query LIKE '%SELECT id, api_key_id, status%'`,
+      )
+      if (waiting.n > 0) { queued = true; break }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    assert.equal(queued, true, 'the competing claim must be waiting on the held intent row')
+
+    const settlement = creditPaymentDeposit(
+      payment.paymentId,
+      owner.id,
+      5_000_000,
+      settlementRef(txHash),
+      {
+        intentId,
+        receivedBy: VAULT,
+        confirmations: 12,
+        requiredConfirmations: 10,
+      },
+    )
+    releaseBlocker()
+    await blocker
+    const [settled, claimed] = await Promise.all([settlement, competingClaim])
+    assert.equal(settled.credited, true)
+    assert.equal(settled.settled, true)
+    assert.equal(claimed.intentConflict, true)
+    const intent = await one(`SELECT status FROM payment_intents WHERE id = $1`, [intentId])
+    assert.equal(intent.status, 'paid')
+    const count = await one(`SELECT count(*)::int AS n FROM payments WHERE intent_id = $1`, [intentId])
+    assert.equal(count.n, 1, 'the intent remains bound to exactly one payment')
   })
 
   it('serializes concurrent credit and reorg transitions on real PostgreSQL', { skip: !process.env.DATABASE_URL }, async () => {
