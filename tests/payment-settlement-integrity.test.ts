@@ -298,6 +298,63 @@ describe('settlement integrity', () => {
     assert.equal(afterPaidNewTransfer.intentConflict, true, 'a paid intent cannot be reused for a new transfer')
   })
 
+  it('promotes the same confirming transfer with final valuation once finality is reached', async () => {
+    const txHash = '0x' + 'ea'.repeat(32)
+    const selected = transfer({ tx_hash: txHash })
+    const pending = await recordPayment({
+      intent: null,
+      userId: owner.id,
+      transfer: selected,
+      receivedAt: VAULT,
+      usdMicros: 0,
+      status: 'pending_confirmations',
+      refusalCode: null,
+      state: 'confirming',
+      confirmations: 3,
+      requiredConfirmations: 10,
+      observedBlock: 100,
+    })
+    assert.equal(pending.duplicate, false)
+
+    const promoted = await recordPayment({
+      intent: null,
+      userId: owner.id,
+      transfer: selected,
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 12,
+      requiredConfirmations: 10,
+      observedBlock: 109,
+    })
+    assert.equal(promoted.duplicate, true)
+    assert.equal(promoted.scopeConflict, false)
+    assert.equal(promoted.state, 'confirmed')
+
+    const row = await one(
+      `SELECT status, state, usd_value_micros, confirmations, observed_block
+         FROM payments WHERE id = $1`,
+      [pending.paymentId],
+    )
+    assert.equal(row.status, 'recorded')
+    assert.equal(row.state, 'confirmed')
+    assert.equal(Number(row.usd_value_micros), 5_000_000)
+    assert.equal(row.confirmations, 12)
+    assert.equal(Number(row.observed_block), 109)
+
+    const settled = await creditPaymentDeposit(
+      pending.paymentId,
+      owner.id,
+      5_000_000,
+      settlementRef(txHash),
+      { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+    )
+    assert.equal(settled.credited, true)
+    assert.equal(settled.settled, true)
+  })
+
   it('writes the confirming audit event with the payment claim', async () => {
     const txHash = '0x' + 'e2'.repeat(32)
     const payment = await recordPayment({
