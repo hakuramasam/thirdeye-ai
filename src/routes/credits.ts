@@ -31,7 +31,7 @@ export function chainSlugFor(chainId: number): string | null {
 async function creditVerified(
   userId: string,
   usdMicros: number,
-  args: { chain: string; txHash: string; token: string },
+  args: { chain: string; chainId: number; txHash: string; token: string; rawAmount: string; decimals: number },
   intentId: string | null,
   toKeyId: string | null,
   paymentId: string,
@@ -584,7 +584,7 @@ export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRout
         required: finality.required,
       })
       if (policyChain && policyDecision.status === 'credited' && (policySettle.action === 'credit' || policySettle.action === 'already_credited')) {
-        const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, policyRecord.intentId, policyRecord.toKeyId, policyRecord.paymentId, finality, received_at)
+        const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, chainId: t.chain_id, txHash: t.tx_hash, token: t.token, rawAmount: t.raw_amount, decimals: t.decimals }, policyRecord.intentId, policyRecord.toKeyId, policyRecord.paymentId, finality, received_at)
         if (dep.destinationConflict || dep.scopeConflict || dep.ownershipConflict || !dep.settled) {
           return c.json({
             accepted: false,
@@ -693,7 +693,7 @@ export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRout
       required: finality.required,
     })
     if (chainSlug && (settle.action === 'credit' || settle.action === 'already_credited')) {
-      const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, recorded.intentId, recorded.toKeyId, recorded.paymentId, finality, received_at)
+      const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, chainId: t.chain_id, txHash: t.tx_hash, token: t.token, rawAmount: t.raw_amount, decimals: t.decimals }, recorded.intentId, recorded.toKeyId, recorded.paymentId, finality, received_at)
       if (dep.destinationConflict || dep.scopeConflict || dep.ownershipConflict || !dep.settled) {
         return c.json({
           accepted: false,
@@ -912,7 +912,7 @@ export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRout
       payment.paymentId,
       user.id,
       verification.amount_usd_micros,
-      { chain: chainConfig.id, txHash, token: verification.token },
+      { chain: chainConfig.id, chainId: transfer.chain_id, txHash, token: verification.token, rawAmount: transfer.raw_amount, decimals: transfer.decimals },
       {
         toKeyId: payment.toKeyId,
         intentId: payment.intentId,
