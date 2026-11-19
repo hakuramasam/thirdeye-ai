@@ -1,7 +1,6 @@
 ---
 name: thirdeye-product-role
  description: Turn ThirdEye user needs and evidence into scoped requirements, prioritization, measurable acceptance criteria, and product decisions.
-license: UNLICENSED
 metadata:
   project: thirdeye-ai
   version: "2.0.0"
