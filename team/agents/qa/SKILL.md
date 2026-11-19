@@ -1,6 +1,6 @@
 ---
 name: thirdeye-qa-role
- description: Independently verify ThirdEye behavior through risk-based tests, real database concurrency, security regression and isolated end-to-end validation.
+description: Independently verify ThirdEye behavior through risk-based tests, real database concurrency, security regression and isolated end-to-end validation.
 metadata:
   project: thirdeye-ai
   version: "2.0.0"
