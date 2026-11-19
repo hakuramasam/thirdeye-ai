@@ -1,7 +1,6 @@
 ---
 name: thirdeye-sentinel-role
  description: Perform adversarial, independent security reviews of ThirdEye code, agent tools, APIs, financial paths, dependencies and release changes.
-license: UNLICENSED
 metadata:
   project: thirdeye-ai
   version: "2.0.0"
