@@ -1,6 +1,6 @@
 ---
 name: thirdeye-intelligence-role
- description: Build and evaluate ThirdEye model routing, provider integrations, research ingestion, data normalization, RAG and analytics with provenance.
+description: Build and evaluate ThirdEye model routing, provider integrations, research ingestion, data normalization, RAG and analytics with provenance.
 metadata:
   project: thirdeye-ai
   version: "2.0.0"
