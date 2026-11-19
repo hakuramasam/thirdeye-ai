@@ -111,7 +111,14 @@ function Agents() {
     if (problems.length) { toast('Needs ' + problems.join(', '), 'error'); return }
     setBusy(true)
     try {
-      const mcp = form.mcp.filter((m) => m.name && m.url)
+      // A row with one field filled is a user who meant to add a server: refuse it rather than
+      // dropping it and reporting success for an agent that does not have it.
+      const half = form.mcp.find((m) => (m.name.trim() && !m.url.trim()) || (!m.name.trim() && m.url.trim()))
+      if (half) { toast('Finish the MCP server row or clear it: it needs both a name and a URL.', 'error'); setBusy(false); return }
+      // POST /api/agents refuses x402_enabled without an allowed seller, so asking for pay-per-call
+      // here failed every time. Sellers are configured after creation, on the agent's own row.
+      if (form.x402) { toast('Create the agent first, then add allowed sellers to enable pay-per-call.', 'error'); setBusy(false); return }
+      const mcp = form.mcp.filter((m) => m.name.trim() && m.url.trim())
       await api('/api/agents', {
         method: 'POST',
         body: JSON.stringify({
@@ -122,7 +129,7 @@ function Agents() {
           budget_usd_micros: Number(form.budget_usd_micros),
           max_steps: Number(form.max_steps),
           cron: form.cron.trim() || null,
-          x402_enabled: form.x402,
+          x402_enabled: false,
         }),
       })
       toast('Agent created')

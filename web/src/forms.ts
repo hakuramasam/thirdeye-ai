@@ -6,10 +6,12 @@ export function formProblems(f: { name: string; model: string; budget_usd_micros
   const out: string[] = []
   if (!f.name.trim()) out.push('a name')
   if (!f.model) out.push('a model')
+  // These caps mirror POST /api/agents exactly: a value the form accepts must not be one the
+  // route rejects, or the button enables and the submission fails anyway.
   const budget = Number(f.budget_usd_micros)
-  if (!Number.isInteger(budget) || budget <= 0) out.push('a whole-number budget in micro-dollars')
+  if (!Number.isInteger(budget) || budget < 1 || budget > 10_000_000) out.push('a whole-number budget between 1 and 10,000,000 micro-dollars ($10)')
   const steps = Number(f.max_steps)
-  if (!Number.isInteger(steps) || steps < 1 || steps > 30) out.push('max steps between 1 and 30')
+  if (!Number.isInteger(steps) || steps < 1 || steps > 20) out.push('max steps between 1 and 20')
   return out
 }
 

@@ -297,7 +297,7 @@ function Byok({ onChanged }: { onChanged: () => void }) {
           <div style={{ flex: 2 }}><label>API key</label><input type="password" value={apiKey} placeholder="sk-… / sk-ant-…" onChange={(e) => setApiKey(e.target.value)} /></div>
         </div>
         <div style={{ marginTop: 14 }}>
-          <button onClick={save} disabled={busy || !apiKey} title={apiKey ? 'Encrypt and store this key' : 'Paste an API key first'}>
+          <button onClick={save} disabled={busy || !apiKey.trim()} title={apiKey.trim() ? 'Encrypt and store this key' : 'Paste an API key first'}>
             {busy ? 'Saving…' : 'Save key'}
           </button>
           {!apiKey && <span className="muted small" style={{ marginLeft: 10 }}>Paste a provider key to enable saving.</span>}

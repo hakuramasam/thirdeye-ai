@@ -7,6 +7,9 @@ type Msg = { role: 'user' | 'assistant'; content: string; cost?: string }
 /** Chat with any catalogue model directly, using a session-scoped key. */
 export function Playground({ user, onChanged }: { user: any; onChanged: () => void }) {
   const [models, setModels] = useState<CatalogModel[]>([])
+  // A successful empty catalogue is not the same as one still loading: without this the select
+  // said "loading models…" forever after a 200 with no rows.
+  const [catalogueLoaded, setCatalogueLoaded] = useState(false)
   // Empty until the catalogue answers: the old default named a model the list might not contain,
   // so the select showed nothing selected and the first send carried no model.
   const [model, setModel] = useState('')
@@ -21,7 +24,7 @@ export function Playground({ user, onChanged }: { user: any; onChanged: () => vo
   useEffect(() => {
     api('/api/models').then((r) => {
       const list = normalizeModels(r)
-      setModels(list)
+      setModels(list); setCatalogueLoaded(true)
       if (list.length) setModel((cur) => (list.some((m) => m.id === cur) ? cur : list[0].id))
     }).catch((e) => setErr('Could not load the model catalogue: ' + String(e?.message || e)))
     // One short-lived key for this page load; it is revoked on the next load.
@@ -75,7 +78,7 @@ export function Playground({ user, onChanged }: { user: any; onChanged: () => vo
               disabled={busy || models.length === 0}
               aria-label="Model"
             >
-              {models.length === 0 && <option value="">{err ? 'catalogue unavailable' : 'loading models…'}</option>}
+              {models.length === 0 && <option value="">{err ? 'catalogue unavailable' : catalogueLoaded ? 'no models available' : 'loading models…'}</option>}
               {models.map((m) => (
                 <option key={m.id} value={m.id}>
                   {modelLabel(m)}

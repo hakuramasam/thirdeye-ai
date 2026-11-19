@@ -33,14 +33,22 @@ describe('the model catalogue the dashboard actually receives', () => {
     assert.match(modelLabel(rows[0]), /^gpt-oss-120b · \$0\.15\/M in$/, 'the option names the model and its price')
   })
 
-  it('reads the OpenAI-compatible shape too, converting per-token prices per million', () => {
-    const rows = normalizeModels({ data: [{ id: 'base-model', owned_by: 'thirdeye', pricing: { prompt: '0.0000002' } }] })
+  it('reads the OpenAI-compatible shape, whose prices are already USD per million', () => {
+    // /api/v1/models publishes pricing.prompt as USD per 1M tokens: gpt-4o-mini reports "0.15".
+    // Reading that as a per-token figure multiplied every price by a million.
+    const rows = normalizeModels({ data: [{ id: 'base-model', owned_by: 'thirdeye', pricing: { prompt: '0.15' } }] })
     assert.equal(rows.length, 1)
     assert.equal(rows[0].id, 'base-model')
     assert.equal(rows[0].provider, 'thirdeye')
-    assert.equal(rows[0].promptUsdPerMillion, 0.2)
+    assert.equal(rows[0].promptUsdPerMillion, 0.15)
     assert.equal(rows[0].completionUsdPerMillion, null, 'an absent output price is null, never NaN')
-    assert.equal(modelLabel(rows[0]), 'base-model · $0.20/M in')
+    assert.equal(modelLabel(rows[0]), 'base-model · $0.15/M in')
+  })
+
+  it('shows a sub-cent price as sub-cent instead of rounding it to free', () => {
+    const rows = normalizeModels({ data: [{ id: 'cheap-model', pricing: { prompt: '0.0008' } }] })
+    assert.equal(rows[0].promptUsdPerMillion, 0.0008)
+    assert.equal(modelLabel(rows[0]), 'cheap-model · $0.0008/M in', 'two decimals would print $0.00 and read as free')
   })
 
   it('drops a row it cannot name instead of rendering a blank option', () => {
@@ -70,23 +78,24 @@ describe('the create-agent form refuses numbers it cannot use', () => {
   })
 
   it('rejects a non-numeric budget, which is what stored NaN and rendered "nan"', () => {
-    assert.deepEqual(formProblems({ ...valid, budget_usd_micros: 'abc' }), ['a whole-number budget in micro-dollars'])
-    assert.deepEqual(formProblems({ ...valid, budget_usd_micros: '' }), ['a whole-number budget in micro-dollars'])
-    assert.deepEqual(formProblems({ ...valid, budget_usd_micros: '0' }), ['a whole-number budget in micro-dollars'])
+    assert.deepEqual(formProblems({ ...valid, budget_usd_micros: 'abc' }), ['a whole-number budget between 1 and 10,000,000 micro-dollars ($10)'])
+    assert.deepEqual(formProblems({ ...valid, budget_usd_micros: '' }), ['a whole-number budget between 1 and 10,000,000 micro-dollars ($10)'])
+    assert.deepEqual(formProblems({ ...valid, budget_usd_micros: '0' }), ['a whole-number budget between 1 and 10,000,000 micro-dollars ($10)'])
   })
 
   it('rejects a step count outside the range the runner accepts', () => {
-    assert.deepEqual(formProblems({ ...valid, max_steps: '0' }), ['max steps between 1 and 30'])
-    assert.deepEqual(formProblems({ ...valid, max_steps: '31' }), ['max steps between 1 and 30'])
-    assert.deepEqual(formProblems({ ...valid, max_steps: '2.5' }), ['max steps between 1 and 30'])
+    assert.deepEqual(formProblems({ ...valid, max_steps: '0' }), ['max steps between 1 and 20'])
+    assert.deepEqual(formProblems({ ...valid, max_steps: '20' }), [])
+    assert.deepEqual(formProblems({ ...valid, max_steps: '21' }), ['max steps between 1 and 20'])
+    assert.deepEqual(formProblems({ ...valid, max_steps: '2.5' }), ['max steps between 1 and 20'])
   })
 
   it('reports every problem at once, so one fix does not reveal the next', () => {
     assert.deepEqual(formProblems({ name: '', model: '', budget_usd_micros: 'x', max_steps: '99' }), [
       'a name',
       'a model',
-      'a whole-number budget in micro-dollars',
-      'max steps between 1 and 30',
+      'a whole-number budget between 1 and 10,000,000 micro-dollars ($10)',
+      'max steps between 1 and 20',
     ])
   })
 })

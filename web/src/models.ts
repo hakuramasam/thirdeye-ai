@@ -28,13 +28,14 @@ function asMicros(v: unknown): number | null {
 }
 
 /**
- * The OpenAI-compatible `pricing.prompt` is a per-token string; the catalogue uses micros.
- * Rounded to six decimals so 0.0000002 reports 0.2 rather than 0.19999999999999998: the money
- * value is the same, but a float artefact in a displayed price reads as a different price.
+ * `/api/v1/models` publishes `pricing.prompt` and `pricing.completion` already in USD per 1M
+ * tokens (gpt-4o-mini reports "0.15"), which is the unit the catalogue displays. Treating them as
+ * per-token and multiplying by a million inflated every price by 1,000,000x, so this parses them
+ * as-is and only rounds away float artefacts.
  */
-function perTokenToPerMillion(v: unknown): number | null {
+function usdPerMillion(v: unknown): number | null {
   const n = typeof v === 'string' ? Number(v) : typeof v === 'number' ? v : NaN
-  return Number.isFinite(n) ? Math.round(n * 1_000_000 * 1e6) / 1e6 : null
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 1e6) / 1e6 : null
 }
 
 export function normalizeModels(raw: unknown): CatalogModel[] {
@@ -58,17 +59,23 @@ export function normalizeModels(raw: unknown): CatalogModel[] {
     out.push({
       id,
       provider: typeof r?.provider === 'string' ? r.provider : typeof r?.owned_by === 'string' ? r.owned_by : null,
-      promptUsdPerMillion: promptMicros !== null ? promptMicros / 1_000_000 : perTokenToPerMillion(r?.pricing?.prompt),
+      promptUsdPerMillion: promptMicros !== null ? promptMicros / 1_000_000 : usdPerMillion(r?.pricing?.prompt),
       completionUsdPerMillion:
-        completionMicros !== null ? completionMicros / 1_000_000 : perTokenToPerMillion(r?.pricing?.completion),
+        completionMicros !== null ? completionMicros / 1_000_000 : usdPerMillion(r?.pricing?.completion),
     })
   }
   return out
+}
+
+/** A sub-cent price formatted to two decimals would read as free, so show four below one cent. */
+function fmtPerMillion(n: number): string {
+  if (n === 0) return '0.00'
+  return n < 0.01 ? n.toFixed(4) : n.toFixed(2)
 }
 
 /** One line of option text: always names the model, and adds its input price when known. */
 export function modelLabel(m: CatalogModel): string {
   return m.promptUsdPerMillion === null
     ? m.id
-    : `${m.id} · $${m.promptUsdPerMillion.toFixed(2)}/M in`
+    : `${m.id} · $${fmtPerMillion(m.promptUsdPerMillion)}/M in`
 }
