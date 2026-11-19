@@ -1,7 +1,6 @@
 ---
 name: thirdeye-backend-role
  description: Implement secure ThirdEye backend services, APIs, database operations and workflows with transactional integrity and reproducible tests.
-license: UNLICENSED
 metadata:
   project: thirdeye-ai
   version: "2.0.0"
