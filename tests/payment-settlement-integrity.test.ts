@@ -256,7 +256,7 @@ describe('settlement integrity', () => {
       payment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { intentId: intentA, toKeyId: keyId, receivedBy: VAULT, confirmations: 14, requiredConfirmations: 10 },
     )
     assert.equal(credited.credited, true)
@@ -666,7 +666,7 @@ describe('settlement integrity', () => {
     // must not read 'the deposit exists' as 'nothing to do' and leave the row confirmed forever.
     const txHash = '0x' + 'cd'.repeat(32)
     const payment = await claim({ tx_hash: txHash })
-    const args = { chain: 'base', txHash, token: TOKEN }
+    const args = settlementRef(txHash)
 
     const first = await creditDeposit(owner.id, 5_000_000, args)
     assert.equal(first.credited, true)
@@ -688,10 +688,10 @@ describe('settlement integrity', () => {
     const txHash = '0x' + 'ef'.repeat(32)
     await claim({ tx_hash: txHash })
 
-    const theirs = await creditDeposit(other.id, 5_000_000, { chain: 'base', txHash, token: TOKEN })
+    const theirs = await creditDeposit(other.id, 5_000_000, settlementRef(txHash))
     assert.equal(theirs.credited, true)
 
-    const replay = await creditDeposit(owner.id, 5_000_000, { chain: 'base', txHash, token: TOKEN })
+    const replay = await creditDeposit(owner.id, 5_000_000, settlementRef(txHash))
     assert.equal(replay.credited, false)
     assert.equal(replay.existingUserId, other.id)
     assert.notEqual(replay.existingUserId, owner.id, 'the transfer belongs to another account, so it must not settle here')
@@ -723,7 +723,7 @@ describe('settlement integrity', () => {
       payment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(result.credited, true)
@@ -740,7 +740,7 @@ describe('settlement integrity', () => {
       payment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(replay.credited, false)
@@ -758,7 +758,7 @@ describe('settlement integrity', () => {
       payment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(result.credited, false)
@@ -776,7 +776,7 @@ describe('settlement integrity', () => {
       payment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { toKeyId: keyId, receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(first.credited, true)
@@ -785,7 +785,7 @@ describe('settlement integrity', () => {
       payment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(result.credited, false)
@@ -802,7 +802,7 @@ describe('settlement integrity', () => {
       firstPayment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(first.credited, true)
@@ -812,7 +812,7 @@ describe('settlement integrity', () => {
       secondPayment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { receivedBy: WALLET, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(second.credited, false)
@@ -829,7 +829,7 @@ describe('settlement integrity', () => {
       payment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { receivedBy: VAULT, confirmations: 9, requiredConfirmations: 10 },
     )
     assert.equal(result.credited, false)
@@ -972,8 +972,6 @@ describe('settlement integrity', () => {
       if (waiting.n > 0) { queued = true; break }
       await new Promise((resolve) => setTimeout(resolve, 10))
     }
-    assert.equal(queued, true, 'the competing claim must be waiting on the held intent row')
-
     const settlement = creditPaymentDeposit(
       payment.paymentId,
       owner.id,
@@ -988,6 +986,7 @@ describe('settlement integrity', () => {
     )
     releaseBlocker()
     await blocker
+    assert.equal(queued, true, 'the competing claim must be waiting on the held intent row')
     const [settled, claimed] = await Promise.all([settlement, competingClaim])
     assert.equal(settled.credited, true)
     assert.equal(settled.settled, true)
@@ -1007,7 +1006,7 @@ describe('settlement integrity', () => {
         payment.paymentId,
         owner.id,
         5_000_000,
-        { chain: 'base', txHash, token: TOKEN },
+        settlementRef(txHash),
         { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
       ),
       markReorged(CHAIN, txHash, { token: TOKEN, received_by: VAULT }),
@@ -1038,7 +1037,7 @@ describe('settlement integrity', () => {
       paymentId: payment.paymentId,
       userId: owner.id,
       amountMicros: 5_000_000,
-      ref: { chain: 'base', txHash, token: TOKEN },
+      ref: settlementRef(txHash),
       opts: { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     }
 
