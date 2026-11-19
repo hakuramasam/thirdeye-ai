@@ -211,6 +211,8 @@ test('a task envelope is refused when a specified field is missing, and warned w
   delete (thin as any).correlation_id
   delete (thin as any).category
   delete (thin as any).permission_scopes
+  delete (thin as any).dependencies
+  delete (thin as any).output_expectations
   const warned = validateOperatingTask(thin)
   assert.equal(warned.ok, true)
   assert.ok(warned.ok && warned.warnings.length === 3, 'three recommended fields were dropped, three warnings expected')
