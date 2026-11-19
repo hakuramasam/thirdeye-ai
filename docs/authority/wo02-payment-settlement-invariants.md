@@ -1,6 +1,6 @@
 # WO-02 payment settlement invariants
 
-This note describes the settlement contract implemented by PR #43 and its stacked follow-up PR #60.
+This note describes the settlement contract implemented by PR #65, stacked on the earlier WO-02 settlement work.
 
 ## Idempotency scope
 
@@ -17,14 +17,16 @@ A replay is considered settled only when all of those values match. A different 
 
 The payment-review and compatibility deposit endpoints use `creditPaymentDeposit`:
 
-1. Lock the payment row with `FOR UPDATE`.
-2. Validate the chain-confirmation evidence before settlement, then re-check the payment state, status, intent ID, and immutable destination under the row lock.
-3. Insert the idempotency/deposit row using the destination persisted on the payment row; caller-supplied intent or key IDs cannot override it.
-4. Credit either the account ledger or the exact active API key.
-5. Update payment state and payment-intent state.
-6. Append the `credited` payment event.
+1. Read the payment's intent pointer without locking.
+2. For an intent-bound payment, lock the `payment_intents` row first, then lock the payment row with `FOR UPDATE`. This establishes the global lock order `payment_intents -> payments`, matching the new-claim path in `recordPayment`; unbound payments lock only the payment row.
+3. Validate the complete verified transfer identity against the locked payment: numeric chain ID, normalized transaction hash, normalized token, receiving wallet label, raw token amount, decimals, and stored USD-micros value. Reject any missing or mismatched identity before writing a deposit or credit.
+4. Re-check payment state, status, intent ID, and immutable destination under the payment row lock.
+5. Insert the idempotency/deposit row using the destination persisted on the payment row; caller-supplied intent or key IDs cannot override it.
+6. Credit either the account ledger or the exact active API key.
+7. Update payment state and payment-intent state.
+8. Append the `credited` payment event.
 
-A payment intent is single-use: one payment row may reference each non-null intent ID, and a new transfer cannot reuse an already-claimed or paid intent. An exact replay of the original transfer remains idempotent. The migration fails closed if legacy duplicate intent claims exist and requires reconciliation before applying the unique index. The locked payment's intent ID and `to_key_id` must match the original claim. The payment row, deposit row, ledger/key balance, payment-intent status, and audit event commit or roll back together. The confirmation count used for settlement is also persisted on the payment row.
+A payment intent is single-use: one payment row may reference each non-null intent ID, and a new transfer cannot reuse an already-claimed or paid intent. An exact replay of the original transfer remains idempotent. The migration fails closed if legacy duplicate intent claims exist and requires reconciliation before applying the unique index. The locked payment's intent ID and `to_key_id` must match the original claim. The settlement API also requires the verified transfer identity and exact stored USD value; caller-provided identifiers cannot redirect or substitute the transfer. The payment row, deposit row, ledger/key balance, payment-intent status, and audit event commit or roll back together. The confirmation count used for settlement is also persisted on the payment row.
 
 All six steps run in one database transaction. If the reorg transition obtains the payment lock first, the credit is refused. If the credit transaction obtains it first, a later reorg transition observes `credited` and escalates to reconciliation. A failed payment-event insert rolls the balance write back.
 
@@ -41,7 +43,8 @@ No ledger reversal is performed automatically. A credited-then-reorged payment m
 ## Release acceptance
 
 - Run the PGlite suite and retain the exact CI run/commit evidence.
-- Verify payment intent and destination binding, atomic confirming-event creation, and the compatibility route's use of the exact transfer selected by the receipt parser.
+- Verify complete payment identity binding, payment-intent and destination binding, atomic confirming-event creation, and the compatibility route's use of the exact transfer selected by the receipt parser.
+- Verify lock ordering with a real-PostgreSQL race between settlement and a competing transfer claim against the same intent; both code paths must lock the intent before the payment row.
 - Run the concurrency suite against real PostgreSQL; PGlite serializes its operations and cannot prove row-lock behavior under contention.
 - Apply the `deposits` additive columns through the versioned migration process before production rollout.
 - Reconcile legacy deposit rows with NULL `payment_id` / `received_by` / `to_key_id`; these rows intentionally fail closed rather than being silently adopted by a new payment claim.
