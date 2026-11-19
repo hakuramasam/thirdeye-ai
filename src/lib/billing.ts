@@ -142,7 +142,7 @@ export async function creditPaymentDeposit(
   }
 
   if (!Number.isSafeInteger(ref.chainId) || ref.chainId <= 0 ||
-      !/^\\d+$/.test(ref.rawAmount) || BigInt(ref.rawAmount) <= 0n ||
+      !/^\d+$/.test(ref.rawAmount) || BigInt(ref.rawAmount) <= 0n ||
       !Number.isSafeInteger(ref.decimals) || ref.decimals < 0 || ref.decimals > 36) {
     throw new Error('A payment settlement requires a complete verified transfer identity')
   }
