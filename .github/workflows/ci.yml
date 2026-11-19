@@ -15,6 +15,8 @@ jobs:
         node-version: [24, 26]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
@@ -34,10 +36,12 @@ jobs:
           DATABASE_URL: ''
           DATABASE_URL_UNPOOLED: ''
         run: npm test
-      - name: No credentials in the diff
-        if: github.event_name == 'pull_request'
+      - name: No credentials in the proposed changes
+        if: github.event_name != 'push'
         run: |
-          if git diff --unified=0 "origin/${{ github.base_ref }}...HEAD" | grep -nE '(sk-thirdeye-[A-Za-z0-9]{8,}|sk-(proj|ant)-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,})'; then
+          BASE_REF="${{ github.event_name == 'pull_request' && github.base_ref || 'main' }}"
+          git fetch origin "$BASE_REF" --depth=1
+          if git diff --unified=0 "origin/$BASE_REF...HEAD" | grep -nE '(sk-thirdeye-[A-Za-z0-9]{8,}|sk-(proj|ant)-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,})'; then
             echo "::error::A credential-shaped string appears in this diff."; exit 1
           fi
           echo "clean"
