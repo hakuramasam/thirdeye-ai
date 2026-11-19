@@ -172,9 +172,9 @@ frontend implementation and test evidence.
 
 F. Wallet and Finance Specialist
 
-Role: tdt_wallet
+Role: tdt_blockchain
 
-Create this role if it does not exist.
+This responsibility maps to the existing blockchain specialist; do not create a duplicate agent.
 
 Responsibilities:
 
@@ -200,9 +200,9 @@ financial design, implementation proposal, transaction evidence or reconciliatio
 
 G. Data Intelligence Specialist
 
-Role: tdt_data
+Role: tdt_intelligence
 
-Create this role if it does not exist.
+This responsibility maps to the existing intelligence specialist; do not create a duplicate agent.
 
 Responsibilities:
 
@@ -314,7 +314,7 @@ Documentation must distinguish implemented, tested, deployed and planned functio
 
 Required output:
 
-documentation artifact.
+`changelog_entry` artifact.
 
 3. TASK INTAKE AND CLASSIFICATION
 
