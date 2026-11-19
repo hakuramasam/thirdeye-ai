@@ -8,6 +8,7 @@ on:
       - 'src/routes/credits.ts'
       - 'tests/payment-settlement-integrity.test.ts'
       - '.github/workflows/wo02-postgres-integration.yml'
+      - '.github/workflows/ci.yml'
 permissions:
   contents: read
 jobs:
