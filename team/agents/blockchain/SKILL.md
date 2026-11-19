@@ -1,7 +1,6 @@
 ---
 name: thirdeye-blockchain-role
  description: Review and implement ThirdEye wallet, chain, payment, settlement, treasury and ledger behavior with cryptographic and financial invariants.
-license: UNLICENSED
 metadata:
   project: thirdeye-ai
   version: "2.0.0"
