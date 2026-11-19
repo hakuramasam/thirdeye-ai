@@ -15,7 +15,8 @@
     "test": "tsx --test tests/*.test.ts",
     "test:file": "tsx --test",
     "validate:agent-skills": "node scripts/validate-agent-skills.mjs",
-    "check:runtime": "node scripts/check-runtime.mjs"
+    "check:runtime": "node scripts/check-runtime.mjs",
+    "evaluate:agents": "node scripts/run-agent-competency.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
