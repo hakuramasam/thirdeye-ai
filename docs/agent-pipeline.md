@@ -60,7 +60,7 @@ It extends the pipelines rather than replacing them. The division is deliberate:
 | Machine-checkable form of the above | `src/team/spec.json` |
 | Enforcement | `tests/operating-spec.test.ts` |
 
-`src/team/spec.ts` exposes the specification as code: `checkTransition` orders the lifecycle and reports which gates a move skipped, `validateOperatingTask` runs the existing JSON Schema validator and then adds the envelope fields the schema does not carry, `stageForTaskStatus` projects the eight stored statuses onto the chain, and `checkRoleCoverage` compares the specified roles against `team/agents/*` so an added or renamed pack cannot drift away from the document.
+`src/team/spec.ts` exposes the specification as code: `checkTransition` orders the lifecycle and reports which gates a move skipped, `validateOperatingTask` runs the existing JSON Schema validator and then applies the specification's required/recommended-field checks without mutating or adding fields, `stageForTaskStatus` projects the eight stored statuses onto the chain, and `checkRoleCoverage` compares the specified roles against `team/agents/*` so an added or renamed pack cannot drift away from the document.
 
 Two mappings worth stating explicitly, because they are judgement calls rather than facts:
 
