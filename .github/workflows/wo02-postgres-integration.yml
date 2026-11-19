@@ -1,0 +1,44 @@
+name: wo02-postgres-integration
+on:
+  pull_request:
+    paths:
+      - 'src/db/**'
+      - 'src/lib/billing.ts'
+      - 'src/payments/**'
+      - 'src/routes/credits.ts'
+      - 'tests/payment-settlement-integrity.test.ts'
+      - '.github/workflows/wo02-postgres-integration.yml'
+      - '.github/workflows/ci.yml'
+permissions:
+  contents: read
+jobs:
+  postgres-settlement:
+    name: Real PostgreSQL settlement concurrency
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: thirdeye_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d thirdeye_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install
+        run: npm ci --no-audit --no-fund
+      - name: Settlement and concurrency tests against PostgreSQL
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/thirdeye_test
+          DATABASE_URL_UNPOOLED: postgres://postgres:postgres@localhost:5432/thirdeye_test
+        run: npx tsx --test tests/payment-settlement-integrity.test.ts

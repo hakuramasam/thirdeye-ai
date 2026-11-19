@@ -1,16 +1,15 @@
 import type { SessionApp } from '../lib/session.js'
 import { requireUser } from '../lib/session.js'
 import { env, depositAddress, platformReceivers } from '../lib/env.js'
-import { query } from '../db/index.js'
+import { one, query, tx } from '../db/index.js'
 import { getBalanceMicros, creditPaymentDeposit } from '../lib/billing.js'
-import { one } from '../db/index.js'
 import { decideCredit } from '../lib/creditPolicy.js'
 import { CHAINS, isPolicyPricedToken, platformTokenUsdMicros } from '../payments/chains.js'
 import { verifyDeposit } from '../payments/verify.js'
 import { findIncomingTransfer, checkSenderOwnership } from '../payments/verify.js'
 import { prepareAutoConvert, autoConvertPolicyFromEnv } from '../payments/autoConvert.js'
 import { decideSettlement, type FinalityVerdict } from '../payments/finality.js'
-import { markReorged, paymentStateFor, logPaymentEvent } from '../payments/settle.js'
+import { markReorged, paymentStateFor } from '../payments/settle.js'
 import { randomBytes } from 'node:crypto'
 import type { IncomingTransfer } from '../payments/verify.js'
 
@@ -32,40 +31,20 @@ export function chainSlugFor(chainId: number): string | null {
 async function creditVerified(
   userId: string,
   usdMicros: number,
-  args: { chain: string; txHash: string; token: string },
-  intentId: string | null | undefined,
+  args: { chain: string; chainId: number; txHash: string; token: string; rawAmount: string; decimals: number },
+  intentId: string | null,
+  toKeyId: string | null,
   paymentId: string,
   finality: FinalityVerdict,
   receivedBy: string
 ) {
-  const settle = (toKeyId: string | null = null) =>
-    creditPaymentDeposit(paymentId, userId, usdMicros, args, {
-      toKeyId,
-      receivedBy,
-      confirmations: finality.confirmations,
-      requiredConfirmations: finality.required,
-    })
-
-  if (intentId) {
-    const it = await one('SELECT api_key_id FROM payment_intents WHERE id = $1 AND user_id = $2', [intentId, userId])
-    if (it?.api_key_id) {
-      const dep = await settle(it.api_key_id)
-      return {
-        credited: dep.credited,
-        settled: dep.settled,
-        destinationConflict: dep.destinationConflict,
-        scopeConflict: dep.scopeConflict,
-        ownershipConflict: dep.ownershipConflict,
-        reconciliation: dep.reconciliation,
-        reason: dep.reason,
-        to: 'key' as const,
-        api_key_id: it.api_key_id,
-        key_credit_usd_micros: dep.keyCredit ?? null,
-        deposit: dep,
-      }
-    }
-  }
-  const dep = await settle(null)
+  const dep = await creditPaymentDeposit(paymentId, userId, usdMicros, args, {
+    intentId,
+    toKeyId,
+    receivedBy,
+    confirmations: finality.confirmations,
+    requiredConfirmations: finality.required,
+  })
   return {
     credited: dep.credited,
     settled: dep.settled,
@@ -74,9 +53,22 @@ async function creditVerified(
     ownershipConflict: dep.ownershipConflict,
     reconciliation: dep.reconciliation,
     reason: dep.reason,
-    to: 'account' as const,
+    to: toKeyId ? ('key' as const) : ('account' as const),
+    api_key_id: toKeyId,
+    key_credit_usd_micros: dep.keyCredit ?? null,
     deposit: dep,
   }
+}
+
+function claimConflictResponse(c: any, claim: { scopeConflict: boolean; destinationConflict: boolean; ownershipConflict: boolean; intentConflict: boolean }) {
+  if (!claim.scopeConflict && !claim.destinationConflict && !claim.ownershipConflict && !claim.intentConflict) return null
+  return c.json({
+    accepted: false,
+    error: {
+      code: claim.ownershipConflict ? 'payment_already_claimed' : claim.intentConflict ? 'payment_intent_unavailable' : claim.scopeConflict ? 'payment_intent_conflict' : 'payment_destination_conflict',
+      message: 'This transfer is already bound to a different payment intent or credit destination. No new credit was issued.',
+    },
+  }, 409)
 }
 
 export function shouldCreditPayment(args: { status: string; duplicate: boolean; usdMicros: number }): boolean {
@@ -104,54 +96,242 @@ export async function recordPayment(args: {
   refusalCode: string | null
   priceUsd?: number | null
   pool?: string | null
-  /** Settlement state and the confirmation evidence behind it. */
+  /** Immutable account-vs-key destination captured when the transfer is first claimed. */
+  toKeyId?: string | null
   state?: string
   confirmations?: number
+  requiredConfirmations?: number
   observedBlock?: number | null
-}): Promise<{ paymentId: string; duplicate: boolean; state: string | null }> {
+}): Promise<{
+  paymentId: string
+  duplicate: boolean
+  state: string | null
+  intentId: string | null
+  toKeyId: string | null
+  scopeConflict: boolean
+  destinationConflict: boolean
+  ownershipConflict: boolean
+  intentConflict: boolean
+}> {
   const t = args.transfer
   const id = 'pay_' + randomBytes(9).toString('hex')
-  const inserted = (
-    await query(
-      `INSERT INTO payments (id, intent_id, user_id, chain_id, token, tx_hash, received_by, sender,
-                             raw_amount, decimals, usd_value_micros, price_usd, pool, purpose, memo, status, refusal_code,
-                             state, confirmations, observed_block)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
-       ON CONFLICT (chain_id, tx_hash, token, received_by) DO NOTHING
-       RETURNING id`,
-      [id, args.intent?.id ?? null, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt,
-       t.from, t.raw_amount, t.decimals, args.usdMicros, args.priceUsd ?? null, args.pool ?? null,
-       args.intent?.purpose ?? null, args.intent?.memo ?? null, args.status, args.refusalCode,
-       args.state ?? (args.status === 'recorded' ? 'confirmed' : 'detected'),
-       args.confirmations ?? null, args.observedBlock ?? t.block_number ?? null]
-    )
-  ).rows
+  const requestedIntentId = args.intent?.id ?? null
+  const requestedToKeyId = args.toKeyId ?? args.intent?.api_key_id ?? null
 
-  const duplicate = inserted.length === 0
-  // On a conflict, return the id of the row that already exists. Returning the freshly generated
-  // id matched no row, so every later `UPDATE payments ... WHERE id = $1` silently changed
-  // nothing: the payment stayed in 'confirming' and the credit gate reopened on each retry.
-  let paymentId = inserted[0]?.id ?? id
-  if (duplicate) {
-    const existing = await query(
-      `SELECT id FROM payments
+  return tx(async (q) => {
+    // An exact transfer replay is checked first so it remains idempotent even after its intent
+    // has become paid. A different transfer must claim an open, unexpired, unused intent.
+    let payment = (await q(
+      `SELECT id, user_id, intent_id, to_key_id, state, status, usd_value_micros, chain_id, tx_hash, token, received_by, sender, raw_amount, decimals FROM payments
         WHERE chain_id = $1 AND lower(tx_hash) = lower($2) AND lower(token) = lower($3) AND received_by = $4
-        LIMIT 1`,
+        FOR UPDATE`,
       [t.chain_id, t.tx_hash, t.token, args.receivedAt]
-    )
-    paymentId = existing.rows[0]?.id ?? id
-  }
+    )).rows[0]
+    let duplicate = Boolean(payment)
 
-  if (!duplicate && args.intent?.id && args.status === 'recorded') {
-    await query(`UPDATE payment_intents SET status = 'paid' WHERE id = $1 AND user_id = $2 AND status = 'open'`, [
-      args.intent.id,
-      args.userId,
-    ])
-  }
-  return { paymentId, duplicate, state: args.state ?? null }
+    if (!payment && requestedIntentId) {
+      const intentResult = await q(
+        `SELECT id, api_key_id, status, (expires_at > now()) AS not_expired
+           FROM payment_intents
+          WHERE id = $1 AND user_id = $2
+          FOR UPDATE`,
+        [requestedIntentId, args.userId]
+      )
+      const intentRow = intentResult.rows[0]
+      if (!intentRow) {
+        return {
+          paymentId: '', duplicate: true, state: null,
+          intentId: requestedIntentId, toKeyId: requestedToKeyId,
+          scopeConflict: true, destinationConflict: false,
+          ownershipConflict: false, intentConflict: true,
+        }
+      }
+
+      // Another request may have inserted this exact transfer while we waited for the intent
+      // lock. Allow that exact replay even if the first request has already paid the intent.
+      const concurrentTransfer = (await q(
+        `SELECT id, user_id, intent_id, to_key_id, state, status, usd_value_micros, chain_id, tx_hash, token, received_by, sender, raw_amount, decimals FROM payments
+          WHERE chain_id = $1 AND lower(tx_hash) = lower($2) AND lower(token) = lower($3) AND received_by = $4
+          FOR UPDATE`,
+        [t.chain_id, t.tx_hash, t.token, args.receivedAt]
+      )).rows[0]
+      if (concurrentTransfer) {
+        payment = concurrentTransfer
+        duplicate = true
+      } else {
+        if (
+          intentRow.status !== 'open' ||
+          intentRow.not_expired !== true ||
+          (intentRow.api_key_id ?? null) !== requestedToKeyId
+        ) {
+          return {
+            paymentId: '', duplicate: true, state: null,
+            intentId: requestedIntentId, toKeyId: requestedToKeyId,
+            scopeConflict: false,
+            destinationConflict: (intentRow.api_key_id ?? null) !== requestedToKeyId,
+            ownershipConflict: false, intentConflict: true,
+          }
+        }
+
+        const existingIntentPayment = await q(
+          `SELECT id, user_id, intent_id, to_key_id, state
+             FROM payments
+            WHERE intent_id = $1
+            FOR UPDATE`,
+          [requestedIntentId]
+        )
+        if (existingIntentPayment.rows[0]) {
+          return {
+            paymentId: existingIntentPayment.rows[0].id, duplicate: true,
+            state: existingIntentPayment.rows[0].state ?? null,
+            intentId: existingIntentPayment.rows[0].intent_id ?? null,
+            toKeyId: existingIntentPayment.rows[0].to_key_id ?? null,
+            scopeConflict: false, destinationConflict: false,
+            ownershipConflict: existingIntentPayment.rows[0].user_id !== args.userId,
+            intentConflict: true,
+          }
+        }
+      }
+    }
+
+    if (!payment) {
+      const inserted = await q(
+        `INSERT INTO payments (id, intent_id, to_key_id, user_id, chain_id, token, tx_hash, received_by, sender,
+                               raw_amount, decimals, usd_value_micros, price_usd, pool, purpose, memo, status, refusal_code,
+                               state, confirmations, observed_block)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+         ON CONFLICT DO NOTHING
+         RETURNING id, user_id, intent_id, to_key_id, state`,
+        [id, requestedIntentId, requestedToKeyId, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt,
+         t.from, t.raw_amount, t.decimals, args.usdMicros, args.priceUsd ?? null, args.pool ?? null,
+         args.intent?.purpose ?? null, args.intent?.memo ?? null, args.status, args.refusalCode,
+         args.state ?? (args.status === 'recorded' ? 'confirmed' : 'detected'),
+         args.confirmations ?? null, args.observedBlock ?? t.block_number ?? null]
+      )
+      payment = inserted.rows[0]
+      duplicate = !payment
+      if (!payment) {
+        payment = (await q(
+          `SELECT id, user_id, intent_id, to_key_id, state, status, usd_value_micros, chain_id, tx_hash, token, received_by, sender, raw_amount, decimals FROM payments
+            WHERE chain_id = $1 AND lower(tx_hash) = lower($2) AND lower(token) = lower($3) AND received_by = $4
+            FOR UPDATE`,
+          [t.chain_id, t.tx_hash, t.token, args.receivedAt]
+        )).rows[0]
+        if (!payment && requestedIntentId) {
+          const existingIntentPayment = (await q(
+            `SELECT id, user_id, intent_id, to_key_id, state, status, usd_value_micros, chain_id, tx_hash, token, received_by, sender, raw_amount, decimals FROM payments WHERE intent_id = $1`,
+            [requestedIntentId]
+          )).rows[0]
+          if (existingIntentPayment) {
+            return {
+              paymentId: existingIntentPayment.id, duplicate: true,
+              state: existingIntentPayment.state ?? null,
+              intentId: existingIntentPayment.intent_id ?? null,
+              toKeyId: existingIntentPayment.to_key_id ?? null,
+              scopeConflict: false, destinationConflict: false,
+              ownershipConflict: existingIntentPayment.user_id !== args.userId,
+              intentConflict: true,
+            }
+          }
+        }
+      }
+    }
+
+    if (!payment?.id) throw new Error('Payment claim insert or replay lookup did not return a payment row')
+
+    const intentId = payment.intent_id ?? null
+    const toKeyId = payment.to_key_id ?? null
+    const scopeConflict = intentId !== requestedIntentId
+    const destinationConflict = toKeyId !== requestedToKeyId
+    const ownershipConflict = payment.user_id !== args.userId
+
+    // A transfer may first be observed before finality. Once the exact same verified
+    // transfer reaches the required confirmations, promote that pending row exactly once
+    // and snapshot its final valuation/evidence. Never let a different transfer identity
+    // or a later retry rewrite a previously valued/refused payment.
+    if (!scopeConflict && !destinationConflict && !ownershipConflict &&
+        payment.status === 'pending_confirmations' && payment.state === 'confirming' &&
+        args.status !== 'pending_confirmations') {
+      const sameTransferIdentity =
+        Number(payment.chain_id) === t.chain_id &&
+        String(payment.tx_hash).toLowerCase() === String(t.tx_hash).toLowerCase() &&
+        String(payment.token).toLowerCase() === String(t.token).toLowerCase() &&
+        payment.received_by === args.receivedAt &&
+        String(payment.sender).toLowerCase() === String(t.from).toLowerCase() &&
+        String(payment.raw_amount) === String(t.raw_amount) &&
+        Number(payment.decimals) === t.decimals
+      if (!sameTransferIdentity) {
+        return {
+          paymentId: payment.id, duplicate: true, state: payment.state,
+          intentId, toKeyId, scopeConflict: true, destinationConflict: false,
+          ownershipConflict: false, intentConflict: false,
+        }
+      }
+      const promoted = await q(
+        `UPDATE payments
+            SET status = $2, refusal_code = $3, state = $4, usd_value_micros = $5,
+                price_usd = $6, pool = $7, confirmations = $8, observed_block = $9
+          WHERE id = $1 AND status = 'pending_confirmations' AND state = 'confirming'
+            AND usd_value_micros = 0 AND chain_id = $10
+            AND lower(tx_hash) = lower($11) AND lower(token) = lower($12)
+            AND received_by = $13 AND lower(sender) = lower($14)
+            AND raw_amount = $15 AND decimals = $16
+          RETURNING state, status, usd_value_micros, confirmations, observed_block`
+        , [
+          payment.id, args.status, args.refusalCode,
+          args.state ?? (args.status === 'recorded' ? 'confirmed' : 'detected'),
+          args.usdMicros, args.priceUsd ?? null, args.pool ?? null,
+          args.confirmations ?? null, args.observedBlock ?? t.block_number ?? null,
+          t.chain_id, t.tx_hash, t.token, args.receivedAt, t.from, t.raw_amount, t.decimals,
+        ]
+      )
+      if (!promoted.rows[0]) throw new Error('Pending payment changed before finality promotion')
+      Object.assign(payment, promoted.rows[0])
+    }
+    if (!scopeConflict && !destinationConflict && !ownershipConflict && args.status === 'pending_confirmations') {
+      const existingEvent = await q(
+        `SELECT id FROM payment_events WHERE payment_id = $1 AND kind = 'confirming' LIMIT 1`,
+        [payment.id]
+      )
+      if (!existingEvent.rows[0]) {
+        await q(
+          `INSERT INTO payment_events (id, payment_id, kind, detail)
+           VALUES ($1, $2, 'confirming', $3)`,
+          [
+            'pev_' + randomBytes(9).toString('hex'),
+            payment.id,
+            JSON.stringify({
+              confirmations: args.confirmations ?? null,
+              required: args.requiredConfirmations ?? null,
+              observed_block: args.observedBlock == null ? null : String(args.observedBlock),
+            }),
+          ]
+        )
+      }
+    }
+
+    return {
+      paymentId: payment.id,
+      duplicate,
+      state: payment.state ?? args.state ?? null,
+      intentId,
+      toKeyId,
+      scopeConflict,
+      destinationConflict,
+      ownershipConflict,
+      intentConflict: false,
+    }
+  })
 }
 
-export function registerCreditsRoutes(app: SessionApp): void {
+export type CreditsRouteDependencies = {
+  findIncomingTransfer?: typeof findIncomingTransfer
+  verifyDeposit?: typeof verifyDeposit
+}
+
+export function registerCreditsRoutes(app: SessionApp, dependencies: CreditsRouteDependencies = {}): void {
+  const findTransfer = dependencies.findIncomingTransfer ?? findIncomingTransfer
+  const verifyPayment = dependencies.verifyDeposit ?? verifyDeposit
   // GET /api/credits
   app.get('/api/credits', requireUser, async (c) => {
     const user = c.get('user')!
@@ -303,7 +483,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       if (!intent) return c.json({ error: { message: 'intent not found for this account', type: 'not_found' } }, 404)
     }
     const receivers = platformReceivers()
-    const found = await findIncomingTransfer({ chainId, txHash, receivers })
+    const found = await findTransfer({ chainId, txHash, receivers })
     if (!found.ok) {
       // A transfer we already recorded that is no longer on the chain is a reorg, not a bad claim.
       // It is marked and audited rather than ignored, and a credited one is flagged because its
@@ -353,8 +533,9 @@ export function registerCreditsRoutes(app: SessionApp): void {
         403
       )
     }
-    // Finality gate. Recorded now, credited later: the row exists so a retry can complete the
-    // claim once the transfer is buried deep enough, and a reorg cannot leave money behind.
+    // Finality gate. Recorded now, credited only after the configured depth is met. A later reorg
+    // is marked only when independent canonical evidence exists; a missing receipt alone is retryable
+    // and never triggers an automatic ledger reversal.
     const finality = found.finality
     const receivedAtOf = (transfer: IncomingTransfer) =>
       transfer.to === String(env.platformReceiverAddress || '').toLowerCase()
@@ -368,18 +549,9 @@ export function registerCreditsRoutes(app: SessionApp): void {
       const waiting = await recordPayment({
         intent, userId: c.get('user')!.id, transfer: t, receivedAt: receivedAtOf(t),
         usdMicros: 0, status: 'pending_confirmations', refusalCode: null,
-        state: 'confirming', confirmations: finality.confirmations, observedBlock: finality.observedBlock,
+        state: 'confirming', confirmations: finality.confirmations, requiredConfirmations: finality.required, observedBlock: finality.observedBlock,
       })
-      // The confirming transition is part of the settlement record, so it is written to the audit
-      // log too. Only on the insert: a replay polls this route, and appending the same note on every
-      // poll would bury the real transitions without adding a fact.
-      if (!waiting.duplicate) {
-        await logPaymentEvent(waiting.paymentId, 'confirming', {
-          confirmations: finality.confirmations,
-          required: finality.required,
-          observed_block: finality.observedBlock === null ? null : String(finality.observedBlock),
-        })
-      }
+      const claimConflict = claimConflictResponse(c, waiting); if (claimConflict) return claimConflict
       return c.json(
         {
           accepted: true,
@@ -417,6 +589,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
           // inside the credit gate, so a later retry could credit a deposit we had refused.
           state: 'rejected',
         })
+        const claimConflict = claimConflictResponse(c, refused); if (claimConflict) return claimConflict
         return c.json({
           accepted: false,
           received_at,
@@ -441,6 +614,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
         usdMicros, status: policyDecision.status === 'credited' ? 'recorded' : 'pending_conversion',
         refusalCode: policyDecision.status === 'credited' ? null : policyDecision.status,
       })
+      const claimConflict = claimConflictResponse(c, policyRecord); if (claimConflict) return claimConflict
       // The stored row decides, on a first claim as much as on a retry. Reading the state we just
       // wrote, keyed by the whole uniqueness key, removes the branch that assumed a fresh claim
       // was 'confirmed' and lets a refused or reorged row speak for itself.
@@ -453,7 +627,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
         required: finality.required,
       })
       if (policyChain && policyDecision.status === 'credited' && (policySettle.action === 'credit' || policySettle.action === 'already_credited')) {
-        const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, policyRecord.paymentId, finality, received_at)
+        const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, chainId: t.chain_id, txHash: t.tx_hash, token: t.token, rawAmount: t.raw_amount, decimals: t.decimals }, policyRecord.intentId, policyRecord.toKeyId, policyRecord.paymentId, finality, received_at)
         if (dep.destinationConflict || dep.scopeConflict || dep.ownershipConflict || !dep.settled) {
           return c.json({
             accepted: false,
@@ -496,11 +670,12 @@ export function registerCreditsRoutes(app: SessionApp): void {
             ? 'sponsored_wallet'
             : 'agent_wallet'
     if (!prepared.ok) {
-      await recordPayment({
+      const refused = await recordPayment({
         intent, userId: c.get('user')!.id, transfer: t, receivedAt: received_at,
         usdMicros: 0, status: 'refused', refusalCode: prepared.code,
         state: 'rejected',
       })
+      const claimConflict = claimConflictResponse(c, refused); if (claimConflict) return claimConflict
       return c.json(
         { accepted: false, received_at, verification: { ok: true, ...t }, intent: memoOf(intent), refusal: { code: prepared.code, message: prepared.message } },
         422
@@ -523,8 +698,9 @@ export function registerCreditsRoutes(app: SessionApp): void {
       // How deep the transfer was when we decided, kept rather than discarded: a later question
       // about a credit ("was it final?") is answered from the row, not re-derived from a chain that
       // has moved on.
-      confirmations: finality.confirmations, observedBlock: finality.observedBlock,
+      confirmations: finality.confirmations, requiredConfirmations: finality.required, observedBlock: finality.observedBlock,
     })
+    const claimConflict = claimConflictResponse(c, recorded); if (claimConflict) return claimConflict
 
     // Release credit only for a first-time, tradable payment. creditDeposit is
     // itself idempotent per (chain, tx, token), so a replay cannot double-credit
@@ -560,7 +736,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       required: finality.required,
     })
     if (chainSlug && (settle.action === 'credit' || settle.action === 'already_credited')) {
-      const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null, recorded.paymentId, finality, received_at)
+      const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, chainId: t.chain_id, txHash: t.tx_hash, token: t.token, rawAmount: t.raw_amount, decimals: t.decimals }, recorded.intentId, recorded.toKeyId, recorded.paymentId, finality, received_at)
       if (dep.destinationConflict || dep.scopeConflict || dep.ownershipConflict || !dep.settled) {
         return c.json({
           accepted: false,
@@ -663,7 +839,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
       return c.json({ error: { message: 'tx_hash is required', type: 'validation', code: 'invalid_request' } }, 400)
     }
 
-    const found = await findIncomingTransfer({ chainId: chainConfig.chainId, txHash, receivers })
+    const found = await findTransfer({ chainId: chainConfig.chainId, txHash, receivers })
     if (!found.ok) {
       return c.json({ error: { message: found.message, type: 'billing', code: found.code } }, found.code === 'invalid_tx_hash' ? 400 : 422)
     }
@@ -701,15 +877,10 @@ export function registerCreditsRoutes(app: SessionApp): void {
         refusalCode: null,
         state: 'confirming',
         confirmations: found.finality.confirmations,
+        requiredConfirmations: found.finality.required,
         observedBlock: found.finality.observedBlock,
       })
-      if (!waiting.duplicate) {
-        await logPaymentEvent(waiting.paymentId, 'confirming', {
-          confirmations: found.finality.confirmations,
-          required: found.finality.required,
-          observed_block: found.finality.observedBlock === null ? null : String(found.finality.observedBlock),
-        })
-      }
+      const claimConflict = claimConflictResponse(c, waiting); if (claimConflict) return claimConflict
       return c.json({
         accepted: true,
         credited: false,
@@ -722,10 +893,12 @@ export function registerCreditsRoutes(app: SessionApp): void {
       }, 202)
     }
 
-    const verification = await verifyDeposit({
+    const verification = await verifyPayment({
       chain: chainConfig.id,
       txHash,
       fromWallet: user.wallet,
+      selectedTransfer: transfer,
+      selectedFinality: found.finality,
     })
     if (!verification.ok) {
       return c.json({ error: { message: verification.message, type: 'billing', code: verification.code } }, 422)
@@ -759,7 +932,9 @@ export function registerCreditsRoutes(app: SessionApp): void {
       confirmations: found.finality.confirmations,
       observedBlock: found.finality.observedBlock,
       priceUsd: verification.price_usd ?? null,
+      toKeyId: targetKeyId,
     })
+    const claimConflict = claimConflictResponse(c, payment); if (claimConflict) return claimConflict
 
     if (decision.status !== 'credited') {
       return c.json({
@@ -780,9 +955,10 @@ export function registerCreditsRoutes(app: SessionApp): void {
       payment.paymentId,
       user.id,
       verification.amount_usd_micros,
-      { chain: chainConfig.id, txHash, token: verification.token },
+      { chain: chainConfig.id, chainId: transfer.chain_id, txHash, token: verification.token, rawAmount: transfer.raw_amount, decimals: transfer.decimals },
       {
-        ...(targetKeyId ? { toKeyId: targetKeyId } : {}),
+        toKeyId: payment.toKeyId,
+        intentId: payment.intentId,
         receivedBy: receivedAt,
         confirmations: found.finality.confirmations,
         requiredConfirmations: found.finality.required,
@@ -807,8 +983,8 @@ export function registerCreditsRoutes(app: SessionApp): void {
       credited: settled.credited,
       payment_id: payment.paymentId,
       duplicate: payment.duplicate,
-      loaded_to: targetKeyId ? 'key' : 'account',
-      api_key_id: targetKeyId,
+      loaded_to: payment.toKeyId ? 'key' : 'account',
+      api_key_id: payment.toKeyId,
       key_credit_usd_micros: settled.keyCredit ?? null,
       balance_usd_micros: settled.balance,
       oracle_usd: verification.amount_usd_micros / 1_000_000,

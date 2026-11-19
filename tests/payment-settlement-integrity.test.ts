@@ -1,4 +1,5 @@
 process.env.PGLITE_DIR = 'memory://'
+process.env.PLATFORM_RECEIVER_ADDRESS = '0x' + '2'.repeat(40)
 
 /**
  * Settlement integrity regressions (WO-02 review).
@@ -24,10 +25,11 @@ import { describe, it, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 
-const { migrate, query, one } = await import('../src/db/index.js')
+const { migrate, query, one, tx } = await import('../src/db/index.js')
 const { markCredited, markReorged, paymentStateFor, paymentRowFor } = await import('../src/payments/settle.js')
 const { decideSettlement, finalityVerdict, finalityPolicy } = await import('../src/payments/finality.js')
 const { recordPayment } = await import('../src/routes/credits.js')
+const { verifyDeposit } = await import('../src/payments/verify.js')
 const { creditDeposit, creditPaymentDeposit } = await import('../src/lib/billing.js')
 
 const CHAIN = 8453
@@ -38,6 +40,18 @@ const WALLET = 'agent_wallet'
 
 let owner: any
 let keyId: string
+
+function settlementRef(txHash: string, overrides: Partial<{ chainId: number; token: string; rawAmount: string; decimals: number }> = {}) {
+  return {
+    chain: 'base',
+    chainId: CHAIN,
+    txHash,
+    token: TOKEN,
+    rawAmount: '5000000',
+    decimals: 6,
+    ...overrides,
+  }
+}
 
 function transfer(over: Partial<any> = {}) {
   return {
@@ -105,6 +119,20 @@ describe('settlement integrity', () => {
       columns.rows.map((row: any) => row.column_name).sort(),
       ['payment_id', 'received_by', 'to_key_id'],
     )
+    const destinationMigration = await query(
+      `SELECT version FROM schema_migrations WHERE version = $1`,
+      ['0002_wo02_payment_intent_destination_binding']
+    )
+    assert.equal(destinationMigration.rows.length, 1)
+    const paymentDestinationColumn = await query(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'payments' AND column_name = 'to_key_id'`
+    )
+    assert.equal(paymentDestinationColumn.rows.length, 1)
+    const intentIndex = await query(
+      `SELECT indexname FROM pg_indexes WHERE tablename = 'payments' AND indexname = 'payments_one_claim_per_intent'`
+    )
+    assert.equal(intentIndex.rows.length, 1)
     await migrate()
     const again = await query(
       `SELECT count(*)::int AS n FROM schema_migrations WHERE version = $1`,
@@ -132,6 +160,270 @@ describe('settlement integrity', () => {
     await claim({ tx_hash: '0x' + 'b'.repeat(64) })
     const after = await one(`SELECT count(*)::int AS n FROM payments WHERE user_id = $1`, [owner.id])
     assert.equal(after.n, before.n)
+  })
+
+  it('binds a payment to its original intent and destination until atomic credit', async () => {
+    const intentA = 'pi_' + randomUUID().slice(0, 8)
+    const intentB = 'pi_' + randomUUID().slice(0, 8)
+    await query(
+      `INSERT INTO payment_intents (id, user_id, purpose, expected_usd_micros, api_key_id, expires_at)
+       VALUES ($1, $2, 'api_credits', 5000000, $3, now() + interval '30 minutes')`,
+      [intentA, owner.id, keyId]
+    )
+    await query(
+      `INSERT INTO payment_intents (id, user_id, purpose, expected_usd_micros, expires_at)
+       VALUES ($1, $2, 'api_credits', 5000000, now() + interval '30 minutes')`,
+      [intentB, owner.id]
+    )
+    const txHash = '0x' + 'e1'.repeat(32)
+    const payment = await recordPayment({
+      intent: { id: intentA, api_key_id: keyId },
+      toKeyId: keyId,
+      userId: owner.id,
+      transfer: transfer({ tx_hash: txHash }),
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 12,
+      observedBlock: 100,
+    })
+    assert.equal(payment.toKeyId, keyId)
+    assert.equal(payment.intentId, intentA)
+    const secondTransfer = await recordPayment({
+      intent: { id: intentA, api_key_id: keyId },
+      toKeyId: keyId,
+      userId: owner.id,
+      transfer: transfer({ tx_hash: '0x' + 'e5'.repeat(32) }),
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 12,
+      observedBlock: 100,
+    })
+    assert.equal(secondTransfer.intentConflict, true, 'an open intent may be claimed by only one transfer')
+    const beforeCredit = await one(`SELECT status FROM payment_intents WHERE id = $1`, [intentA])
+    assert.equal(beforeCredit.status, 'open', 'recording a payment must not mark its intent paid before credit commits')
+
+    const replay = await recordPayment({
+      intent: { id: intentB, api_key_id: null },
+      userId: owner.id,
+      transfer: transfer({ tx_hash: txHash }),
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 12,
+      observedBlock: 100,
+    })
+    assert.equal(replay.duplicate, true)
+    assert.equal(replay.scopeConflict, true)
+    assert.equal(replay.destinationConflict, true)
+    assert.equal(replay.ownershipConflict, false)
+
+    const otherUserId = randomUUID()
+    await query(`INSERT INTO users (id, wallet, role) VALUES ($1, $2, 'user')`, [otherUserId, '0x' + '4'.repeat(40)])
+    const crossAccountReplay = await recordPayment({
+      intent: null,
+      userId: otherUserId,
+      transfer: transfer({ tx_hash: txHash }),
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 12,
+      observedBlock: 100,
+    })
+    assert.equal(crossAccountReplay.ownershipConflict, true)
+
+    const wrongDestination = await creditPaymentDeposit(
+      payment.paymentId,
+      owner.id,
+      5_000_000,
+      settlementRef(txHash),
+      { intentId: intentB, toKeyId: null, receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+    )
+    assert.equal(wrongDestination.credited, false)
+    assert.equal(wrongDestination.scopeConflict, true)
+    assert.equal((await one(`SELECT count(*)::int AS n FROM deposits WHERE tx_hash = $1`, [txHash])).n, 0)
+
+    const credited = await creditPaymentDeposit(
+      payment.paymentId,
+      owner.id,
+      5_000_000,
+      settlementRef(txHash),
+      { intentId: intentA, toKeyId: keyId, receivedBy: VAULT, confirmations: 14, requiredConfirmations: 10 },
+    )
+    assert.equal(credited.credited, true)
+    const afterCredit = await one(`SELECT status FROM payment_intents WHERE id = $1`, [intentA])
+    assert.equal(afterCredit.status, 'paid', 'intent settlement commits with the payment credit')
+    const paymentRow = await one(`SELECT confirmations, to_key_id FROM payments WHERE id = $1`, [payment.paymentId])
+    assert.equal(paymentRow.confirmations, 14)
+    assert.equal(paymentRow.to_key_id, keyId)
+
+    const exactReplay = await recordPayment({
+      intent: { id: intentA, api_key_id: keyId },
+      toKeyId: keyId,
+      userId: owner.id,
+      transfer: transfer({ tx_hash: txHash }),
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 14,
+      observedBlock: 100,
+    })
+    assert.equal(exactReplay.duplicate, true)
+    assert.equal(exactReplay.intentConflict, false, 'the exact original transfer remains idempotently replayable')
+
+    const afterPaidNewTransfer = await recordPayment({
+      intent: { id: intentA, api_key_id: keyId },
+      toKeyId: keyId,
+      userId: owner.id,
+      transfer: transfer({ tx_hash: '0x' + 'e6'.repeat(32) }),
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 14,
+      observedBlock: 100,
+    })
+    assert.equal(afterPaidNewTransfer.intentConflict, true, 'a paid intent cannot be reused for a new transfer')
+  })
+
+  it('promotes the same confirming transfer with final valuation once finality is reached', async () => {
+    const txHash = '0x' + 'ea'.repeat(32)
+    const selected = transfer({ tx_hash: txHash })
+    const pending = await recordPayment({
+      intent: null,
+      userId: owner.id,
+      transfer: selected,
+      receivedAt: VAULT,
+      usdMicros: 0,
+      status: 'pending_confirmations',
+      refusalCode: null,
+      state: 'confirming',
+      confirmations: 3,
+      requiredConfirmations: 10,
+      observedBlock: 100,
+    })
+    assert.equal(pending.duplicate, false)
+
+    const promoted = await recordPayment({
+      intent: null,
+      userId: owner.id,
+      transfer: selected,
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 12,
+      requiredConfirmations: 10,
+      observedBlock: 109,
+    })
+    assert.equal(promoted.duplicate, true)
+    assert.equal(promoted.scopeConflict, false)
+    assert.equal(promoted.state, 'confirmed')
+
+    const row = await one(
+      `SELECT status, state, usd_value_micros, confirmations, observed_block
+         FROM payments WHERE id = $1`,
+      [pending.paymentId],
+    )
+    assert.equal(row.status, 'recorded')
+    assert.equal(row.state, 'confirmed')
+    assert.equal(Number(row.usd_value_micros), 5_000_000)
+    assert.equal(row.confirmations, 12)
+    assert.equal(Number(row.observed_block), 109)
+
+    const settled = await creditPaymentDeposit(
+      pending.paymentId,
+      owner.id,
+      5_000_000,
+      settlementRef(txHash),
+      { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+    )
+    assert.equal(settled.credited, true)
+    assert.equal(settled.settled, true)
+  })
+
+  it('writes the confirming audit event with the payment claim', async () => {
+    const txHash = '0x' + 'e2'.repeat(32)
+    const payment = await recordPayment({
+      intent: null,
+      userId: owner.id,
+      transfer: transfer({ tx_hash: txHash }),
+      receivedAt: VAULT,
+      usdMicros: 0,
+      status: 'pending_confirmations',
+      refusalCode: null,
+      state: 'confirming',
+      confirmations: 3,
+      requiredConfirmations: 10,
+      observedBlock: 100,
+    })
+    const events = await eventsFor(payment.paymentId, 'confirming')
+    assert.equal(events.length, 1)
+    assert.equal(events[0].detail.confirmations, 3)
+    assert.equal(events[0].detail.required, 10)
+  })
+
+  it('rolls back the payment claim if its confirming audit event cannot be inserted', async () => {
+    const txHash = '0x' + 'e4'.repeat(32)
+    await query(`CREATE OR REPLACE FUNCTION test_fail_confirming_event() RETURNS trigger AS $test_fail_confirming_event$
+      BEGIN
+        IF NEW.kind = 'confirming' THEN RAISE EXCEPTION 'forced confirming event failure'; END IF;
+        RETURN NEW;
+      END;
+    $test_fail_confirming_event$ LANGUAGE plpgsql`)
+    await query(`CREATE TRIGGER test_fail_confirming_event_trigger
+      BEFORE INSERT ON payment_events FOR EACH ROW EXECUTE FUNCTION test_fail_confirming_event()`)
+    try {
+      await assert.rejects(recordPayment({
+        intent: null,
+        userId: owner.id,
+        transfer: transfer({ tx_hash: txHash }),
+        receivedAt: VAULT,
+        usdMicros: 0,
+        status: 'pending_confirmations',
+        refusalCode: null,
+        state: 'confirming',
+        confirmations: 3,
+        requiredConfirmations: 10,
+        observedBlock: 100,
+      }), /forced confirming event failure/)
+    } finally {
+      await query('DROP TRIGGER IF EXISTS test_fail_confirming_event_trigger ON payment_events')
+      await query('DROP FUNCTION IF EXISTS test_fail_confirming_event()')
+    }
+    const rows = await one(`SELECT count(*)::int AS n FROM payments WHERE tx_hash = $1`, [txHash])
+    assert.equal(rows.n, 0, 'the payment insert must roll back with the failed audit event')
+  })
+
+  it('values the exact transfer selected by the receipt parser without a second chain read', async () => {
+    const txHash = '0x' + 'e3'.repeat(32)
+    const selected = transfer({ tx_hash: txHash, to: '0x' + '2'.repeat(40), token: TOKEN, raw_amount: '5000000', decimals: 6 })
+    const finality = finalityVerdict({ chainId: CHAIN, receiptBlock: 100n, headBlock: 109n, env: { FINALITY_CONFIRMATIONS_BASE: '10' } })
+    const result = await verifyDeposit({
+      chain: 'base',
+      txHash,
+      fromWallet: selected.from,
+      selectedTransfer: selected,
+      selectedFinality: finality,
+    })
+    assert.equal(result.ok, true)
+    if (result.ok) {
+      assert.equal(result.token, TOKEN)
+      assert.equal(result.amount_usd_micros, 5_000_000)
+    }
   })
 
   it('markCredited credits once, promotes the row and its intent, and writes one event', async () => {
@@ -270,6 +562,7 @@ describe('settlement integrity', () => {
 
   it('a key-tagged deposit credits its key once, however often it is claimed', async () => {
     const args = { chain: 'base', txHash: '0x' + '6'.repeat(64), token: TOKEN }
+    const keyBefore = Number((await one(`SELECT credit_usd_micros FROM api_keys WHERE id = $1`, [keyId])).credit_usd_micros)
     const first = await creditDeposit(owner.id, 2_000_000, args, { toKeyId: keyId })
     assert.equal(first.credited, true)
 
@@ -277,7 +570,7 @@ describe('settlement integrity', () => {
     assert.equal(second.credited, false, 'the deposits row is the replay guard')
 
     const key = await one(`SELECT credit_usd_micros FROM api_keys WHERE id = $1`, [keyId])
-    assert.equal(Number(key.credit_usd_micros), 2_000_000, 'the key was loaded exactly once')
+    assert.equal(Number(key.credit_usd_micros), keyBefore + 2_000_000, 'the key was loaded exactly once')
 
     const rows = await one(`SELECT count(*)::int AS n FROM deposits WHERE tx_hash = $1`, [args.txHash])
     assert.equal(rows.n, 1)
@@ -430,7 +723,7 @@ describe('settlement integrity', () => {
     // must not read 'the deposit exists' as 'nothing to do' and leave the row confirmed forever.
     const txHash = '0x' + 'cd'.repeat(32)
     const payment = await claim({ tx_hash: txHash })
-    const args = { chain: 'base', txHash, token: TOKEN }
+    const args = settlementRef(txHash)
 
     const first = await creditDeposit(owner.id, 5_000_000, args)
     assert.equal(first.credited, true)
@@ -452,10 +745,10 @@ describe('settlement integrity', () => {
     const txHash = '0x' + 'ef'.repeat(32)
     await claim({ tx_hash: txHash })
 
-    const theirs = await creditDeposit(other.id, 5_000_000, { chain: 'base', txHash, token: TOKEN })
+    const theirs = await creditDeposit(other.id, 5_000_000, settlementRef(txHash))
     assert.equal(theirs.credited, true)
 
-    const replay = await creditDeposit(owner.id, 5_000_000, { chain: 'base', txHash, token: TOKEN })
+    const replay = await creditDeposit(owner.id, 5_000_000, settlementRef(txHash))
     assert.equal(replay.credited, false)
     assert.equal(replay.existingUserId, other.id)
     assert.notEqual(replay.existingUserId, owner.id, 'the transfer belongs to another account, so it must not settle here')
@@ -487,7 +780,7 @@ describe('settlement integrity', () => {
       payment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(result.credited, true)
@@ -504,7 +797,7 @@ describe('settlement integrity', () => {
       payment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(replay.credited, false)
@@ -522,7 +815,7 @@ describe('settlement integrity', () => {
       payment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(result.credited, false)
@@ -535,12 +828,12 @@ describe('settlement integrity', () => {
 
   it('atomic payment settlement refuses an existing deposit credited to a different destination', async () => {
     const txHash = '0x' + 'b3'.repeat(32)
-    const payment = await claim({ tx_hash: txHash })
+    const payment = await claim({ tx_hash: txHash }, { toKeyId: keyId })
     const first = await creditPaymentDeposit(
       payment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { toKeyId: keyId, receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(first.credited, true)
@@ -549,7 +842,7 @@ describe('settlement integrity', () => {
       payment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(result.credited, false)
@@ -566,7 +859,7 @@ describe('settlement integrity', () => {
       firstPayment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(first.credited, true)
@@ -576,7 +869,7 @@ describe('settlement integrity', () => {
       secondPayment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { receivedBy: WALLET, confirmations: 12, requiredConfirmations: 10 },
     )
     assert.equal(second.credited, false)
@@ -593,7 +886,7 @@ describe('settlement integrity', () => {
       payment.paymentId,
       owner.id,
       5_000_000,
-      { chain: 'base', txHash, token: TOKEN },
+      settlementRef(txHash),
       { receivedBy: VAULT, confirmations: 9, requiredConfirmations: 10 },
     )
     assert.equal(result.credited, false)
@@ -652,6 +945,115 @@ describe('settlement integrity', () => {
     assert.equal(keyReplay.existingToKeyId, keyId)
   })
 
+  it('rejects settlement when any immutable payment identity or stored value differs', async () => {
+    const mismatches: Array<{ name: string; ref?: any; receivedBy?: string; amountMicros?: number }> = [
+      { name: 'chain id', ref: { chainId: CHAIN + 1 } },
+      { name: 'transaction hash', ref: { txHash: '0x' + 'c7'.repeat(32) } },
+      { name: 'token', ref: { token: '0x' + '9'.repeat(40) } },
+      { name: 'raw amount', ref: { rawAmount: '5000001' } },
+      { name: 'decimals', ref: { decimals: 18 } },
+      { name: 'USD value', amountMicros: 4_999_999 },
+      { name: 'receiving wallet', receivedBy: WALLET },
+    ]
+    for (const [index, mismatch] of mismatches.entries()) {
+      const txHash = '0x' + (index + 20).toString(16).padStart(2, '0').repeat(32)
+      const payment = await claim({ tx_hash: txHash })
+      const result = await creditPaymentDeposit(
+        payment.paymentId,
+        owner.id,
+        mismatch.amountMicros ?? 5_000_000,
+        settlementRef(txHash, mismatch.ref),
+        {
+          receivedBy: mismatch.receivedBy ?? VAULT,
+          confirmations: 12,
+          requiredConfirmations: 10,
+        },
+      )
+      assert.equal(result.credited, false, mismatch.name)
+      assert.equal(result.settled, false, mismatch.name)
+      assert.equal(result.scopeConflict, true, mismatch.name)
+      assert.equal(result.reason, 'payment_identity_mismatch', mismatch.name)
+      const deposit = await one(`SELECT count(*)::int AS n FROM deposits WHERE tx_hash = $1`, [txHash])
+      assert.equal(deposit.n, 0, mismatch.name + ': no deposit or credit may be written')
+      const row = await one(`SELECT state FROM payments WHERE id = $1`, [payment.paymentId])
+      assert.equal(row.state, 'confirmed', mismatch.name + ': payment remains unsettled')
+    }
+  })
+
+  it('settlement and competing intent claim use one lock order without deadlock on PostgreSQL', { skip: !process.env.DATABASE_URL }, async () => {
+    const intentId = 'pi_' + randomUUID().slice(0, 8)
+    const txHash = '0x' + 'd8'.repeat(32)
+    const competingTxHash = '0x' + 'd9'.repeat(32)
+    await query(
+      `INSERT INTO payment_intents (id, user_id, purpose, expected_usd_micros, status, expires_at)
+       VALUES ($1, $2, 'api_credits', 5000000, 'open', now() + interval '1 hour')`,
+      [intentId, owner.id],
+    )
+    const payment = await claim({ tx_hash: txHash }, {
+      intent: { id: intentId, api_key_id: null },
+    })
+
+    let releaseBlocker!: () => void
+    let signalLocked!: () => void
+    const lockAcquired = new Promise<void>((resolve) => { signalLocked = resolve })
+    const hold = new Promise<void>((resolve) => { releaseBlocker = resolve })
+    const blocker = tx(async (q) => {
+      await q(`SELECT id FROM payment_intents WHERE id = $1 FOR UPDATE`, [intentId])
+      signalLocked()
+      await hold
+    })
+    await lockAcquired
+
+    const competingClaim = recordPayment({
+      intent: { id: intentId, api_key_id: null },
+      userId: owner.id,
+      transfer: transfer({ tx_hash: competingTxHash }),
+      receivedAt: VAULT,
+      usdMicros: 5_000_000,
+      status: 'recorded',
+      refusalCode: null,
+      state: 'confirmed',
+      confirmations: 12,
+      observedBlock: 100,
+    })
+
+    // Ensure the claim transaction is queued on the intent lock before starting settlement.
+    let queued = false
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const waiting = await one(
+        `SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database()
+            AND wait_event_type = 'Lock'
+            AND query LIKE '%SELECT id, api_key_id, status%'`,
+      )
+      if (waiting.n > 0) { queued = true; break }
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    const settlement = creditPaymentDeposit(
+      payment.paymentId,
+      owner.id,
+      5_000_000,
+      settlementRef(txHash),
+      {
+        intentId,
+        receivedBy: VAULT,
+        confirmations: 12,
+        requiredConfirmations: 10,
+      },
+    )
+    releaseBlocker()
+    await blocker
+    assert.equal(queued, true, 'the competing claim must be waiting on the held intent row')
+    const [settled, claimed] = await Promise.all([settlement, competingClaim])
+    assert.equal(settled.credited, true)
+    assert.equal(settled.settled, true)
+    assert.equal(claimed.intentConflict, true)
+    const intent = await one(`SELECT status FROM payment_intents WHERE id = $1`, [intentId])
+    assert.equal(intent.status, 'paid')
+    const count = await one(`SELECT count(*)::int AS n FROM payments WHERE intent_id = $1`, [intentId])
+    assert.equal(count.n, 1, 'the intent remains bound to exactly one payment')
+  })
+
   it('serializes concurrent credit and reorg transitions on real PostgreSQL', { skip: !process.env.DATABASE_URL }, async () => {
     const txHash = '0x' + 'b6'.repeat(32)
     const payment = await claim({ tx_hash: txHash })
@@ -661,7 +1063,7 @@ describe('settlement integrity', () => {
         payment.paymentId,
         owner.id,
         5_000_000,
-        { chain: 'base', txHash, token: TOKEN },
+        settlementRef(txHash),
         { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
       ),
       markReorged(CHAIN, txHash, { token: TOKEN, received_by: VAULT }),
@@ -682,6 +1084,39 @@ describe('settlement integrity', () => {
       assert.equal(credit.credited, true, 'the credit transaction must have completed before reorg reconciliation')
       assert.equal(deposits.n, 1, 'the credit-first ordering must persist exactly one deposit claim')
     }
+  })
+
+
+  it('serializes concurrent payment credits on real PostgreSQL and records exactly one settlement', async () => {
+    const txHash = '0x' + 'c4'.repeat(32)
+    const payment = await claim({ tx_hash: txHash })
+    const args = {
+      paymentId: payment.paymentId,
+      userId: owner.id,
+      amountMicros: 5_000_000,
+      ref: settlementRef(txHash),
+      opts: { receivedBy: VAULT, confirmations: 12, requiredConfirmations: 10 },
+    }
+
+    const results = await Promise.all([
+      creditPaymentDeposit(args.paymentId, args.userId, args.amountMicros, args.ref, args.opts),
+      creditPaymentDeposit(args.paymentId, args.userId, args.amountMicros, args.ref, args.opts),
+      creditPaymentDeposit(args.paymentId, args.userId, args.amountMicros, args.ref, args.opts),
+    ])
+
+    assert.equal(results.filter((result) => result.credited).length, 1)
+    assert.ok(results.every((result) => result.settled))
+    const deposit = await one(
+      `SELECT count(*)::int AS n FROM deposits WHERE chain = $1 AND tx_hash = $2 AND token = $3 AND payment_id = $4`,
+      ['base', txHash, TOKEN, payment.paymentId],
+    )
+    assert.equal(deposit.n, 1)
+    const ledger = await one(
+      `SELECT count(*)::int AS n FROM ledger WHERE user_id = $1 AND ref = $2`,
+      [owner.id, `base:${txHash}`],
+    )
+    assert.equal(ledger.n, 1)
+    assert.equal((await eventsFor(payment.paymentId, 'credited')).length, 1)
   })
 
 })

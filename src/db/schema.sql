@@ -247,6 +247,7 @@ CREATE INDEX IF NOT EXISTS idx_intents_user_status ON payment_intents(user_id, s
 CREATE TABLE IF NOT EXISTS payments (
   id                text PRIMARY KEY,
   intent_id         text REFERENCES payment_intents(id),
+  to_key_id         text,
   user_id           text,
   chain_id          integer NOT NULL,
   token             text NOT NULL,
@@ -272,6 +273,7 @@ CREATE INDEX IF NOT EXISTS idx_payments_user_time ON payments(user_id, created_a
 -- confirmation columns are the evidence the gate was met. Rows written before this change default
 -- to 'detected', which the settle path will complete on a retry; crediting stays idempotent per
 -- (chain, tx, token) so re-running it cannot double-credit an old deposit.
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS to_key_id text;
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'detected';
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS confirmations integer;
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS observed_block bigint;

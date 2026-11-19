@@ -15,6 +15,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -28,8 +30,15 @@ jobs:
           DATABASE_URL_UNPOOLED: ''
         run: npm test
       - name: No credentials in the diff
+        shell: bash
         run: |
-          if git diff --unified=0 "origin/${{ github.base_ref || 'main' }}...HEAD" | grep -nE '(sk-thirdeye-[A-Za-z0-9]{8,}|sk-(proj|ant)-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,})'; then
+          set -euo pipefail
+          base_ref="${{ github.base_ref || 'main' }}"
+          git fetch --no-tags origin "$base_ref"
+          # Materialize the diff first: a missing base ref must fail the job, not be
+          # mistaken for grep's normal "no matches" exit code.
+          git diff --unified=0 "FETCH_HEAD...HEAD" > "$RUNNER_TEMP/pr.diff"
+          if grep -nE '(sk-thirdeye-[A-Za-z0-9]{8,}|sk-(proj|ant)-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,})' "$RUNNER_TEMP/pr.diff"; then
             echo "::error::A credential-shaped string appears in this diff."; exit 1
           fi
           echo "clean"
