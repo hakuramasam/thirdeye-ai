@@ -7,8 +7,8 @@
  * a roster the pipelines can be held against.
  *
  * Nothing here replaces existing machinery. It composes with it:
- *   - the envelope check runs the existing JSON Schema validator first, then adds the fields the
- *     schema does not carry (src/team/validate.ts stays the schema authority);
+ *   - the envelope check runs the existing JSON Schema validator first, then applies the
+ *     specification's required/recommended-field checks without mutating the task;
  *   - artifact kinds are read from src/agents/artifacts.ts rather than restated, so the registry
  *     cannot drift from the specification without the suite noticing;
  *   - the roster is checked against team/agents/<role>/SKILL.md, the same packs repo_read serves.
@@ -192,9 +192,9 @@ export type EnvelopeResult = { ok: true; warnings: string[] } | { ok: false; err
 /**
  * Validate a task envelope: the existing schema first, then the specification's extra fields.
  *
- * The schema stays the refusal path (a malformed task is refused before money is spent). Fields the
- * specification wants but the schema does not carry are reported as warnings, because refusing a
- * live delegation over a missing correlation id would break work that is otherwise well formed.
+ * The schema stays the structural refusal path (a malformed task is refused before money is spent).
+ * Specification-level required/recommended semantics are then checked without mutating the task;
+ * recommended fields are warnings until the live delegation contract supplies them consistently.
  */
 export function validateOperatingTask(task: unknown): EnvelopeResult {
   const schema = validateTask(task)
