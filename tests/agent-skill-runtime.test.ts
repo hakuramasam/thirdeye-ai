@@ -48,8 +48,8 @@ test('runtime injects the role pack and persists exact skill provenance per run'
   assert.equal(result.skill_version, '2.0.0')
   assert.match(result.skill_sha256 ?? '', /^[a-f0-9]{64}$/)
   const system = seen[0].messages.find((m: any) => m.role === 'system')?.content ?? ''
-  assert.match(system, /Base operator prompt\\./)
-  assert.match(system, /REVIEWED ROLE SKILL PACK: hermes v2\\.0\\.0/)
+  assert.match(system, /Base operator prompt\./)
+  assert.match(system, /REVIEWED ROLE SKILL PACK: hermes v2\.0\.0/)
   const run = await one('SELECT skill_version, skill_sha256 FROM agent_runs WHERE id=$1', [result.runId])
   assert.equal(run.skill_version, result.skill_version)
   assert.equal(run.skill_sha256, result.skill_sha256)
