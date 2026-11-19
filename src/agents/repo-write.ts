@@ -7,15 +7,17 @@
  *      `agent/`-prefixed branch. There is no code path that commits to main.
  *   2. A merge is never performed. The tool opens a pull request and stops. A human or a
  *      green CI run decides what happens next.
- *   3. Paths are allowlisted to source, web, tests, docs, team and CI config. Money paths
- *      (src/payments, src/lib/billing|settle|profit|reconcile|keycredit) are refused outright
- *      even inside the allowlist, because those need a named human's signature.
+ *   3. Paths are allowlisted to source, web, tests, docs, team and CI config, and every path is then
+ *      classified by `src/lib/protectedResources.ts`. Money, auth, secrets, schema, workflows, team
+ *      policy, deployment config and wallet paths need the owner's approval even inside the
+ *      allowlist, because those need a named human's signature rather than an agent's.
  *
  * Every write is capped in file count and bytes, and content is scanned for credential-shaped
  * strings before it leaves the process. A refusal returns an instruction, not an exception, so
  * the agent can correct itself instead of retrying blindly.
  */
 
+import { authorizeWrite, checkPath } from '../lib/protectedResources.js'
 import { env } from '../lib/env.js'
 
 export const WRITE_MAX_FILES = 12
@@ -24,13 +26,6 @@ export const WRITE_MAX_BYTES = 200_000
 /** Directories an agent may touch. Everything else is refused. */
 const ALLOWED_PREFIXES = ['src/', 'web/', 'tests/', 'docs/', 'team/', '.github/']
 
-/** Within the allowlist, these still require a human because they move money or keys. */
-const MONEY_PATHS = [
-  /^src\/payments\//,
-  /^src\/lib\/(billing|settle|reconcile|profit|keycredit|keybudget|creditPolicy)\.ts$/,
-  /^src\/lib\/keys\.ts$/,
-  /^src\/db\/schema\.sql$/,
-]
 
 const DENIED = [
   /(^|\/)\.env(\..*)?$/i,
@@ -42,16 +37,23 @@ const DENIED = [
 ]
 
 export function validateWritePath(raw: unknown): string {
-  const p = String(raw ?? '').trim().replace(/^\.\//, '').replace(/^\/+/, '')
-  if (!p) throw new Error('An empty path is not writable')
-  if (p.includes('..')) throw new Error('Path traversal is not allowed')
-  if (p.includes('\0') || p.length > 300) throw new Error('Invalid path')
+  // Validate the path as given and refuse anything ambiguous. checkPath is the only thing allowed to
+  // touch the string: it strips a single leading './' and returns that exact stripped path, which is
+  // what is authorized here and what is sent to GitHub. Nothing else is trimmed or rewritten, so the
+  // authorized path and the written path cannot diverge.
+  const check = checkPath(raw)
+  if (!check.ok) throw new Error(`Refusing to write ${String(raw ?? '')}: ${check.reason}`)
+  const p = check.path
   if (DENIED.some((re) => re.test(p))) throw new Error(`Refusing to write ${p}: credentials and internals are off limits`)
   if (!ALLOWED_PREFIXES.some((pre) => p.startsWith(pre))) {
     throw new Error(`Refusing to write ${p}: only ${ALLOWED_PREFIXES.join(', ')} are writable`)
   }
-  if (MONEY_PATHS.some((re) => re.test(p))) {
-    throw new Error(`Refusing to write ${p}: money and key paths need a named human's signature, not an agent's`)
+  // The write boundary, and the only place the decision is made. Every protected class lives in one
+  // policy module so a path cannot be writable here merely because nobody remembered to add it to a
+  // second list: the credits route, auth, env, workflows and team policy used to be writable that way.
+  const decision = authorizeWrite(p, { type: 'agent' })
+  if (!decision.allowed) {
+    throw new Error(`Refusing to write ${p}: ${decision.reason}`)
   }
   return p
 }
@@ -103,7 +105,7 @@ export const REPO_WRITE_TOOL = {
   function: {
     name: 'repo_write',
     description:
-      'Propose a change to this project by opening a pull request. You cannot commit to main and cannot merge: the tool creates an agent/<branch>, commits your files, and opens a PR. Writable: src/, web/, tests/, docs/, team/, .github/. Refused: money and billing paths, keys, schema.sql, env files. Include the verification you expect CI to prove in the PR body.',
+      'Propose a change to this project by opening a pull request. You cannot commit to main and cannot merge: the tool creates an agent/<branch>, commits your files, and opens a PR. Writable by an agent: web/, docs/, tests/, ordinary src/lib modules, and the public content routes. Refused by policy: the control plane (src/agents/, src/routes/, src/inngest/, src/index.ts), money and billing paths, auth and session, secrets, schema and migrations, team policy and skill packs, CI workflows, deployment config, wallet and contract paths. Refusals are enforced in code, not by this description. Include the verification you expect CI to prove in the PR body.',
     parameters: {
       type: 'object',
       properties: {
@@ -170,7 +172,11 @@ export async function runRepoWrite(args: Record<string, any>, override: Cfg = {}
       body: JSON.stringify({ ref: `refs/heads/${branch}`, sha }),
     })
     for (const f of files) {
-      await gh(`/repos/${repo}/contents/${encodeURI(f.path)}`, {
+      // Encode one segment at a time. validateWritePath has already refused dot segments, query and
+      // fragment delimiters, encoded bytes and repeated slashes, so the path GitHub resolves is the
+      // exact path that was authorized: no URL normalization can move the write to another file.
+      const contentsPath = f.path.split('/').map(encodeURIComponent).join('/')
+      await gh(`/repos/${repo}/contents/${contentsPath}`, {
         method: 'PUT',
         token,
         body: JSON.stringify({
