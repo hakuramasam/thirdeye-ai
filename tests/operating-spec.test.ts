@@ -61,8 +61,12 @@ test('the machine contract and the document are the same specification', () => {
   assert.equal(SPEC_VERSION, '1.0')
   assert.ok(DOC.length > 20000, 'the document should hold the whole directive, not a summary')
 
-  // Every enumerated rule in the contract has to appear in the prose the team is told to read,
-  // otherwise one of the two has been edited alone.
+  // These assertions cover selected enumerated invariants and mappings. They do not claim full
+  // semantic equivalence between the prose and the machine-readable subset.
+  for (const role of SPEC.roles) {
+    assert.ok(DOC.includes(role.agent), `role identity ${role.agent} is missing from the document`)
+    assert.ok(DOC.includes(role.produces), `role output kind ${role.produces} is missing from the document`)
+  }
   for (const stage of STAGES) assert.ok(DOC.includes(stage), `lifecycle stage ${stage} is missing from the document`)
   for (const state of EXCEPTIONS) assert.ok(DOC.includes(state), `exception state ${state} is missing from the document`)
   for (const category of SPEC.categories) assert.ok(DOC.includes(category), `category ${category} is missing from the document`)
