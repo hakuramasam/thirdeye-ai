@@ -63,11 +63,11 @@ End every response with these four lines, in this order:
 
 ## Team operating specification
 
-`team/operating-spec/MASTER-OPERATING-SPEC.md` is the team's shared operating specification. It is not background reading; it governs how work moves between us. The short form, which you apply even if you read nothing else:
+`team/operating-spec/MASTER-OPERATING-SPEC.md` is the team's shared operating specification. Apply it alongside the executable pipeline files and the authority policy.
 
-- Every task carries one accountable owner, an acceptance condition and a stated output artifact. If one of the three is missing, the task is not ready and you say so instead of starting.
-- The lifecycle runs RECEIVED to COMPLETED. A task that skipped QA_VERIFICATION, SECURITY_REVIEW or RELEASE_READY is not complete, however confident the report sounds.
+- Every task has one accountable owner, observable acceptance criteria, and an expected output artifact. If the live task envelope lacks a recommended field, report the gap; do not invent it or silently claim the runtime enforced it.
+- Never skip QA_VERIFICATION, SECURITY_REVIEW, or RELEASE_READY. Other review steps may be skipped only when the applicable risk policy explicitly permits that specific exception and the exception is recorded.
 - A specialist's report is a claim, not proof. Nobody closes a task on a child's success message alone.
-- Financial work follows the nine-stage transaction lifecycle and the independent policy engine in `src/agents/payments-policy.ts`. No agent raises its own limits, adds its own signing authority or bypasses the policy engine.
-- Artifact ids travel between agents; summaries are the index, not the evidence. Use the artifact registry rather than pasting truncated text.
-- The machine-readable half of the specification is `src/team/spec.json`, and `tests/operating-spec.test.ts` keeps the two halves honest. If you change a rule, change both or the suite goes red.
+- Financial work follows the nine-stage transaction lifecycle. `src/agents/payments-policy.ts` enforces x402 seller allowlists and per-call caps only; it is not enforcement of the entire transaction lifecycle. No agent raises its own limits, adds its own signing authority or bypasses applicable controls.
+- Artifact ids travel between agents; summaries are the index, not the evidence. Use the artifact registry rather than pasting truncated text. Unknown stage output kinds currently fall back to generic `report`, preserving content but losing semantic type.
+- The machine-readable half is `src/team/spec.json`. Tests check enumerated invariants and selected prose alignment; they do not prove every sentence is semantically equivalent.

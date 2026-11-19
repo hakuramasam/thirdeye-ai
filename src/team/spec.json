@@ -47,7 +47,7 @@
       "pack": "team/agents/blockchain/SKILL.md",
       "produces": "report",
       "creates_if_missing": true,
-      "mapped_not_created": "The specification names a wallet and finance specialist. tdt_blockchain is the registered identity that already holds wallet, EVM, settlement and transaction-policy responsibility, so the role maps onto it instead of creating a competing agent."
+      "mapped_not_created": "The specification names a wallet and finance specialist. tdt_blockchain is the registered identity that already holds wallet and EVM responsibility, so the role maps onto it instead of creating a competing agent."
     },
     {
       "role": "data",
@@ -55,7 +55,7 @@
       "pack": "team/agents/intelligence/SKILL.md",
       "produces": "report",
       "creates_if_missing": true,
-      "mapped_not_created": "The specification names a data intelligence specialist. tdt_intelligence already owns provider research, market data, provenance and validation, so the role maps onto it."
+      "mapped_not_created": "The specification names a data intelligence specialist. tdt_intelligence is the registered identity for research, market data, provenance and validation, so the role maps onto it."
     },
     {
       "role": "qa",
@@ -172,7 +172,7 @@
     "backward_move_is": "REWORK"
   },
   "task_status_to_stage": {
-    "queued": "QUEUED_INTAKE",
+    "queued": "RECEIVED",
     "assigned": "ASSIGNED",
     "in_progress": "IN_PROGRESS",
     "blocked": "BLOCKED",
@@ -181,7 +181,7 @@
     "failed": "REWORK",
     "cancelled": "CANCELLED"
   },
-  "status_map_note": "The stored agent task schema keeps its eight coarse statuses. QUEUED_INTAKE stands for RECEIVED..PLANNED, because the database does not yet distinguish them; the lifecycle refinement is tracked in code, not faked in the status column.",
+  "status_map_note": "The stored agent task schema keeps its eight coarse statuses. queued projects to RECEIVED as the earliest truthful lifecycle stage; later intake stages remain distinguishable only in the audit trail.",
   "envelope": {
     "fields": [
       "task_id",
@@ -197,6 +197,7 @@
       "accountable_agent",
       "supporting_agents",
       "input_artifacts",
+      "output_expectations",
       "acceptance_criteria",
       "out_of_scope",
       "dependencies",
@@ -231,9 +232,11 @@
       "risk_level",
       "permission_scopes",
       "budget_limit",
-      "out_of_scope"
+      "out_of_scope",
+      "dependencies",
+      "output_expectations"
     ],
-    "recommended_note": "Reported as warnings, not refusals. The delegation path in src/agents/runner.ts populates the required set today, and requiring the recommended set would refuse live delegations that are otherwise well formed."
+    "recommended_note": "Reported as warnings, not refusals. The live delegation path does not yet populate all recommended envelope fields; do not claim they are runtime-enforced until the delegation contract supplies and validates them."
   },
   "artifacts": {
     "kinds": [
@@ -280,7 +283,7 @@
       "RECONCILIATION"
     ],
     "owner_agent": "tdt_blockchain",
-    "independent_authority": "src/agents/payments-policy.ts",
+    "independent_authority": "src/agents/payments-policy.ts (x402 seller allowlisting and per-call caps only; not the complete transaction lifecycle)",
     "forbids": [
       "changing its own financial limits",
       "adding its own signing authority",
@@ -325,6 +328,7 @@
       "build": "IN_PROGRESS",
       "verify": "QA_VERIFICATION",
       "security_review": "SECURITY_REVIEW",
+      "release_readiness": "RELEASE_READY",
       "release": "RELEASED",
       "document": "DOCUMENTED",
       "intake": "TRIAGED",
@@ -343,7 +347,7 @@
           "containment",
           "postmortem"
         ],
-        "problem": "These three declare a produced artifact that the registry does not accept, so a handoff from those stages has no kind to store. Recorded here rather than silently tolerated; fixing it means either widening ARTIFACT_KINDS or renaming the three stage outputs, and either way this entry comes out."
+        "problem": "These stage outputs are not registered artifact kinds; kindForStage currently falls back to generic report, preserving content but losing its declared semantic kind. Fix by registering the kinds or renaming stage outputs, then remove this known-gap entry."
       }
     ]
   },

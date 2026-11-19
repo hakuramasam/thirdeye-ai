@@ -7,8 +7,8 @@
  * a roster the pipelines can be held against.
  *
  * Nothing here replaces existing machinery. It composes with it:
- *   - the envelope check runs the existing JSON Schema validator first, then adds the fields the
- *     schema does not carry (src/team/validate.ts stays the schema authority);
+ *   - the envelope check runs the existing JSON Schema validator first, then applies the
+ *     specification's required/recommended-field checks without mutating the task;
  *   - artifact kinds are read from src/agents/artifacts.ts rather than restated, so the registry
  *     cannot drift from the specification without the suite noticing;
  *   - the roster is checked against team/agents/<role>/SKILL.md, the same packs repo_read serves.
@@ -112,18 +112,17 @@ export const nextStage = (stage: string): string | null => {
 
 export type TransitionCheck =
   | { ok: true; rework: boolean; skippedGates: string[] }
-  | { ok: false; errors: string[] }
+  | { ok: false; errors: string[]; skippedGates?: string[] }
 
 /**
  * Can a task move from one lifecycle stage to another?
  *
- * Forward moves are fine, and the gates a move jumps over are reported rather than hidden, because
- * the specification allows skipping a review stage only when risk policy says so and never allows
- * skipping QA, security or release readiness. A backward move is legal but it is REWORK by
- * definition, and an exception state can be entered from anywhere and left for any stage.
+ * Forward moves are accepted only when they do not jump mandatory QA, security or release-readiness
+ * gates. Skipped gates are included in refusals so a caller cannot mistake a blocked transition for
+ * permission. A backward move is REWORK. An exception state can be entered from any stage, but
+ * recovery must resume before any mandatory gate that has not yet been evidenced.
  */
 export function checkTransition(from: string, to: string): TransitionCheck {
-  if (from === to) return { ok: true, rework: false, skippedGates: [] }
   const fromIdx = stageIndex(from)
   const toIdx = stageIndex(to)
   const fromIsException = isException(from)
@@ -131,14 +130,24 @@ export function checkTransition(from: string, to: string): TransitionCheck {
 
   if (fromIdx === -1 && !fromIsException) return { ok: false, errors: [`unknown lifecycle stage: ${from}`] }
   if (toIdx === -1 && !toIsException) return { ok: false, errors: [`unknown lifecycle stage: ${to}`] }
+  if (from === to) return { ok: true, rework: false, skippedGates: [] }
 
   if (toIsException) return { ok: true, rework: to === 'REWORK', skippedGates: [] }
-  if (fromIsException) return { ok: true, rework: from === 'REWORK', skippedGates: [] }
+  if (fromIsException) {
+    const skippedGates = GATES.filter((g) => stageIndex(g) < toIdx)
+    if (skippedGates.length) {
+      return { ok: false, errors: [`cannot resume at ${to} while mandatory gates remain unproven: ${skippedGates.join(', ')}`], skippedGates }
+    }
+    return { ok: true, rework: from === 'REWORK', skippedGates }
+  }
   if (fromIdx < toIdx) {
     const skippedGates = GATES.filter((g) => {
       const gi = stageIndex(g)
       return gi > fromIdx && gi < toIdx
     })
+    if (skippedGates.length) {
+      return { ok: false, errors: [`cannot skip mandatory lifecycle gates: ${skippedGates.join(', ')}`], skippedGates }
+    }
     return { ok: true, rework: false, skippedGates }
   }
   return { ok: true, rework: true, skippedGates: [] }
@@ -146,7 +155,7 @@ export function checkTransition(from: string, to: string): TransitionCheck {
 
 /** The stored status is coarse; the lifecycle is fine. This is the honest projection between them. */
 export function stageForTaskStatus(status: string): string | undefined {
-  return SPEC.task_status_to_stage[status]
+  return Object.prototype.hasOwnProperty.call(SPEC.task_status_to_stage, status) ? SPEC.task_status_to_stage[status] : undefined
 }
 
 /** P0 is the only priority whose stored equivalent is `critical`; the mapping is data, not a guess. */
@@ -159,7 +168,7 @@ export function blocksRelease(severities: string[]): boolean {
 }
 
 export function artifactKindAllowed(kind: string): boolean {
-  return SPEC.artifacts.kinds.includes(String(kind).toLowerCase())
+  return ARTIFACT_KINDS.includes(String(kind ?? '').trim().toLowerCase() as (typeof ARTIFACT_KINDS)[number])
 }
 
 /** The artifact registry is the runtime truth; the specification must not restate it differently. */
@@ -170,12 +179,12 @@ export function artifactKindsAgree(): boolean {
 }
 
 export function pipelineForCategory(category: string): string | undefined {
-  return SPEC.pipelines.by_category[category]
+  return Object.prototype.hasOwnProperty.call(SPEC.pipelines.by_category, category) ? SPEC.pipelines.by_category[category] : undefined
 }
 
 /** Lifecycle stage a pipeline stage corresponds to, so a run can be projected onto the chain. */
 export function stageForPipelineStage(pipelineStageId: string): string | undefined {
-  return SPEC.pipelines.stage_lifecycle[pipelineStageId]
+  return Object.prototype.hasOwnProperty.call(SPEC.pipelines.stage_lifecycle, pipelineStageId) ? SPEC.pipelines.stage_lifecycle[pipelineStageId] : undefined
 }
 
 export type EnvelopeResult = { ok: true; warnings: string[] } | { ok: false; errors: string[] }
@@ -183,9 +192,9 @@ export type EnvelopeResult = { ok: true; warnings: string[] } | { ok: false; err
 /**
  * Validate a task envelope: the existing schema first, then the specification's extra fields.
  *
- * The schema stays the refusal path (a malformed task is refused before money is spent). Fields the
- * specification wants but the schema does not carry are reported as warnings, because refusing a
- * live delegation over a missing correlation id would break work that is otherwise well formed.
+ * The schema stays the structural refusal path (a malformed task is refused before money is spent).
+ * Specification-level required/recommended semantics are then checked without mutating the task;
+ * recommended fields are warnings until the live delegation contract supplies them consistently.
  */
 export function validateOperatingTask(task: unknown): EnvelopeResult {
   const schema = validateTask(task)

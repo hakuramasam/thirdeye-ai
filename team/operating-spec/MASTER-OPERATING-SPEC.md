@@ -4,9 +4,9 @@ This is the team's single operating specification. Read it before planning any t
 Provenance
   source   : owner directive supplied 2026-11-15 by Hakurama Sam
   version  : 1.0
-  body     : reproduced verbatim below, no edits
-  contract : the machine-readable half of this document is src/team/spec.json, enforced by
-             tests/operating-spec.test.ts
+  body     : owner directive preserved; operational clarifications are versioned in this file
+  contract : src/team/spec.json is a machine-checkable subset; tests/operating-spec.test.ts
+             checks enumerated invariants and selected mappings, not full semantic equivalence
   extends  : team/pipelines/{feature,bugfix,incident}.pipeline.json, src/agents/runner.ts,
              src/agents/pipeline.ts, src/agents/audit-log.ts, src/agents/artifacts.ts,
              src/agents/monitor.ts, src/team/validate.ts, src/team/spec.ts
@@ -46,10 +46,10 @@ Every task must have:
 - Clear acceptance criteria.
 - A priority.
 - A task category.
-- Required permissions.
-- Dependencies.
-- A budget and execution limit.
-- A defined output artifact.
+- Required permissions where applicable.
+- Dependencies where applicable.
+- A budget and execution limit where applicable.
+- A defined output artifact (`output_expectations`).
 - An auditable execution history.
 
 HERMES is responsible for the complete task lifecycle and final coordination.
@@ -172,9 +172,9 @@ frontend implementation and test evidence.
 
 F. Wallet and Finance Specialist
 
-Role: tdt_wallet
+Role: tdt_blockchain
 
-Create this role if it does not exist.
+This responsibility maps to the existing blockchain specialist; do not create a duplicate agent.
 
 Responsibilities:
 
@@ -200,9 +200,9 @@ financial design, implementation proposal, transaction evidence or reconciliatio
 
 G. Data Intelligence Specialist
 
-Role: tdt_data
+Role: tdt_intelligence
 
-Create this role if it does not exist.
+This responsibility maps to the existing intelligence specialist; do not create a duplicate agent.
 
 Responsibilities:
 
@@ -314,7 +314,7 @@ Documentation must distinguish implemented, tested, deployed and planned functio
 
 Required output:
 
-documentation artifact.
+`changelog_entry` artifact.
 
 3. TASK INTAKE AND CLASSIFICATION
 
@@ -379,6 +379,7 @@ Use the following logical fields:
 - accountable_agent
 - supporting_agents
 - input_artifacts
+- output_expectations
 - acceptance_criteria
 - out_of_scope
 - dependencies
@@ -391,7 +392,7 @@ Use the following logical fields:
 - created_at
 - updated_at
 
-The task must include enough context for a specialist to work without relying on the original chat transcript.
+The task must include enough context for a specialist to work without relying on the original chat transcript. The current runtime schema requires the core task identity, owner, status, priority, objective and acceptance criteria. Category, correlation_id, permissions, dependencies, budget, out-of-scope and output expectations are recommended envelope fields until the live delegation path supplies them consistently; `validateOperatingTask` reports missing recommended fields as warnings rather than claiming they are enforced.
 
 Use the existing JSON Schema validation system in src/team/validate.ts.
 
