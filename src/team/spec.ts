@@ -117,10 +117,10 @@ export type TransitionCheck =
 /**
  * Can a task move from one lifecycle stage to another?
  *
- * Forward moves are fine, and the gates a move jumps over are reported rather than hidden, because
- * the specification allows skipping a review stage only when risk policy says so and never allows
- * skipping QA, security or release readiness. A backward move is legal but it is REWORK by
- * definition, and an exception state can be entered from anywhere and left for any stage.
+ * Forward moves are accepted only when they do not jump mandatory QA, security or release-readiness
+ * gates. Skipped gates are included in refusals so a caller cannot mistake a blocked transition for
+ * permission. A backward move is REWORK. An exception state can be entered from any stage, but
+ * recovery must resume before any mandatory gate that has not yet been evidenced.
  */
 export function checkTransition(from: string, to: string): TransitionCheck {
   const fromIdx = stageIndex(from)
