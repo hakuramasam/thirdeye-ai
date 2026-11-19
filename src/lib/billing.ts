@@ -115,7 +115,7 @@ export async function creditPaymentDeposit(
   paymentId: string,
   userId: string,
   amountMicros: number,
-  ref: { chain: string; txHash: string; token: string },
+  ref: { chain: string; chainId: number; txHash: string; token: string; rawAmount: string; decimals: number },
   opts: { toKeyId?: string | null; intentId?: string | null; receivedBy: string; confirmations: number; requiredConfirmations: number }
 ): Promise<{
   credited: boolean
@@ -141,9 +141,43 @@ export async function creditPaymentDeposit(
     }
   }
 
+  if (!Number.isSafeInteger(ref.chainId) || ref.chainId <= 0 ||
+      !/^\\d+$/.test(ref.rawAmount) || BigInt(ref.rawAmount) <= 0n ||
+      !Number.isSafeInteger(ref.decimals) || ref.decimals < 0 || ref.decimals > 36) {
+    throw new Error('A payment settlement requires a complete verified transfer identity')
+  }
+
   return tx(async (q) => {
+    // Global lock order for intent-bound settlements is payment_intents -> payments.
+    // Read the immutable intent pointer without locking, lock the intent first, then lock
+    // and revalidate the payment row. recordPayment uses the same order when claiming
+    // a different transfer against an intent.
+    const pointer = await q(
+      `SELECT intent_id FROM payments WHERE id = $1 AND user_id = $2`,
+      [paymentId, userId]
+    )
+    if (!pointer.rows[0]) {
+      return {
+        credited: false, settled: false, state: null, reconciliation: false,
+        destinationConflict: false, scopeConflict: false, ownershipConflict: false,
+        reason: 'payment_not_found', balance: 0,
+      }
+    }
+    const pointedIntentId = pointer.rows[0].intent_id ?? null
+    let lockedIntent: any = null
+    if (pointedIntentId) {
+      const intentLock = await q(
+        `SELECT id, status FROM payment_intents
+          WHERE id = $1 AND user_id = $2
+          FOR UPDATE`,
+        [pointedIntentId, userId]
+      )
+      lockedIntent = intentLock.rows[0] ?? null
+    }
+
     const paymentResult = await q(
-      `SELECT id, user_id, state, status, intent_id, to_key_id
+      `SELECT id, user_id, state, status, intent_id, to_key_id,
+              chain_id, tx_hash, token, received_by, raw_amount, decimals, usd_value_micros
          FROM payments
         WHERE id = $1 AND user_id = $2
         FOR UPDATE`,
@@ -169,6 +203,28 @@ export async function creditPaymentDeposit(
 
     const storedIntentId = payment.intent_id ?? null
     const storedToKeyId = payment.to_key_id ?? null
+    if (storedIntentId !== pointedIntentId) {
+      return {
+        credited: false, settled: false, state: payment.state, reconciliation: false,
+        destinationConflict: false, scopeConflict: true, ownershipConflict: false,
+        reason: 'payment_intent_changed_during_settlement', balance: 0,
+      }
+    }
+    const identityMatches =
+      Number(payment.chain_id) === ref.chainId &&
+      String(payment.tx_hash).toLowerCase() === ref.txHash.toLowerCase() &&
+      String(payment.token).toLowerCase() === ref.token.toLowerCase() &&
+      payment.received_by === opts.receivedBy &&
+      String(payment.raw_amount) === ref.rawAmount &&
+      Number(payment.decimals) === ref.decimals &&
+      String(payment.usd_value_micros) === String(amountMicros)
+    if (!identityMatches) {
+      return {
+        credited: false, settled: false, state: payment.state, reconciliation: false,
+        destinationConflict: false, scopeConflict: true, ownershipConflict: false,
+        reason: 'payment_identity_mismatch', balance: 0,
+      }
+    }
     if (storedIntentId !== (opts.intentId ?? null)) {
       return {
         credited: false, settled: false, state: payment.state, reconciliation: false,
@@ -220,13 +276,7 @@ export async function creditPaymentDeposit(
     }
 
     if (storedIntentId) {
-      const intentResult = await q(
-        `SELECT id, status FROM payment_intents
-          WHERE id = $1 AND user_id = $2
-          FOR UPDATE`,
-        [storedIntentId, userId]
-      )
-      if (!intentResult.rows[0] || intentResult.rows[0].status !== 'open') {
+      if (!lockedIntent || lockedIntent.status !== 'open') {
         return {
           credited: false, settled: false, state: payment.state, reconciliation: false,
           destinationConflict: false, scopeConflict: true, ownershipConflict: false,
