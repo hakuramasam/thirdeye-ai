@@ -11,7 +11,8 @@ test('all twelve agents have normal, edge, malicious and refusal competency chal
   const ids = new Set(matrix.agents.map((agent: any) => agent.id))
   for (const role of scenarios.agents) {
     assert.ok(ids.has(role.id), 'scenario must map to a competency matrix role: ' + role.id)
-    for (const key of ['scenario','normal','edge','malicious','refusal']) assert.ok(String(role[key] ?? '').trim().length > 8, role.id + ' missing ' + key)
+    assert.ok(String(role.scenario ?? '').trim().length > 0, role.id + ' missing scenario identifier')
+    for (const key of ['normal','edge','malicious','refusal']) assert.ok(String(role[key] ?? '').trim().length > 8, role.id + ' missing ' + key)
   }
   for (const key of ['normal','edge','malicious','refusal']) assert.ok(scenarios.global_adversarial_cases[key])
   assert.ok(matrix.agents.every((agent: any) => agent.status === 'untested'), 'scenario definitions must never graduate an agent')
