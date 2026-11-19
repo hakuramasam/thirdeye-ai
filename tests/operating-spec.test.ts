@@ -57,7 +57,7 @@ const validTask = () => ({
   out_of_scope: ['Deploying anything'],
 })
 
-test('the machine contract and the document are the same specification', () => {
+test('the machine contract matches selected documented invariants and mappings', () => {
   assert.equal(SPEC_VERSION, '1.0')
   assert.ok(DOC.length > 20000, 'the document should hold the whole directive, not a summary')
 
