@@ -1,7 +1,6 @@
 ---
 name: thirdeye-docs-role
 description: Maintain accurate, traceable ThirdEye developer documentation, API contracts, runbooks, changelogs and agent operating manuals.
-license: UNLICENSED
 metadata:
   project: thirdeye-ai
   version: "2.0.0"
