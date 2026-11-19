@@ -17,8 +17,8 @@ production that is not owner-approved.
 | --- | --- | --- |
 | Pipeline | `team/pipelines/<id>.pipeline.json` | new |
 | Stage | A stage with an owning agent and a gate | new |
-| Job runner | The agent runner (`runAgent`) | exists, no stage awareness |
-| Artifacts passed between jobs | `produces` / `consumes` pairs | declared, not enforced at runtime |
+| Job runner | The agent runner (`runAgent`) | enforces next-stage ownership/order when a pipeline is declared |
+| Artifacts passed between jobs | `produces` / `consumes` pairs plus `agent_artifacts` | addressable storage exists; semantic gaps are listed below |
 | `needs:` / DAG | `consumes` ordering, checked by test | declared |
 | `rules:` / `only:` | Pipeline `trigger`, plus HERMES intake | partial |
 | Environments | `none`, `preview`, `production` per stage | declared |
@@ -43,12 +43,7 @@ requires Sam rather than HERMES, which makes continuous *delivery* our model and
 
 ## What is still missing, honestly
 
-The pipelines are declared but not yet enforced by the runner, so nothing stops a run from
-skiping a stage today; enforcement is the next piece of work. Artifacts are passed as text in
-the delegation report rather than stored and addressable, so a long pipeline loses fidelity at
-each hop. And the check that would make `verify` trustworthy still cannot be installed because
-of the GitHub token's missing workflow scope. Until that lands, `verify` rests on a human
-reading a diff, which is exactly what a gate is supposed to replace.
+For a declared pipeline, the runner uses the planner to enforce next-stage order, ownership and dependency completion during model-selected delegation. A caller-pinned stage is treated as the caller's responsibility, so the pinned stage must itself be derived from the planner and the audit trail must be checked. Artifacts are addressable in `agent_artifacts`, but the incident outputs listed below currently fall back to generic `report`. CI dispatch from the agent runtime remains unavailable until its GitHub credential has Actions write scope; the workflow's own PR and push triggers still run normally.
 
 
 ## Relationship to the operating specification
@@ -74,4 +69,4 @@ Two mappings worth stating explicitly, because they are judgement calls rather t
 
 Known gap recorded by the suite: the incident pipeline declares `incident_timeline`, `containment` and `postmortem`, which are not registered artifact kinds. `kindForStage` currently falls back to generic `report`, so content is stored but its declared semantic type is lost. Fix by registering the kinds or renaming stage outputs, then remove the matching `SPEC.pipelines.known_gaps` entry.
 
-The task schema (`src/team/schemas/task.schema.json`) was widened additively with the envelope fields the specification requires: `correlation_id`, `requester`, `source_reference`, `category`, `affected_capability`, `supporting_agents`, `out_of_scope`, `permission_scopes`, `budget_limit`. All are optional, so a task that validated before still validates.
+The task schema (`src/team/schemas/task.schema.json`) was widened additively with recommended envelope fields: `correlation_id`, `requester`, `source_reference`, `category`, `affected_capability`, `supporting_agents`, `out_of_scope`, `permission_scopes`, `budget_limit`. All are optional, so a task that validated before still validates.
