@@ -233,9 +233,10 @@
       "permission_scopes",
       "budget_limit",
       "out_of_scope",
-      "dependencies"
+      "dependencies",
+      "output_expectations"
     ],
-    "recommended_note": "Reported as warnings, not refusals. The delegation path in src/agents/runner.ts populates the required set today, and requiring the recommended set would refuse live delegations that are otherwise well formed."
+    "recommended_note": "Reported as warnings, not refusals. The live delegation path does not yet populate all recommended envelope fields; do not claim they are runtime-enforced until the delegation contract supplies and validates them."
   },
   "artifacts": {
     "kinds": [
@@ -346,7 +347,7 @@
           "containment",
           "postmortem"
         ],
-        "problem": "These three declare a produced artifact that the registry does not accept, so a handoff from those stages has no kind to store. Recorded here rather than silently tolerated; fixing it means either widening ARTIFACT_KINDS or renaming the three stage outputs, and either way this entry comes out."
+        "problem": "These stage outputs are not registered artifact kinds; kindForStage currently falls back to generic report, preserving content but losing its declared semantic kind. Fix by registering the kinds or renaming stage outputs, then remove this known-gap entry."
       }
     ]
   },
