@@ -136,6 +136,64 @@
     },
     "idempotency_key": {
       "type": "string"
+    },
+    "correlation_id": {
+      "type": "string",
+      "description": "Ties the task to its parent run and audit trail (operating specification 15)."
+    },
+    "requester": {
+      "type": "string",
+      "description": "Who asked for the work: an agent id, or owner."
+    },
+    "source_reference": {
+      "type": "string",
+      "description": "Issue, message, alert or artifact the task came from."
+    },
+    "category": {
+      "enum": [
+        "feature",
+        "bugfix",
+        "security",
+        "incident",
+        "research",
+        "architecture",
+        "infrastructure",
+        "wallet_operation",
+        "financial_reconciliation",
+        "data_intelligence",
+        "commercial",
+        "documentation",
+        "maintenance"
+      ],
+      "description": "Operating specification 3 job category."
+    },
+    "affected_capability": {
+      "type": "string"
+    },
+    "supporting_agents": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "out_of_scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "permission_scopes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "budget_limit": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Micro-dollar execution cap for this task."
     }
   }
 }
