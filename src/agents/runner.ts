@@ -18,6 +18,10 @@ import { emitAgentRunSpan, traceIdFrom, spanIdFrom } from '../telemetry/langfuse
 import { paidFetch } from './x402.js'
 import { REPO_TOOL, runRepoTool, hasRepoAccess } from './repo-tools.js'
 import { REPO_WRITE_TOOL, runRepoWrite } from './repo-write.js'
+import {
+  READ_CHECK_RUNS_TOOL, RUN_TEST_SUITE_TOOL, READ_DEPLOYMENT_STATUS_TOOL,
+  readCheckRuns, dispatchTestSuite, readDeploymentStatus, canRunCiForAgent,
+} from './operations-tools.js'
 import { logRunEvent } from './monitor.js'
 import {
   newCorrelationId,
@@ -487,8 +491,15 @@ async function runAgentInner(
   // Write is granted per run, not per agent row: an orchestrator may hand one task write
   // authority and withhold it from the next, so the grant travels with the run.
   const canWrite = deps.allowWrite ?? ((agent as any).repo_access === 'write')
-  if (hasRepoAccess((agent as any).repo_access)) tools.push(REPO_TOOL)
+  const repoReadable = hasRepoAccess((agent as any).repo_access)
+  if (repoReadable) tools.push(REPO_TOOL)
   if (canWrite) tools.push(REPO_WRITE_TOOL)
+  if (repoReadable && env.githubToken && env.githubRepo) {
+    tools.push(READ_CHECK_RUNS_TOOL)
+    if (canRunCiForAgent(agent.id)) tools.push(RUN_TEST_SUITE_TOOL)
+  }
+  const deploymentReader = ['tdt_hermes', 'tdt_qa', 'tdt_devops'].includes(agent.id)
+  if (deploymentReader && process.env.VERCEL_TOKEN) tools.push(READ_DEPLOYMENT_STATUS_TOOL)
 
   try {
     const messages: any[] = [
@@ -581,6 +592,12 @@ async function runAgentInner(
               result = await runRepoWrite(args)
             } else if (tc.function.name === 'repo_read' && hasRepoAccess((agent as any).repo_access)) {
               result = await runRepoTool(args)
+            } else if (tc.function.name === 'read_check_runs' && repoReadable) {
+              result = await readCheckRuns(args)
+            } else if (tc.function.name === 'run_test_suite' && repoReadable && canRunCiForAgent(agent.id)) {
+              result = await dispatchTestSuite(args)
+            } else if (tc.function.name === 'read_deployment_status' && ['tdt_hermes', 'tdt_qa', 'tdt_devops'].includes(agent.id)) {
+              result = await readDeploymentStatus(args)
             } else if (tc.function.name === 'http_fetch' && agent.x402_enabled) {
               const sellers = typeof agent.x402_allowed_sellers === 'string'
                 ? JSON.parse(agent.x402_allowed_sellers || '[]')
@@ -796,6 +813,12 @@ async function runAgentInner(
             } else if (tc.function.name === 'repo_read') {
               denied = 'repo_read requires repo access on this agent'
               result = `Refused: this agent has no repo access.`
+            } else if (tc.function.name === 'read_check_runs' || tc.function.name === 'run_test_suite') {
+              denied = 'GitHub operations are not authorized for this role or repository access level'
+              result = `Refused: GitHub check access and CI dispatch require repository read access; CI dispatch is limited to HERMES, QA, DEVOPS and agent-engineer.`
+            } else if (tc.function.name === 'read_deployment_status') {
+              denied = 'deployment status access is limited to HERMES, QA and DEVOPS'
+              result = `Refused: this role cannot inspect deployment status.`
             } else if (tc.function.name === 'http_fetch') {
               denied = 'http_fetch requires x402 to be enabled'
               result = `Refused: http_fetch is disabled for this agent.`
