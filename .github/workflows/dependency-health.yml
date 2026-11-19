@@ -21,6 +21,8 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Check Node and npm runtime
         run: npm run check:runtime
+      - name: Check latest Node LTS patch and npm release
+        run: node scripts/check-runtime-updates.mjs
       - name: Record runtime and dependency health
         id: audit
         continue-on-error: true
@@ -37,6 +39,7 @@ jobs:
           name: dependency-health-${{ github.run_id }}
           path: |
             dependency-health.txt
+            runtime-updates.json
             outdated.json
             audit.json
           if-no-files-found: ignore
