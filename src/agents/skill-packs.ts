@@ -35,9 +35,9 @@ export function loadRoleSkillPack(agentId: string, agentName: string): RoleSkill
 
   const file = resolve(process.cwd(), 'team', 'agents', role, 'SKILL.md')
   const content = readFileSync(file, 'utf8')
-  const frontmatter = /^---\\s*\\r?\\n([\\s\\S]*?)\\r?\\n---(?:\\r?\\n|$)/.exec(content)
+  const frontmatter = /^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content)
   if (!frontmatter) throw new Error(`Role skill pack for ${role} has invalid frontmatter`)
-  const version = /^\\s{2}version:\\s*["']?([^"'\\s]+)["']?\\s*$/m.exec(frontmatter[1])?.[1]
+  const version = /^\s{2}version:\s*["']?([^"'\s]+)["']?\s*$/m.exec(frontmatter[1])?.[1]
   if (!version) throw new Error(`Role skill pack for ${role} has no metadata.version`)
   return { role, version, sha256: createHash('sha256').update(content).digest('hex'), content }
 }
