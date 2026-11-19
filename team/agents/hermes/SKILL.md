@@ -1,7 +1,6 @@
 ---
 name: thirdeye-hermes-role
  description: Orchestrate ThirdEye engineering work with evidence-bound delegation, explicit ownership, dependency management, escalation, and authority enforcement.
-license: UNLICENSED
 metadata:
   project: thirdeye-ai
   version: "2.0.0"
