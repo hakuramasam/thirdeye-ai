@@ -122,7 +122,7 @@ export async function recordPayment(args: {
     // An exact transfer replay is checked first so it remains idempotent even after its intent
     // has become paid. A different transfer must claim an open, unexpired, unused intent.
     let payment = (await q(
-      `SELECT id, user_id, intent_id, to_key_id, state FROM payments
+      `SELECT id, user_id, intent_id, to_key_id, state, status, usd_value_micros, chain_id, tx_hash, token, received_by, sender, raw_amount, decimals FROM payments
         WHERE chain_id = $1 AND lower(tx_hash) = lower($2) AND lower(token) = lower($3) AND received_by = $4
         FOR UPDATE`,
       [t.chain_id, t.tx_hash, t.token, args.receivedAt]
@@ -150,7 +150,7 @@ export async function recordPayment(args: {
       // Another request may have inserted this exact transfer while we waited for the intent
       // lock. Allow that exact replay even if the first request has already paid the intent.
       const concurrentTransfer = (await q(
-        `SELECT id, user_id, intent_id, to_key_id, state FROM payments
+        `SELECT id, user_id, intent_id, to_key_id, state, status, usd_value_micros, chain_id, tx_hash, token, received_by, sender, raw_amount, decimals FROM payments
           WHERE chain_id = $1 AND lower(tx_hash) = lower($2) AND lower(token) = lower($3) AND received_by = $4
           FOR UPDATE`,
         [t.chain_id, t.tx_hash, t.token, args.receivedAt]
@@ -212,14 +212,14 @@ export async function recordPayment(args: {
       duplicate = !payment
       if (!payment) {
         payment = (await q(
-          `SELECT id, user_id, intent_id, to_key_id, state FROM payments
+          `SELECT id, user_id, intent_id, to_key_id, state, status, usd_value_micros, chain_id, tx_hash, token, received_by, sender, raw_amount, decimals FROM payments
             WHERE chain_id = $1 AND lower(tx_hash) = lower($2) AND lower(token) = lower($3) AND received_by = $4
             FOR UPDATE`,
           [t.chain_id, t.tx_hash, t.token, args.receivedAt]
         )).rows[0]
         if (!payment && requestedIntentId) {
           const existingIntentPayment = (await q(
-            `SELECT id, user_id, intent_id, to_key_id, state FROM payments WHERE intent_id = $1`,
+            `SELECT id, user_id, intent_id, to_key_id, state, status, usd_value_micros, chain_id, tx_hash, token, received_by, sender, raw_amount, decimals FROM payments WHERE intent_id = $1`,
             [requestedIntentId]
           )).rows[0]
           if (existingIntentPayment) {
@@ -245,6 +245,49 @@ export async function recordPayment(args: {
     const destinationConflict = toKeyId !== requestedToKeyId
     const ownershipConflict = payment.user_id !== args.userId
 
+    // A transfer may first be observed before finality. Once the exact same verified
+    // transfer reaches the required confirmations, promote that pending row exactly once
+    // and snapshot its final valuation/evidence. Never let a different transfer identity
+    // or a later retry rewrite a previously valued/refused payment.
+    if (!scopeConflict && !destinationConflict && !ownershipConflict &&
+        payment.status === 'pending_confirmations' && payment.state === 'confirming' &&
+        args.status !== 'pending_confirmations') {
+      const sameTransferIdentity =
+        Number(payment.chain_id) === t.chain_id &&
+        String(payment.tx_hash).toLowerCase() === String(t.tx_hash).toLowerCase() &&
+        String(payment.token).toLowerCase() === String(t.token).toLowerCase() &&
+        payment.received_by === args.receivedAt &&
+        String(payment.sender).toLowerCase() === String(t.from).toLowerCase() &&
+        String(payment.raw_amount) === String(t.raw_amount) &&
+        Number(payment.decimals) === t.decimals
+      if (!sameTransferIdentity) {
+        return {
+          paymentId: payment.id, duplicate: true, state: payment.state,
+          intentId, toKeyId, scopeConflict: true, destinationConflict: false,
+          ownershipConflict: false, intentConflict: false,
+        }
+      }
+      const promoted = await q(
+        `UPDATE payments
+            SET status = $2, refusal_code = $3, state = $4, usd_value_micros = $5,
+                price_usd = $6, pool = $7, confirmations = $8, observed_block = $9
+          WHERE id = $1 AND status = 'pending_confirmations' AND state = 'confirming'
+            AND usd_value_micros = 0 AND chain_id = $10
+            AND lower(tx_hash) = lower($11) AND lower(token) = lower($12)
+            AND received_by = $13 AND lower(sender) = lower($14)
+            AND raw_amount = $15 AND decimals = $16
+          RETURNING state, status, usd_value_micros, confirmations, observed_block`
+        , [
+          payment.id, args.status, args.refusalCode,
+          args.state ?? (args.status === 'recorded' ? 'confirmed' : 'detected'),
+          args.usdMicros, args.priceUsd ?? null, args.pool ?? null,
+          args.confirmations ?? null, args.observedBlock ?? t.block_number ?? null,
+          t.chain_id, t.tx_hash, t.token, args.receivedAt, t.from, t.raw_amount, t.decimals,
+        ]
+      )
+      if (!promoted.rows[0]) throw new Error('Pending payment changed before finality promotion')
+      Object.assign(payment, promoted.rows[0])
+    }
     if (!scopeConflict && !destinationConflict && !ownershipConflict && args.status === 'pending_confirmations') {
       const existingEvent = await q(
         `SELECT id FROM payment_events WHERE payment_id = $1 AND kind = 'confirming' LIMIT 1`,
