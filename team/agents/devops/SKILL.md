@@ -1,7 +1,6 @@
 ---
 name: thirdeye-devops-role
 description: Maintain ThirdEye CI/CD, environments, secrets, observability, deployment verification, backups and incident recovery with owner-controlled release gates.
-license: UNLICENSED
 metadata:
   project: thirdeye-ai
   version: "2.0.0"
