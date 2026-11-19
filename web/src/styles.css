@@ -113,12 +113,27 @@ button {
   padding: 8px 15px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: inherit;
 }
 button:hover { background: var(--accent-2); }
-button:disabled { opacity: 0.55; cursor: not-allowed; }
+/* A disabled control still has to be readable. At 0.55 opacity on this palette the label sank
+   into the background and the button read as broken rather than unavailable, so the state is
+   shown with a real surface and muted text instead. */
+button:disabled, button:disabled:hover {
+  opacity: 1; cursor: not-allowed;
+  /* A shadow rather than a border: primary buttons are borderless, so adding a 1px border here
+     made every disabled button 2px larger than the same button enabled. */
+  background: var(--panel-2); color: var(--muted); box-shadow: inset 0 0 0 1px var(--border);
+}
 button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
 button.ghost:hover { border-color: var(--accent); background: transparent; }
 button.danger-btn { background: transparent; border: 1px solid rgba(248, 113, 113, 0.4); color: var(--danger); }
 button.danger-btn:hover { background: rgba(248, 113, 113, 0.12); }
 button.small-btn { padding: 4px 10px; font-size: 12px; }
+/* The class rules above set their own background, border and hover, which overrode the disabled
+   state for ghost and danger buttons. Repeat it after them so a disabled control never looks live. */
+button.ghost:disabled, button.ghost:disabled:hover,
+button.danger-btn:disabled, button.danger-btn:disabled:hover {
+  background: var(--panel-2); color: var(--muted); border-color: var(--border);
+  cursor: not-allowed;
+}
 
 .toast {
   position: fixed; bottom: 22px; right: 22px; z-index: 50;

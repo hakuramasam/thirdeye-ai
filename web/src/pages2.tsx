@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { api, fmtUsd, fmtDate, toast } from './wallet'
+import { formProblems } from './forms'
 
 type AgentRow = {
   id: string; name: string; system_prompt: string; model: string
@@ -43,6 +44,47 @@ const emptyForm = {
   mcp: [{ name: '', url: '' }],
 }
 
+/**
+ * Starting points. An empty form gives no clue what a good budget, step count or prompt looks
+ * like, so a new agent usually ends up either idle or spending the whole budget in one run.
+ */
+const TEMPLATES = [
+  {
+    key: 'defi',
+    label: 'DeFi research',
+    name: 'defi-research',
+    budget: '150000',
+    steps: '8',
+    prompt:
+      'You are a DeFi research agent. On each run, look at the pools and tokens you are pointed at, ' +
+      'state what changed, and name the risk. Distinguish measured figures from estimates, quote the ' +
+      'source and timestamp for every number, and never state a price you did not read this run. ' +
+      'If a figure is unavailable, say so instead of estimating it.',
+  },
+  {
+    key: 'research',
+    label: 'Research and summarise',
+    name: 'research-brief',
+    budget: '100000',
+    steps: '6',
+    prompt:
+      'You are a research agent. Gather the primary sources for the question you are given, read them, ' +
+      'and write a short brief: what is established, what is claimed but unverified, and what is unknown. ' +
+      'Cite the source and date for each point. Do not fill a gap with a plausible guess.',
+  },
+  {
+    key: 'coder',
+    label: 'Coder',
+    name: 'repo-assistant',
+    budget: '200000',
+    steps: '10',
+    prompt:
+      'You are a coding agent working in a repository. Read the relevant files before changing anything, ' +
+      'make the smallest change that fixes the stated problem, and say what you verified and how. ' +
+      'Never report a change as working unless you ran it.',
+  },
+]
+
 function Agents() {
   const [agents, setAgents] = useState<AgentRow[]>([])
   const [models, setModels] = useState<ModelRow[]>([])
@@ -63,10 +105,20 @@ function Agents() {
   }, [])
   useEffect(load, [load])
 
+  const problems = formProblems(form)
+
   const create = async () => {
+    if (problems.length) { toast('Needs ' + problems.join(', '), 'error'); return }
     setBusy(true)
     try {
-      const mcp = form.mcp.filter((m) => m.name && m.url)
+      // A row with one field filled is a user who meant to add a server: refuse it rather than
+      // dropping it and reporting success for an agent that does not have it.
+      const half = form.mcp.find((m) => (m.name.trim() && !m.url.trim()) || (!m.name.trim() && m.url.trim()))
+      if (half) { toast('Finish the MCP server row or clear it: it needs both a name and a URL.', 'error'); setBusy(false); return }
+      // POST /api/agents refuses x402_enabled without an allowed seller, so asking for pay-per-call
+      // here failed every time. Sellers are configured after creation, on the agent's own row.
+      if (form.x402) { toast('Create the agent first, then add allowed sellers to enable pay-per-call.', 'error'); setBusy(false); return }
+      const mcp = form.mcp.filter((m) => m.name.trim() && m.url.trim())
       await api('/api/agents', {
         method: 'POST',
         body: JSON.stringify({
@@ -77,7 +129,7 @@ function Agents() {
           budget_usd_micros: Number(form.budget_usd_micros),
           max_steps: Number(form.max_steps),
           cron: form.cron.trim() || null,
-          x402_enabled: form.x402,
+          x402_enabled: false,
         }),
       })
       toast('Agent created')
@@ -161,6 +213,26 @@ function Agents() {
     <div>
       <div className="card">
         <h2>Create agent</h2>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 4 }}>
+          <span className="muted small" style={{ marginRight: 4 }}>Start from a template</span>
+          {TEMPLATES.map((t) => (
+            <button
+              key={t.key}
+              className="ghost small-btn"
+              type="button"
+              onClick={() => setForm({
+                ...form,
+                name: t.name,
+                system_prompt: t.prompt,
+                budget_usd_micros: t.budget,
+                max_steps: t.steps,
+                model: form.model || models[0]?.model || '',
+              })}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
         <div className="row">
           <div><label>Name</label><input value={form.name} placeholder="market-watcher" onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
           <div>
@@ -181,8 +253,8 @@ function Agents() {
         <label>MCP servers (streamable HTTP)</label>
         {form.mcp.map((m, i) => (
           <div className="row" key={i} style={{ marginBottom: 8 }}>
-            <div><input value={m.name} placeholder="name" onChange={(e) => setMcp(i, { name: e.target.value })} /></div>
-            <div style={{ flex: 2 }}><input value={m.url} className="mono" placeholder="https://example.com/mcp" onChange={(e) => setMcp(i, { url: e.target.value })} /></div>
+            <div><input value={m.name ?? ''} placeholder="name" onChange={(e) => setMcp(i, { name: e.target.value })} /></div>
+            <div style={{ flex: 2 }}><input value={m.url ?? ''} className="mono" placeholder="https://example.com/mcp" onChange={(e) => setMcp(i, { url: e.target.value })} /></div>
             <div style={{ flex: '0 0 auto' }}>
               <button className="ghost small-btn" onClick={() => setForm((f) => ({ ...f, mcp: f.mcp.filter((_, j) => j !== i) }))}>×</button>
             </div>
@@ -198,7 +270,18 @@ function Agents() {
           </label>
         </div>
         <div style={{ marginTop: 14 }}>
-          <button onClick={create} disabled={busy || !form.name || !form.model}>Create agent</button>
+          <button
+            onClick={create}
+            disabled={busy || problems.length > 0}
+            title={problems.length ? 'Still needs ' + problems.join(', ') : 'Create the agent'}
+          >
+            {busy ? 'Creating…' : 'Create agent'}
+          </button>
+          {problems.length > 0 && (
+            <span className="muted small" style={{ marginLeft: 10 }}>
+              Still needs {problems.join(', ')}.
+            </span>
+          )}
         </div>
       </div>
 
