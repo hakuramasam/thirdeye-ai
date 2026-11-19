@@ -133,6 +133,16 @@ test('nothing reaches production without the owner, and that rule lives in the s
   assert.ok(DOC.includes('Stop affected work') || DOC.includes('owner authorization for production release'))
 })
 
+test('all role packs carry the same canonical short-form operating rules', () => {
+  const packs = PACK_SLUGS.map((slug) => readFileSync(`team/agents/${slug}/SKILL.md`, 'utf8'))
+  const blocks = packs.map((pack) => {
+    const match = /## Team operating specification\n([\s\S]*?)(?=\n## |$)/.exec(pack)
+    assert.ok(match, 'every role pack must include the short operating rules')
+    return match[1].trim()
+  })
+  assert.equal(new Set(blocks).size, 1, 'the short-form operating rules must not drift between roles')
+})
+
 test('the artifact kinds in the specification are the ones the registry actually accepts', () => {
   assert.equal(artifactKindsAgree(), true)
   assert.deepEqual([...SPEC.artifacts.kinds].sort(), [...ARTIFACT_KINDS].sort())
@@ -153,8 +163,12 @@ test('the lifecycle is ordered, unambiguous and ends in exactly one terminal sta
   for (const status of statuses) {
     const stage = stageForTaskStatus(status)
     assert.ok(stage, `stored status ${status} projects onto nothing`)
-    assert.ok(STAGES.includes(stage) || EXCEPTIONS.includes(stage) || stage === 'QUEUED_INTAKE', `${status} projects onto unknown ${stage}`)
+    assert.ok(STAGES.includes(stage) || EXCEPTIONS.includes(stage) , `${status} projects onto unknown ${stage}`)
   }
+  assert.equal(stageForTaskStatus('queued'), 'RECEIVED')
+  assert.equal(stageForTaskStatus('constructor'), undefined)
+  assert.equal(pipelineForCategory('constructor'), undefined)
+  assert.equal(stageForPipelineStage('constructor'), undefined)
   assert.equal(stageForTaskStatus('completed'), TERMINAL)
   assert.equal(stageForTaskStatus('failed'), 'REWORK')
 })
@@ -165,10 +179,12 @@ test('transitions allow forward progress, flag skipped gates, and never hide a b
   assert.equal(forward.ok && forward.rework, false)
   assert.deepEqual(forward.ok && forward.skippedGates, [])
 
-  // Jumping straight from build to release skips QA and security: legal to express, visible in the result.
+  // Mandatory gates are not merely reported: a caller cannot use ok=true to bypass them.
   const leap = checkTransition('IN_PROGRESS', 'RELEASED')
-  assert.equal(leap.ok, true)
-  assert.deepEqual(leap.ok && leap.skippedGates, ['QA_VERIFICATION', 'SECURITY_REVIEW', 'RELEASE_READY'])
+  assert.equal(leap.ok, false)
+  assert.deepEqual(!leap.ok && leap.skippedGates, ['QA_VERIFICATION', 'SECURITY_REVIEW', 'RELEASE_READY'])
+  assert.equal(checkTransition('BLOCKED', 'RELEASED').ok, false, 'recovery cannot jump over mandatory gates')
+  assert.equal(checkTransition('TYPO', 'TYPO').ok, false, 'same-stage no-op still validates names')
 
   const backward = checkTransition('QA_VERIFICATION', 'IN_PROGRESS')
   assert.equal(backward.ok, true)
@@ -200,6 +216,9 @@ test('a task envelope is refused when a specified field is missing, and warned w
   assert.ok(warned.ok && warned.warnings.length === 3, 'three recommended fields were dropped, three warnings expected')
   assert.ok(warned.ok && warned.warnings.some((w) => w.includes('correlation_id')))
 
+  const blankCorrelation = validateOperatingTask({ ...validTask(), correlation_id: '' })
+  assert.equal(blankCorrelation.ok, false, 'blank correlation IDs cannot be accepted')
+
   const malformed = validateOperatingTask({ ...validTask(), priority: 'urgent' })
   assert.equal(malformed.ok, false, 'the schema still refuses a priority outside its enum')
 })
@@ -214,12 +233,16 @@ test('the envelope covers every field the specification requires a task to carry
     assert.ok(SPEC.envelope.fields.includes(field), `required field ${field} is not part of the envelope`)
   }
   assert.equal(SPEC.envelope.recommended.includes('correlation_id'), true)
+  assert.ok(SPEC.envelope.recommended.includes('dependencies'))
+  assert.ok(SPEC.envelope.fields.includes('output_expectations'))
 })
 
 test('priorities, severities and categories keep their stated meaning', () => {
   assert.deepEqual(SPEC.priorities.map((p) => p.id), ['P0', 'P1', 'P2', 'P3'])
   assert.deepEqual(SPEC.priorities.map((p) => p.db_priority), ['critical', 'high', 'normal', 'low'])
   assert.equal(dbPriorityFor('P0'), 'critical')
+  const schema = JSON.parse(readFileSync('src/team/schemas/task.schema.json', 'utf8'))
+  assert.deepEqual(schema.properties.category.enum, SPEC.categories, 'task schema category enum must match the operating specification')
   assert.equal(SPEC.categories.length, 13)
   assert.equal(new Set(SPEC.categories).size, 13)
 
@@ -228,6 +251,7 @@ test('priorities, severities and categories keep their stated meaning', () => {
   assert.equal(blocksRelease(['medium', 'low', 'informational']), false)
   assert.equal(blocksRelease([]), false)
   assert.equal(artifactKindAllowed('test_report'), true)
+  assert.equal(artifactKindAllowed('  TEST_REPORT  '), true)
   assert.equal(artifactKindAllowed('screenshot'), false)
 })
 
