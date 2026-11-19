@@ -128,6 +128,9 @@ CREATE TABLE IF NOT EXISTS agent_runs (
   error             text,
   created_at        timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS skill_version text;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS skill_sha256 text;
+
 
 CREATE TABLE IF NOT EXISTS auth_nonces (
   nonce      text PRIMARY KEY,

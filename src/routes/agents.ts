@@ -250,7 +250,7 @@ export function registerAgentsRoutes(app: SessionApp): void {
     const row = await loadOwned(c.req.param('id'), user.id)
     if (!row) return c.json({ error: { message: 'Agent not found', type: 'not_found', code: 404 } }, 404)
     const res = await query(
-      `SELECT id, status, input, output, tool_calls, spend_usd_micros, error, created_at
+      `SELECT id, status, input, output, tool_calls, spend_usd_micros, error, skill_version, skill_sha256, created_at
        FROM agent_runs WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 20`,
       [row.id]
     )
@@ -392,6 +392,32 @@ export function registerCronRoute(app: SessionApp): void {
     }
     return c.json({ triggered, results, skipped, slot })
   }
+  // Evidence endpoint used by the competency harness. CRON_SECRET is required; payloads
+  // intentionally omit tool arguments/results and audit metadata to avoid leaking secrets.
+  app.get('/api/cron/agents/evidence/:runId', async (c) => {
+    const auth = c.req.header('authorization') || ''
+    if (!env.cronSecret || auth !== `Bearer ${env.cronSecret}`) {
+      return c.json({ error: { message: 'Unauthorized', type: 'auth', code: 401 } }, 401)
+    }
+    const runId = c.req.param('runId')
+    const run = await one(
+      `SELECT id, agent_id, status, tool_calls, spend_usd_micros, error, created_at, skill_version, skill_sha256
+         FROM agent_runs WHERE id = $1`,
+      [runId]
+    )
+    if (!run) return c.json({ error: { message: 'Run not found', type: 'not_found', code: 404 } }, 404)
+    const toolEvents = await query(
+      `SELECT seq, tool, ok, refused, created_at FROM agent_run_events WHERE run_id = $1 ORDER BY seq`,
+      [runId]
+    )
+    const auditEvents = await query(
+      `SELECT insert_seq, event_type, agent_role, status, error_code, created_at
+         FROM agent_audit_events WHERE run_id = $1 ORDER BY insert_seq`,
+      [runId]
+    )
+    return c.json({ run, tool_events: toolEvents.rows, audit_events: auditEvents.rows })
+  })
+
   // Vercel cron sends GET with `Authorization: Bearer $CRON_SECRET`; accept both.
   app.on(['GET', 'POST'], '/api/cron/agents', handler)
 }

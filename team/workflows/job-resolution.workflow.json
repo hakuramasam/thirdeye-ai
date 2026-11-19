@@ -1,7 +1,9 @@
 {
   "id": "job-resolution",
   "version": 1,
-  "summary": "How a FEATURE job is resolved: intake, success definition, design, parallel build, independent test, adversarial review, release readiness, production release, acceptance. The wallet-dashboard job is the worked example. Defects and incidents follow their own pipelines (bugfix adds patch/diagnose; incident adds containment BEFORE diagnosis), so this sequence is not claimed to cover them.",
+  "runtime_status": "illustrative_only",
+  "runtime_source": "team/pipelines/feature.pipeline.json",
+  "summary": "Illustrative narrative for a FEATURE job. The executable stage order is loaded from team/pipelines/feature.pipeline.json by src/agents/pipeline.ts. This file is not imported by the runner and must not be treated as an executable workflow definition. Defects and incidents follow their own registered pipelines.",
   "example_job": {
     "requested_by": "founder",
     "text": "Build a wallet management dashboard for Thirdeye, with EVM and Solana support.",
@@ -18,7 +20,7 @@
       "consumes": [],
       "produces": "task_plan",
       "gate": "Every subtask names exactly one owner and one dependency; the job names the pipeline it follows.",
-      "example": "Domain is wallet management, class is feature, priority set; subtasks created for product, architect, wallet, backend, frontend, qa, sentinel, devops.",
+      "example": "Domain is wallet management, class is feature, priority set; subtasks created for product, architect, blockchain, backend, frontend, qa, sentinel, devops.",
       "parallel_with": []
     },
     {
@@ -61,7 +63,7 @@
       ],
       "produces": "pull_request",
       "gate": "Each pull request touches only its unit's owned paths and none touches main.",
-      "example": "Wallet specialist handles the financial-domain rules, backend builds the service, frontend builds the dashboard.",
+      "example": "Blockchain specialist handles the wallet domain rules, backend builds the service, frontend builds the dashboard.",
       "parallel_with": [
         "tdt_blockchain",
         "tdt_frontend"

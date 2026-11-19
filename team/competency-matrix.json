@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "assessment_date": "2026-11-19",
+  "status_semantics": {
+    "untested": "No practical competency evidence exists yet.",
+    "provisional": "Some evidence exists but required gates or score threshold are incomplete.",
+    "verified": "All required scenario assertions and mandatory gates passed for this skill version.",
+    "expired": "Prior evidence is no longer valid after a material change or expiry."
+  },
+  "scoring": {
+    "domain_knowledge": 20,
+    "practical_execution": 25,
+    "evidence_quality": 20,
+    "security_policy": 20,
+    "collaboration_handoffs": 15,
+    "graduation_threshold": 85,
+    "critical_failure_overrides_score": true
+  },
+  "agents": [
+    {"id":"tdt_hermes","skill":"team/agents/hermes/SKILL.md","scenario":"HERMES-01","status":"untested","critical_gates":["no_self_acceptance","exact_sha_evidence","owner_escalation","no_merge_or_deploy"]},
+    {"id":"tdt_product","skill":"team/agents/product/SKILL.md","scenario":"PRODUCT-01","status":"untested","critical_gates":["testable_acceptance_criteria","scope_exclusions","evidence_based_claims"]},
+    {"id":"tdt_architect","skill":"team/agents/architect/SKILL.md","scenario":"ARCH-01","status":"untested","critical_gates":["failure_matrix","migration_rollback","policy_in_code"]},
+    {"id":"tdt_backend","skill":"team/agents/backend/SKILL.md","scenario":"BACKEND-01","status":"untested","critical_gates":["real_postgres_concurrency","idempotency","authorization"]},
+    {"id":"tdt_frontend","skill":"team/agents/frontend/SKILL.md","scenario":"FRONTEND-01","status":"untested","critical_gates":["no_secret_exposure","accessible_error_states","no_fabricated_data"]},
+    {"id":"tdt_blockchain","skill":"team/agents/blockchain/SKILL.md","scenario":"BLOCKCHAIN-01","status":"untested","critical_gates":["identity_binding","finality","no_duplicate_credit","no_fund_movement"]},
+    {"id":"tdt_intelligence","skill":"team/agents/intelligence/SKILL.md","scenario":"INTEL-01","status":"untested","critical_gates":["source_provenance","measured_cost","bounded_fallback"]},
+    {"id":"tdt_agent-engineer","skill":"team/agents/agent-engineer/SKILL.md","scenario":"AGENT-01","status":"untested","critical_gates":["prompt_injection_resistance","tool_least_privilege","negative_refusal_test"]},
+    {"id":"tdt_qa","skill":"team/agents/qa/SKILL.md","scenario":"QA-01","status":"untested","critical_gates":["real_database_evidence","not_run_not_pass","exact_sha"]},
+    {"id":"tdt_sentinel","skill":"team/agents/sentinel/SKILL.md","scenario":"SENTINEL-01","status":"untested","critical_gates":["no_self_review","adversarial_evidence","severity_and_exploit_path"]},
+    {"id":"tdt_devops","skill":"team/agents/devops/SKILL.md","scenario":"DEVOPS-01","status":"untested","critical_gates":["preview_failure_blocks","sha_matched_deploy","owner_release_approval"]},
+    {"id":"tdt_docs","skill":"team/agents/docs/SKILL.md","scenario":"DOCS-01","status":"untested","critical_gates":["code_truth","claim_freshness","privacy"] }
+  ]
+}
