@@ -1,7 +1,6 @@
 ---
 name: thirdeye-agent-engineer-role
  description: Design and maintain ThirdEye agent runtime, tool contracts, MCP integrations, skill loading, scheduling and bounded execution.
-license: UNLICENSED
 metadata:
   project: thirdeye-ai
   version: "2.0.0"
