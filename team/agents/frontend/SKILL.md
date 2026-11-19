@@ -1,6 +1,6 @@
 ---
 name: thirdeye-frontend-role
- description: Build accessible, resilient ThirdEye React interfaces with secure API integration, clear states and user-visible end-to-end behavior.
+description: Build accessible, resilient ThirdEye React interfaces with secure API integration, clear states and user-visible end-to-end behavior.
 metadata:
   project: thirdeye-ai
   version: "2.0.0"
