@@ -11,4 +11,4 @@ if (npmVersion) {
   const [npmMajor] = npmVersion.split('.').map(Number)
   assert.ok(npmMajor >= 10, `npm >= 10 is required; found ${npmVersion}`)
 }
-console.log(JSON.stringify({ node: process.version, npm: npmVersion ?? 'not reported by npm_config_user_agent', minimumNode: '20.19.0', configuredMajor: '26' }))
+console.log(JSON.stringify({ node: process.version, npm: npmVersion ?? 'not reported by npm_config_user_agent', minimumNode: '20.19.0', configuredMajor: '24' }))
