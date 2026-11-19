@@ -26,8 +26,7 @@ jobs:
           npm --version
           npm outdated --json > outdated.json || true
           npm audit --json > audit.json || true
-          node -e "const fs=require('fs'); const o=JSON.parse(fs.readFileSync('outdated.json','utf8')||'{}'); const a=JSON.parse(fs.readFileSync('audit.json','utf8')||'{}'); console.log(JSON.stringify({outdated:o,audit:a.metadata?.vulnerabilities||{}},null,2))" > dependency-health.txt
-          cat dependency-health.txt
+          node -e "const fs=require('fs'); const read=(p)=>{try{return JSON.parse(fs.readFileSync(p,'utf8')||'{}')}catch{return {}}}; const o=read('outdated.json'); const a=read('audit.json'); const v=a.metadata?.vulnerabilities||{}; console.log(JSON.stringify({outdated:o,audit:v},null,2)); fs.writeFileSync('dependency-health.txt',JSON.stringify({outdated:o,audit:v},null,2)); if((v.high||0)+(v.critical||0)>0) process.exit(1)"
       - name: Upload dependency health report
         if: always()
         uses: actions/upload-artifact@v4
