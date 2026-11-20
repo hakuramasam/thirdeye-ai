@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS byok_keys (
 
 CREATE TABLE IF NOT EXISTS models_catalog (
   model                text PRIMARY KEY,      -- public name users request, e.g. "gpt-4o-mini"
-  provider             text NOT NULL,         -- openai | anthropic | openai-compatible | mock
+  provider             text NOT NULL,         -- openai | anthropic | openai-compatible | routerlink | mock
   upstream_model       text NOT NULL,         -- provider-side model id
   base_url             text,                  -- required for openai-compatible providers
   price_in_1m_usd_micros  bigint NOT NULL,    -- $ per 1M input tokens, in USD micros
