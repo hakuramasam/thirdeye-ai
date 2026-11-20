@@ -47,7 +47,7 @@ Add two explicit ThirdEye internal provider kinds:
 
 Keep the upstream model identifier exactly as returned by RouterLink's implementation/group endpoint (including channel prefix). Do not reconstruct or strip the channel/model ID.
 
-Use one platform secret, `PROV_ROUTERLINK_API_KEY`, for platform-brokered RouterLink calls. Add a BYOK provider name `routerlink` for users who supply their own RouterLink key. Never expose either key in model-list responses, logs, or errors.
+Use one platform secret, `PROV_ROUTERLINK_API_KEY`, for platform-brokered RouterLink calls. Add a BYOK provider name `routerlink` for users who supply their own RouterLink key, and add `routerlink` to the dashboard BYOK provider selector and credential save flow so user-owned keys can actually be selected. Never expose either key in model-list responses, logs, or errors.
 
 The provider resolver must special-case both RouterLink kinds and resolve the credential under `routerlink`; it must not infer `world3.ai` or `router-link.world3.ai` as the BYOK/provider key name.
 
