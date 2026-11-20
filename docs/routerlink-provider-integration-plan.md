@@ -13,7 +13,7 @@ That is insufficient for RouterLink:
 - RouterLink is a gateway with its own live logical-model catalog and multiple provider-channel implementations. The model vendor (e.g. Google, Qwen, Anthropic) is not the same thing as the provider channel (e.g. WORLD3 Router North America, GCP Vertex).
 - A logical model can have multiple implementation rows, with a channel-specific upstream model ID, API standard, endpoint, context/output limits, and price.
 - RouterLink exposes both OpenAI-compatible and Anthropic-compatible interfaces. The Anthropic endpoint and authentication differ from the existing direct Anthropic adapter.
-- RouterLink pricing is per implementation, per token type, and can be tiered. ThirdEye currently bills from flat input/output rates and does not represent all RouterLink modalities or price tiers.
+- RouterLink pricing is per implementation, per token type, and can be tiered. ThirdEye already has flat input/output and cache-aware pricing, but its catalogue and reconciliation contract does not preserve RouterLink implementation-level metadata, tiered price cards, or all modality-specific rates.
 
 **Root cause:** ThirdEye's adapter/catalogue contract assumes one provider endpoint + one flat rate per model. RouterLink requires a normalized model implementation registry, API-standard-aware dispatch, and accurate price/capability handling.
 
@@ -53,7 +53,7 @@ The provider resolver must special-case both RouterLink kinds and resolve the cr
 
 ### 3.2 Endpoint and protocol dispatch
 
-- OpenAI standard: `https://router-link.world3.ai/api/v1/chat/completions`, Bearer authentication, OpenAI request/response and SSE semantics.
+- OpenAI standard: use the documented base URL `https://router-link.world3.ai/api/v1` and append `/chat/completions`; Bearer authentication, OpenAI request/response and SSE semantics. Do not blindly persist the grouped implementation's generic `/api` endpoint for OpenAI rows.
 - Anthropic standard: `https://router-link.world3.ai/api/v1/messages`, `x-api-key` authentication, required Anthropic version header, Anthropic request/response and event-stream semantics.
 - Refactor the existing Anthropic adapter to accept an explicit base URL and authentication mode without changing the existing direct-Anthropic default.
 - Keep ThirdEye's external API OpenAI-compatible. Normalize Anthropic responses and streams into the existing OpenAI-compatible response contract.
@@ -69,7 +69,8 @@ Add an additive migration for metadata such as:
 - `context_window`, `max_output_tokens`
 - `capabilities` / `tags`, `labels`
 - `source` (e.g. `routerlink`), `source_model_id`, `synced_at`
-- `price_tiers` (JSON) for exact per-token-type pricing where required
+- `price_tiers` (versioned JSON) for exact per-token-type pricing where required
+- `usage_source`, `usage_is_estimated`, `reservation_micros`, and `pricing_version` provenance on usage records
 
 Do not overwrite user/admin-managed non-RouterLink catalogue rows during sync. Use a stable unique key based on RouterLink implementation identity, not display name alone. Preserve ThirdEye's public model aliases and canonical model lookup behavior.
 
@@ -83,9 +84,9 @@ Do not flatten a tiered price card into a single arbitrary rate. The billing eng
 1. support the exact applicable tier and token-type calculation, or
 2. keep that implementation disabled until accurate billing is supported.
 
-Phase 1 should enable text-only implementations with complete input/output prices. Cache tiers must be represented and billed correctly before advertising cache-cost accuracy. Audio, image, video, per-output media, and other non-text price types must remain unavailable until ThirdEye usage accounting and the public API can measure and charge them correctly.
+Phase 1 must not activate a RouterLink row until the exact applicable input/output price is known and the full maximum-output exposure is reserved before dispatch. Flat, non-tiered text rows may be eligible after reservation controls are verified. Tiered rows remain disabled until tier-aware pricing, reservations, and reconciliation are implemented. Existing cache-aware pricing must be preserved; RouterLink cache tiers remain disabled unless the exact tier can be represented and reconciled. Audio, image, video, per-output media, and other non-text price types must remain unavailable until ThirdEye usage accounting and the public API can measure and charge them correctly.
 
-Keep ThirdEye's own margin, prepaid balance, per-key budget, usage event, ledger debit, and reconciliation rules authoritative. RouterLink's own usage/billing dashboard is an upstream reference, not a replacement for ThirdEye's ledger. Do not automatically retry a request on a different channel after an ambiguous timeout: the first upstream may already have processed and charged it.
+Before every HTTP or agent upstream request, reserve a conservative maximum charge using the selected implementation's applicable price tier and requested output limit, enforcing prepaid balance and per-key budget. Reconcile the reservation against actual upstream usage after completion; release unused reservation. On missing usage, persist provenance and mark the event estimated/provisional rather than exact, and apply a defined conservative settlement policy. Apply the same controls in `src/agents/runner.ts`, not only the public HTTP route. Keep ThirdEye's own margin, prepaid balance, per-key budget, usage event, ledger debit, and reconciliation rules authoritative. RouterLink's own usage/billing dashboard is an upstream reference, not a replacement for ThirdEye's ledger. Do not automatically retry a request on a different channel after an ambiguous timeout: the first upstream may already have processed and charged it.
 
 ## 4. Delivery phases
 
@@ -115,15 +116,16 @@ Keep ThirdEye's own margin, prepaid balance, per-key budget, usage event, ledger
 - Import channel, API standard, vendor, model ID, context/output limits, tags, labels and pricing.
 - Make sync idempotent; disable stale RouterLink rows rather than deleting historical model references.
 - Add admin-only/manual sync and audit metadata. Do not make a public unauthenticated endpoint that can trigger outbound requests or rewrite the catalogue.
-- Apply conservative allowlisting: only supported OpenAI/Anthropic text implementations with complete price data become enabled.
+- Apply conservative allowlisting: only supported OpenAI/Anthropic text implementations with complete, currently billable price data and verified pre-call reservation become enabled. Keep tiered implementations disabled until tier-aware billing, reservation, and reconciliation are complete; a zero-priced tier does not make the entire implementation free.
 
 **Exit gate:** Repeated sync produces no duplicates, preserves local models, and produces deterministic, explainable pricing.
 
 ### Phase 3 — Accurate billing and capability enforcement
 
-- Extend price calculation for RouterLink's tiered input/output and supported cache pricing.
+- Extend price calculation and reconciliation together: version `RateRow`/`loadRates`/`rebuildCostMicros` around the exact tier card and preserve cache-aware pricing. Keep any row disabled until both live settlement and historical rebuild use the same pricing version.
+- Apply the same exact tier/cache calculation, capability checks, pre-call reservation and post-call reconciliation to `src/agents/runner.ts` and agent tool execution.
 - Validate model capabilities before dispatch; do not advertise audio/image/video until usage accounting supports them.
-- Verify usage fields returned by each protocol and define a safe fallback when usage is missing (record estimate separately; do not silently treat it as exact).
+- Verify usage fields returned by each protocol and persist `usage_source`, `usage_is_estimated`, pricing version, and reservation/settlement provenance. Missing usage must remain explicitly estimated/provisional and must never be presented as exact.
 - Add per-provider spend/latency/error metrics and upstream request IDs where available.
 
 **Exit gate:** Tests prove exact cost math at tier boundaries, cache handling, free models, margin, BYOK metering, budget enforcement and failed-call handling.
@@ -131,8 +133,9 @@ Keep ThirdEye's own margin, prepaid balance, per-key budget, usage event, ledger
 ### Phase 4 — Dashboard and public API
 
 - Show RouterLink models with display name, vendor, provider channel, protocol, context/output limits, capability tags, labels and ThirdEye price.
+- Update every model-discovery surface and UI consumer, including `/api/models`, `/api/models/public`, `/api/v1/models`, and the corresponding dashboard selectors; assert parity across all surfaces.
 - Show channel-specific variants clearly; never collapse variants that have different endpoints, price or capabilities.
-- Add provider credential status without exposing secrets.
+- Add provider credential status without exposing secrets, including the dashboard BYOK selector and save flow for `routerlink`.
 - Keep `GET /api/v1/models` OpenAI-compatible and expose only enabled implementations.
 - Add model detail/availability information for clients without leaking RouterLink credentials.
 
