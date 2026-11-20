@@ -97,7 +97,6 @@ jobs:
           payload="$(node -e 'process.stdout.write(JSON.stringify({
             name: "thirdeye-ai",
             project: process.env.VERCEL_PROJECT_ID,
-            target: "preview",
             gitSource: {
               type: "github",
               org: "hakuramasam",
