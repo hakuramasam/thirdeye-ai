@@ -86,6 +86,9 @@ export async function getModelRow(modelName: string): Promise<ModelRow | null> {
 }
 
 export function deriveProviderName(model: ModelRow): string {
+  // RouterLink is a gateway provider, not a hostname-derived OpenAI-compatible vendor.
+  // Keep its credential namespace stable even when the model row has a channel-specific URL.
+  if (model.provider === 'routerlink') return 'routerlink'
   if (model.provider === 'openai' || model.provider === 'anthropic' || model.provider === 'mock') {
     return model.provider
   }
@@ -151,6 +154,8 @@ export async function resolveProvider(user: UserRow, model: ModelRow): Promise<P
       if (model.provider === 'anthropic') {
         return callAnthropicChat({ apiKey, params: p, timeoutMs: opts?.timeoutMs })
       }
+      // RouterLink exposes an OpenAI-compatible chat-completions endpoint. Keep the exact
+      // upstream model id from the implementation row and use the configured gateway URL.
       return callOpenAIChat({ baseUrl: model.base_url, apiKey, params: p, timeoutMs: opts?.timeoutMs })
     },
     async stream(params: Record<string, any>) {
