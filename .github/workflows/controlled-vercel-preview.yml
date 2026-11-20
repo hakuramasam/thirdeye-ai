@@ -36,7 +36,7 @@ jobs:
           TARGET_SHA: ${{ inputs.sha }}
         run: |
           set -euo pipefail
-          if [[ "$TARGET_REF" == "main" || ! "$TARGET_REF" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+          if [[ "$TARGET_REF" == "main" ]] || ! git check-ref-format --branch "$TARGET_REF" >/dev/null 2>&1; then
             echo "::error::Choose a valid non-main feature branch."
             exit 1
           fi
@@ -134,7 +134,7 @@ jobs:
           {
             echo "## ThirdEye AI Preview"
             echo ""
-            echo "- **URL:** https://${{ steps.deploy.outputs.url }}"
+            echo "- **URL:** ${{ steps.deploy.outputs.url }}"
             echo "- **Branch:** ${{ steps.target.outputs.ref }}"
             echo "- **Commit:** ${{ steps.target.outputs.sha }}"
             echo "- **Deployment ID:** ${{ steps.deploy.outputs.id }}"
