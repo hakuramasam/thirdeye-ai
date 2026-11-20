@@ -1,6 +1,6 @@
 import { UpstreamError, mapTimeoutError, requestSignal } from './index.js'
 
-function buildEndpoint(baseUrl?: string | null): string {
+export function buildEndpoint(baseUrl?: string | null): string {
   const base = (baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
   if (base.endsWith('/chat/completions')) {
     return base
