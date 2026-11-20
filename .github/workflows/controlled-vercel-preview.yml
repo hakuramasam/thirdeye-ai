@@ -1,0 +1,142 @@
+name: Controlled Vercel Preview
+
+# Run this workflow from the default branch only. It deploys an explicitly selected
+# branch + immutable commit SHA after GitHub reports all checks green.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Feature branch to preview (not main)"
+        required: true
+        type: string
+      sha:
+        description: "Exact 40-character commit SHA to deploy"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: controlled-vercel-preview
+  cancel-in-progress: true
+
+jobs:
+  deploy-preview:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate requested ref and commit
+        id: target
+        shell: bash
+        env:
+          TARGET_REF: ${{ inputs.ref }}
+          TARGET_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$TARGET_REF" == "main" ]] || ! git check-ref-format --branch "$TARGET_REF" >/dev/null 2>&1; then
+            echo "::error::Choose a valid non-main feature branch."
+            exit 1
+          fi
+          if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Provide a full 40-character lowercase commit SHA."
+            exit 1
+          fi
+          actual="$(git ls-remote https://github.com/hakuramasam/thirdeye-ai.git "refs/heads/$TARGET_REF" | awk '{print $1}')"
+          if [[ "$actual" != "$TARGET_SHA" ]]; then
+            echo "::error::The supplied SHA is not the current head of the selected branch. Refresh the SHA and retry."
+            exit 1
+          fi
+          echo "ref=$TARGET_REF" >> "$GITHUB_OUTPUT"
+          echo "sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Require successful GitHub checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          gh api "repos/hakuramasam/thirdeye-ai/commits/$TARGET_SHA/check-runs" > /tmp/check-runs.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const data = JSON.parse(fs.readFileSync('/tmp/check-runs.json', 'utf8'));
+          const runs = data.check_runs ?? [];
+          if (runs.length === 0) {
+            console.error('No GitHub check runs found for this SHA; refusing to deploy.');
+            process.exit(1);
+          }
+          const pending = runs.filter(x => x.status !== 'completed');
+          const failed = runs.filter(x => x.status === 'completed' && x.conclusion !== 'success');
+          if (pending.length || failed.length) {
+            console.error(JSON.stringify({
+              pending: pending.map(x => ({name:x.name,status:x.status})),
+              unsuccessful: failed.map(x => ({name:x.name,conclusion:x.conclusion}))
+            }, null, 2));
+            process.exit(1);
+          }
+          console.log(`All ${runs.length} check run(s) completed successfully.`);
+          NODE
+
+      - name: Create Vercel preview for the exact SHA
+        id: deploy
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_TEAM_ID: team_VXg8PosP0At3mMO3KY6ScI4s
+          VERCEL_PROJECT_ID: prj_0t1NvQMOdZe4bL0q7lPBPIhA04bO
+          TARGET_REF: ${{ steps.target.outputs.ref }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${VERCEL_TOKEN:-}" ]]; then
+            echo "::error::Repository secret VERCEL_TOKEN is not configured."
+            exit 1
+          fi
+          payload="$(node -e 'process.stdout.write(JSON.stringify({
+            name: "thirdeye-ai",
+            project: process.env.VERCEL_PROJECT_ID,
+            target: "preview",
+            gitSource: {
+              type: "github",
+              org: "hakuramasam",
+              repo: "thirdeye-ai",
+              ref: process.env.TARGET_REF,
+              sha: process.env.TARGET_SHA
+            },
+            meta: {
+              githubWorkflow: "controlled-vercel-preview",
+              githubSha: process.env.TARGET_SHA
+            }
+          }))')"
+          response="$(curl --fail-with-body --silent --show-error \
+            -X POST "https://api.vercel.com/v13/deployments?teamId=$VERCEL_TEAM_ID" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data "$payload")"
+          echo "$response" > /tmp/vercel-deployment.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const d = JSON.parse(fs.readFileSync('/tmp/vercel-deployment.json', 'utf8'));
+          if (!d.url || !d.id) {
+            console.error(JSON.stringify(d, null, 2));
+            process.exit(1);
+          }
+          const url = d.url.startsWith('http') ? d.url : `https://${d.url}`;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `url=${url}\nid=${d.id}\n`);
+          console.log(`Preview deployment created: ${url}`);
+          console.log(`Deployment ID: ${d.id}`);
+          NODE
+
+      - name: Publish preview details
+        run: |
+          {
+            echo "## ThirdEye AI Preview"
+            echo ""
+            echo "- **URL:** ${{ steps.deploy.outputs.url }}"
+            echo "- **Branch:** ${{ steps.target.outputs.ref }}"
+            echo "- **Commit:** ${{ steps.target.outputs.sha }}"
+            echo "- **Deployment ID:** ${{ steps.deploy.outputs.id }}"
+            echo "- **Environment:** Preview only; no production promotion."
+          } >> "$GITHUB_STEP_SUMMARY"
