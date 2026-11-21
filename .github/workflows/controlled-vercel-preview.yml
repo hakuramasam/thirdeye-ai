@@ -107,14 +107,24 @@ jobs:
           fi
           vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
 
+      - name: Remove server-only secrets from build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_file=".vercel/.env.preview.local"
+          if [[ -f "$env_file" ]]; then
+            filtered="$(mktemp)"
+            awk '/^VITE_[A-Za-z0-9_]*=/ { print }' "$env_file" > "$filtered"
+            mv "$filtered" "$env_file"
+          fi
+
       - name: Build Preview artifacts in GitHub Actions
         env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: team_VXg8PosP0At3mMO3KY6ScI4s
           VERCEL_PROJECT_ID: prj_0t1NvQMOdZe4bL0q7lPBPIhA04bO
         run: |
           set -euo pipefail
-          vercel build --token="$VERCEL_TOKEN"
+          vercel build --yes
 
       - name: Upload prebuilt artifacts as Preview only
         id: deploy
@@ -123,8 +133,6 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_ORG_ID: team_VXg8PosP0At3mMO3KY6ScI4s
           VERCEL_PROJECT_ID: prj_0t1NvQMOdZe4bL0q7lPBPIhA04bO
-          TARGET_REF: ${{ steps.target.outputs.ref }}
-          TARGET_SHA: ${{ steps.target.outputs.sha }}
         run: |
           set -euo pipefail
           deployment_url="$(vercel deploy --prebuilt --target=preview --yes --token="$VERCEL_TOKEN")"
