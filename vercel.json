@@ -86,5 +86,8 @@
       "path": "/api/cron/agents",
       "schedule": "0 9 * * *"
     }
-  ]
+  ],
+  "github": {
+    "autoJobCancelation": false
+  }
 }
