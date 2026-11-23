@@ -11,7 +11,9 @@ This policy keeps production and persistent preview data out of automatic cleanu
 | Vercel-managed `preview/<github-branch>` | While PR is open, then 7 days after PR closure | `.github/workflows/neon-preview-branch-expiry.yml` |
 | CI-only `ci/*` | 24 hours from creation | CI job must create the branch with Neon CLI `--expires-at` |
 
-The expiry workflow only handles same-repository pull requests. It resolves the exact branch name, checks the branch is neither default nor protected, and updates only that branch. If Vercel has already removed the Neon branch, the workflow reports that no action was needed. It never deletes a branch directly.
+The expiry workflow handles same-repository pull requests only. It uses `pull_request_target` but checks out the trusted default branch, never the PR head, before loading the helper that receives `NEON_API_KEY`. It re-reads the PR state and checks for another open PR using the same branch before applying an expiry. Reopening a PR, reusing its branch in another open PR, or changing its head commit clears any scheduled expiry. The helper follows all Neon API pagination cursors, resolves the exact branch name, and refuses to modify default or protected branches.
+
+If Vercel has already removed the Neon branch, the workflow reports that no action was needed. It never deletes a branch directly.
 
 ## Required GitHub configuration
 
@@ -50,4 +52,4 @@ Do not create a Neon branch for the current PGlite-only CI suite unless a test s
 
 ## Operational verification
 
-After adding `NEON_API_KEY`, close a test PR and confirm the matching Neon branch reports an `expires_at` approximately seven days in the future. Also confirm `main` and `vercel-preview` still have no expiry. Do not use a production-data branch for this test.
+After adding `NEON_API_KEY`, close a test PR and confirm the matching Neon branch reports an `expires_at` approximately seven days in the future. Reopen a disposable test PR and confirm its branch expiry is cleared. Also confirm `main` and `vercel-preview` still have no expiry. Do not use a production-data branch for this test.
