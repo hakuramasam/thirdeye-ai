@@ -13,7 +13,10 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "test:file": "tsx --test"
+    "test:file": "tsx --test",
+    "build:cloudflare": "npm run build:web",
+    "test:cloudflare": "tsx --test tests/cloudflare-worker.test.ts",
+    "deploy:cloudflare": "npx wrangler deploy --config wrangler.jsonc"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
