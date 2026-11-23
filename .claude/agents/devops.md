@@ -3,7 +3,7 @@ name: devops
 description: "CI/CD, infrastructure, monitoring and recovery. Use for tdt_devops tasks within its charter."
 tools: [Read, Grep, Glob, Edit, Write]
 permissionMode: default
-skills: [thirdeye-team]
+skills: [thirdeye-team, devops]
 maxTurns: 16
 ---
 
