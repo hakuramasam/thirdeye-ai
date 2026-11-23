@@ -30,6 +30,14 @@
     },
     "gemini_cli": {
       "instructions": "GEMINI.md"
+    },
+    "github_actions": {
+      "ci": ".github/workflows/ci.yml",
+      "neon_lifecycle": ".github/workflows/neon-preview-branch-expiry.yml",
+      "controlled_preview": ".github/workflows/controlled-vercel-preview.yml",
+      "dependabot": ".github/dependabot.yml",
+      "pull_request_template": ".github/PULL_REQUEST_TEMPLATE.md",
+      "issue_template": ".github/ISSUE_TEMPLATE/agent-task.yml"
     }
   },
   "tool_authority": {
@@ -43,7 +51,7 @@
       "namespaced_mcp_tools",
       "x402_payment_policy"
     ],
-    "write_rule": "repo_write requires a task-scoped grant and is enforced server-side; it creates agent/* branches and pull requests, never merges.",
+    "write_rule": "The runner adds repo_write when run-level allowWrite=true or the agent record has repo_access=write. The team authority policy requires task-scoped grants; persisted write entitlements must be treated as high risk and approved by the owner. The server enforces agent/* branches, allowlisted paths, size/file caps and credential checks; it opens PRs and never merges.",
     "external_mcp": "Only explicitly configured MCP servers with approved public hosts may be used. No provider credentials or endpoints are embedded in this repository."
   },
   "verification": {
@@ -62,6 +70,12 @@
         "read",
         "search",
         "agent"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Task"
       ]
     },
     {
@@ -73,6 +87,13 @@
         "read",
         "search",
         "edit"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
       ]
     },
     {
@@ -85,6 +106,13 @@
         "search",
         "edit",
         "agent"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
       ]
     },
     {
@@ -96,6 +124,13 @@
         "read",
         "search",
         "edit"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
       ]
     },
     {
@@ -107,6 +142,13 @@
         "read",
         "search",
         "edit"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
       ]
     },
     {
@@ -117,6 +159,11 @@
       "tools": [
         "read",
         "search"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob"
       ]
     },
     {
@@ -128,6 +175,13 @@
         "read",
         "search",
         "edit"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
       ]
     },
     {
@@ -139,6 +193,13 @@
         "read",
         "search",
         "edit"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
       ]
     },
     {
@@ -150,6 +211,12 @@
         "read",
         "search",
         "execute"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Bash"
       ]
     },
     {
@@ -160,6 +227,11 @@
       "tools": [
         "read",
         "search"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob"
       ]
     },
     {
@@ -171,6 +243,13 @@
         "read",
         "search",
         "edit"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
       ]
     },
     {
@@ -182,6 +261,13 @@
         "read",
         "search",
         "edit"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
       ]
     }
   ]
