@@ -18,6 +18,10 @@ import { emitAgentRunSpan, traceIdFrom, spanIdFrom } from '../telemetry/langfuse
 import { paidFetch } from './x402.js'
 import { REPO_TOOL, runRepoTool, hasRepoAccess } from './repo-tools.js'
 import { REPO_WRITE_TOOL, runRepoWrite } from './repo-write.js'
+import {
+  READ_CHECK_RUNS_TOOL, RUN_TEST_SUITE_TOOL, READ_DEPLOYMENT_STATUS_TOOL,
+  readCheckRuns, dispatchTestSuite, readDeploymentStatus, canRunCiForAgent,
+} from './operations-tools.js'
 import { logRunEvent } from './monitor.js'
 import {
   newCorrelationId,
@@ -43,6 +47,7 @@ import {
 } from './artifacts.js'
 import { assertPublicUrl } from '../lib/ssrf.js'
 import { verifyPayment, txHashFrom } from '../lib/partnerVerify.js'
+import { loadRoleSkillPack } from './skill-packs.js'
 import type { ModelRow } from '../lib/pricing.js'
 import type { UserRow } from '../lib/types.js'
 
@@ -146,6 +151,9 @@ export type RunResult = {
    * that produced text, so a caller hands on an address instead of a truncated copy.
    */
   artifact?: StoredArtifact
+  /** Role skill provenance for this exact execution. */
+  skill_version?: string | null
+  skill_sha256?: string | null
 }
 
 const MAX_DELEGATION_DEPTH = 3
@@ -347,7 +355,7 @@ async function runAgentInner(
   if (inserted.rowCount === 0) {
     // Same idempotency key seen before: return the recorded outcome instead of re-running
     // and re-charging. This is what makes a duplicated cron tick harmless.
-    const existing = await one(`SELECT status, output, tool_calls, spend_usd_micros, error FROM agent_runs WHERE id = $1`, [runId])
+    const existing = await one(`SELECT status, output, tool_calls, spend_usd_micros, error, skill_version, skill_sha256 FROM agent_runs WHERE id = $1`, [runId])
     return {
       runId,
       status: (existing?.status === 'success' ? 'success' : 'error') as 'success' | 'error',
@@ -355,13 +363,21 @@ async function runAgentInner(
       tool_calls: Number(existing?.tool_calls ?? 0),
       spend_usd_micros: Number(existing?.spend_usd_micros ?? 0),
       error: existing?.error ?? 'duplicate run id (replay)',
+      skill_version: existing?.skill_version ?? null,
+      skill_sha256: existing?.skill_sha256 ?? null,
       replayed: true,
     }
   }
 
+  // Resolve the reviewed role pack after the durable run row exists. A missing or malformed
+  // pack for a recognized team role fails this run closed and is visible in the run error.
+  const roleSkill = loadRoleSkillPack(agent.id, agent.name)
+  if (roleSkill) {
+    await query(`UPDATE agent_runs SET skill_version=$1, skill_sha256=$2 WHERE id=$3`, [roleSkill.version, roleSkill.sha256, runId])
+  }
   // The run row exists, so the execution is real: make that visible in the audit trail before any
   // work is done. A replay returned above and deliberately writes nothing.
-  await recordRunEvent(audit, 'run.created', { metadata: { model: agent.model, max_steps: maxSteps } })
+  await recordRunEvent(audit, 'run.created', { metadata: { model: agent.model, max_steps: maxSteps, skill_role: roleSkill?.role ?? null, skill_version: roleSkill?.version ?? null, skill_sha256: roleSkill?.sha256 ?? null } })
   await recordRunEvent(audit, 'run.started')
 
   const finish = async (
@@ -442,7 +458,7 @@ async function runAgentInner(
         spendMicros: spend,
       })
     }
-    return { runId, status, output, tool_calls: toolCalls, spend_usd_micros: spend, error, ...(artifact ? { artifact } : {}) }
+    return { runId, status, output, tool_calls: toolCalls, spend_usd_micros: spend, error, skill_version: roleSkill?.version ?? null, skill_sha256: roleSkill?.sha256 ?? null, ...(artifact ? { artifact } : {}) }
   }
 
   // Resolve model + LLM. The catalogue row is resolved even when a model is injected, because it
@@ -475,12 +491,21 @@ async function runAgentInner(
   // Write is granted per run, not per agent row: an orchestrator may hand one task write
   // authority and withhold it from the next, so the grant travels with the run.
   const canWrite = deps.allowWrite ?? ((agent as any).repo_access === 'write')
-  if (hasRepoAccess((agent as any).repo_access)) tools.push(REPO_TOOL)
+  const repoReadable = hasRepoAccess((agent as any).repo_access)
+  if (repoReadable) tools.push(REPO_TOOL)
   if (canWrite) tools.push(REPO_WRITE_TOOL)
+  if (repoReadable && env.githubToken && env.githubRepo) {
+    tools.push(READ_CHECK_RUNS_TOOL)
+    if (canRunCiForAgent(agent.id)) tools.push(RUN_TEST_SUITE_TOOL)
+  }
+  const deploymentReader = ['tdt_hermes', 'tdt_qa', 'tdt_devops'].includes(agent.id)
+  if (deploymentReader && process.env.VERCEL_TOKEN) tools.push(READ_DEPLOYMENT_STATUS_TOOL)
 
   try {
     const messages: any[] = [
-      { role: 'system', content: agent.system_prompt },
+      { role: 'system', content: roleSkill
+        ? `${agent.system_prompt}\n\n--- REVIEWED ROLE SKILL PACK: ${roleSkill.role} v${roleSkill.version} (sha256:${roleSkill.sha256}) ---\n${roleSkill.content}\n--- END ROLE SKILL PACK ---`
+        : agent.system_prompt },
       { role: 'user', content: input },
     ]
     const useTools = tools.length > 0
@@ -567,6 +592,12 @@ async function runAgentInner(
               result = await runRepoWrite(args)
             } else if (tc.function.name === 'repo_read' && hasRepoAccess((agent as any).repo_access)) {
               result = await runRepoTool(args)
+            } else if (tc.function.name === 'read_check_runs' && repoReadable) {
+              result = await readCheckRuns(args)
+            } else if (tc.function.name === 'run_test_suite' && repoReadable && canRunCiForAgent(agent.id)) {
+              result = await dispatchTestSuite(args)
+            } else if (tc.function.name === 'read_deployment_status' && ['tdt_hermes', 'tdt_qa', 'tdt_devops'].includes(agent.id)) {
+              result = await readDeploymentStatus(args)
             } else if (tc.function.name === 'http_fetch' && agent.x402_enabled) {
               const sellers = typeof agent.x402_allowed_sellers === 'string'
                 ? JSON.parse(agent.x402_allowed_sellers || '[]')
@@ -782,6 +813,12 @@ async function runAgentInner(
             } else if (tc.function.name === 'repo_read') {
               denied = 'repo_read requires repo access on this agent'
               result = `Refused: this agent has no repo access.`
+            } else if (tc.function.name === 'read_check_runs' || tc.function.name === 'run_test_suite') {
+              denied = 'GitHub operations are not authorized for this role or repository access level'
+              result = `Refused: GitHub check access and CI dispatch require repository read access; CI dispatch is limited to HERMES, QA, DEVOPS and agent-engineer.`
+            } else if (tc.function.name === 'read_deployment_status') {
+              denied = 'deployment status access is limited to HERMES, QA and DEVOPS'
+              result = `Refused: this role cannot inspect deployment status.`
             } else if (tc.function.name === 'http_fetch') {
               denied = 'http_fetch requires x402 to be enabled'
               result = `Refused: http_fetch is disabled for this agent.`

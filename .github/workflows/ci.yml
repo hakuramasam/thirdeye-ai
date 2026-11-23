@@ -1,25 +1,34 @@
-# The gate that makes agent pull requests safe to accept.
-#
-# Until this existed, nothing checked a patch: an agent (or I) could open a PR that failed to
-# compile and no one would know until production. Every pull request now proves three things
-# before a human reads it: it typechecks, the suite is green on PGlite, and it contains no
-# credential-shaped strings.
+# Pull requests and supported LTS lines are verified before a human accepts a change.
 name: ci
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [24, 26]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-      - name: Install
-        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Check Node and npm runtime
+        run: npm run check:runtime
+      - name: Validate agent skill registry
+        run: npm run validate:agent-skills
+      - name: Dry-run agent competency harness
+        run: npm run evaluate:agents
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Suite (PGlite, no DATABASE_URL)
@@ -27,9 +36,12 @@ jobs:
           DATABASE_URL: ''
           DATABASE_URL_UNPOOLED: ''
         run: npm test
-      - name: No credentials in the diff
+      - name: No credentials in the proposed changes
+        if: github.event_name != 'push'
         run: |
-          if git diff --unified=0 "origin/${{ github.base_ref || 'main' }}...HEAD" | grep -nE '(sk-thirdeye-[A-Za-z0-9]{8,}|sk-(proj|ant)-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,})'; then
+          BASE_REF="${{ github.event_name == 'pull_request' && github.base_ref || 'main' }}"
+          git fetch origin "$BASE_REF" --depth=1
+          if git diff --unified=0 "origin/$BASE_REF...HEAD" | grep -nE '(sk-thirdeye-[A-Za-z0-9]{8,}|sk-(proj|ant)-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,})'; then
             echo "::error::A credential-shaped string appears in this diff."; exit 1
           fi
           echo "clean"
