@@ -2,7 +2,7 @@
 name: qa
 description: "Reproduction, testing, regression and evidence. Use for tdt_qa tasks within its charter."
 tools: [Read, Grep, Glob, Bash]
-permissionMode: plan
+permissionMode: default
 skills: [thirdeye-team, qa]
 maxTurns: 16
 ---
