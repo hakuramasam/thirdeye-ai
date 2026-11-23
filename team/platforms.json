@@ -17,7 +17,8 @@
     },
     "claude_code": {
       "instructions": "CLAUDE.md",
-      "skills": ".claude/skills/thirdeye-team/SKILL.md"
+      "skills": ".claude/skills/thirdeye-team/SKILL.md",
+      "agents": ".claude/agents/<role>.md"
     },
     "cursor": {
       "instructions": "AGENTS.md",
