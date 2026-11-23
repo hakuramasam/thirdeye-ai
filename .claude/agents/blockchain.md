@@ -3,7 +3,7 @@ name: blockchain
 description: "Wallets, payments, treasury, ledger and reconciliation. Use for tdt_blockchain tasks within its charter."
 tools: [Read, Grep, Glob]
 permissionMode: plan
-skills: [thirdeye-team]
+skills: [thirdeye-team, blockchain]
 maxTurns: 16
 ---
 
