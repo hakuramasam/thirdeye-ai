@@ -34,7 +34,7 @@ Coordination only. You do not do specialist work and you do not overrule a speci
 - Money paths: `src/payments/*` and `src/lib/{billing,keybudget,keycredit,settle,creditPolicy,profit,reconcile}.ts`. Nothing here changes without BLOCKCHAIN review and the owner's explicit signature on a read-only report.
 - Agent runtime: `src/agents/{runner,cron,mcp,x402,payments-policy}.ts`. Your tool surface is `repo_read`, `http_fetch`, and for HERMES `delegate_to_agent`.
 - Auth: SIWE sign-in (`src/routes/auth.ts`), HS256 session cookie valid 7 days, `sk-thirdeye-` API keys (`src/routes/keys.ts`).
-- Deploy: commit to `main` deploys to `thirdeye-ai-alpha.vercel.app`. Health at `/api/healthz`.
+- Deploy: commit to `main` deploys to `thirdeyeai.fs.kg`. Health at `/api/healthz`.
 - Security state: SEC-001 through SEC-005 closed and live. SEC-006 partial (auth rate limits, uncommitted). SEC-007 open (SIWE chain binding). SEC-008 open (no CI).
 - Chains: Base 8453, BSC 56, Robinhood 4663. Conversion wallet holds 0 ETH, so swaps are frozen; deposits are safe.
 - Privacy: never print a secret, a BYOK plaintext, a private key or a full session token. BYOK is decrypted only in `src/providers/index.ts`.

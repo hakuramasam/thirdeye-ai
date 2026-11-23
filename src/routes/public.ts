@@ -22,7 +22,7 @@ const SITE = 'https://thirdeyeai.fs.kg'
  * The project's official contact address, published here on purpose.
  *
  * Token listings ask for an address on the project's own domain. The project domain is a
- * vercel.app subdomain, which cannot receive mail, so the address is hosted on AgentMail's public
+ * shared hosting domain, which cannot receive mail, so the address is hosted on AgentMail's public
  * domain instead. Publishing it on this page is what makes it verifiable: a reviewer can see the
  * address the project claims, on the project's own site, next to the contract and the creator
  * address it belongs to. Keep this value in sync with any listing submission.
@@ -532,7 +532,7 @@ const CONTACT = `
   <div class="card"><h3>Partnerships</h3><p>First contact for barter and integration enquiries. Terms already published at <a href="/partnerships">Partnerships</a>.</p></div>
 </div>
 <h2>Why the address is not on this domain</h2>
-<p>The project site runs on a <code>vercel.app</code> subdomain. A subdomain of a hosting platform cannot receive mail, so the project mail is hosted on AgentMail's public domain instead. That is a public mail domain in the same sense as Gmail, which is why this page exists: the address is published on the project's own site, next to the contract and the creator address it belongs to, so a reviewer can confirm that the project is the party claiming it rather than relying on the address alone.</p>
+<p>The project site runs on its own domain, <code>thirdeyeai.fs.kg</code>, registered through a free-domain service. A free subdomain of a hosting platform cannot receive mail, so the project mail is hosted on AgentMail's public domain instead. That is a public mail domain in the same sense as Gmail, which is why this page exists: the address is published on the project's own site, next to the contract and the creator address it belongs to, so a reviewer can confirm that the project is the party claiming it rather than relying on the address alone.</p>
 <h2>Verifying that this is the project</h2>
 <p>Every anchor below is onchain or on a public host, so none of them depend on this page being truthful.</p>
 <table><thead><tr><th>Anchor</th><th>Value</th></tr></thead><tbody>
