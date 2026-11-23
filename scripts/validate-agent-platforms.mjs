@@ -137,6 +137,10 @@ const actualTools = new Set(tools.tools.map((item) => item.name));
 for (const name of expectedTools) check(actualTools.has(name), `Missing runtime tool manifest entry: ${name}`);
 check(tools.tools.find((item) => item.name === 'repo_write')?.never?.includes('merges a pull request'), 'repo_write manifest must state that it cannot merge');
 check(tools.tools.find((item) => item.name === 'repo_write')?.access?.includes('task-scoped'), 'repo_write must remain task-scoped');
+const protectedPaths = tools.tools.find((item) => item.name === 'repo_write')?.protected_control_plane_paths ?? [];
+for (const path of ['.codex/**', '.github/workflows/**', 'team/policies/**', 'src/agents/runner.ts', 'src/agents/repo-write.ts']) {
+  check(protectedPaths.includes(path), `repo_write must protect control-plane path ${path}`);
+}
 
 for (const path of [
   'team/platforms.json',
