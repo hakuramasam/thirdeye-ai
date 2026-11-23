@@ -6,11 +6,11 @@ This repository supports multiple coding-agent hosts while keeping one canonical
 
 | Platform | Project instructions | Agent/skill surface | What it loads |
 |---|---|---|---|
-| OpenAI Codex | `AGENTS.md` | `.codex/agents/*.toml` + `.agents/skills/thirdeye-team/SKILL.md` | Twelve role-specific subagents with read-only sandbox for HERMES and independent security reviewers |
-| Claude Code | `CLAUDE.md` | `.claude/agents/*.md` + `.claude/skills/thirdeye-team/SKILL.md` | Twelve role-specific subagents with least-privilege tool lists |
+| OpenAI Codex | `AGENTS.md` | `.codex/agents/*.toml` + `.agents/skills/*/SKILL.md` | Twelve role-specific subagents and twelve discoverable role skills; HERMES and independent security reviewers are read-only |
+| Claude Code | `CLAUDE.md` | `.claude/agents/*.md` + `.claude/skills/*/SKILL.md` | Twelve role-specific subagents and twelve role skills with least-privilege tool lists |
 | Cursor | `AGENTS.md` + `.cursor/rules/thirdeye-team.mdc` | Project rules | Team and engineering guardrails |
 | GitHub Copilot | `.github/copilot-instructions.md` | `.github/agents/*.agent.md` | Role-specific custom agents |
-| Gemini CLI | `GEMINI.md` | Project context | Team charter, role packs and safe tool use |
+| Gemini CLI | `GEMINI.md` | `.agents/skills/*/SKILL.md` | Team charter and twelve discoverable role skills |
 
 The files in `team/agents/<role>/SKILL.md` remain the source of role-specific knowledge. Platform adapters must point back to these files rather than fork their contents. `team/platforms.json` records the mapping and `scripts/validate-agent-platforms.mjs` checks it.
 
