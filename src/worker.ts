@@ -56,7 +56,7 @@ app.notFound(async (c) => {
 })
 
 export default {
-  fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    return app.fetch(request, env, ctx)
+  fetch(request: Request, env: Env, ctx: unknown) {
+    return app.fetch(request, env, ctx as never)
   },
 }
