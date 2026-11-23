@@ -1,0 +1,83 @@
+name: Agent team task
+description: Create a structured task for the ThirdEye AI development team
+title: "[agent-task] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        HERMES is the only intake and dispatch owner. This form records a task request; it does not grant write, merge, deployment, payment or data-deletion authority.
+  - type: dropdown
+    id: pipeline
+    attributes:
+      label: Pipeline
+      description: Choose the workflow that matches the request.
+      options:
+        - feature
+        - bugfix
+        - incident
+    validations:
+      required: true
+  - type: dropdown
+    id: owner
+    attributes:
+      label: Proposed accountable owner
+      options:
+        - tdt_hermes
+        - tdt_product
+        - tdt_architect
+        - tdt_backend
+        - tdt_frontend
+        - tdt_blockchain
+        - tdt_intelligence
+        - tdt_agent-engineer
+        - tdt_qa
+        - tdt_sentinel
+        - tdt_devops
+        - tdt_docs
+    validations:
+      required: true
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective and current behavior
+      description: State the outcome and include reproducible evidence for defects.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Use observable results that QA can independently verify.
+      placeholder: |
+        - Given ...
+        - When ...
+        - Then ...
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Explicitly out of scope
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and resources
+      description: Name required files, schemas, external systems or prerequisite tasks. Do not paste credentials.
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk level
+      options:
+        - low
+        - medium
+        - high
+        - critical
+    validations:
+      required: true
+  - type: textarea
+    id: approvals
+    attributes:
+      label: Approval or escalation required
+      description: Identify any money, signer, billing, key, schema, production, customer-data or permission-sensitive decision.
