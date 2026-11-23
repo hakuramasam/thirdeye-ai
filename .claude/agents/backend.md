@@ -3,7 +3,7 @@ name: backend
 description: "Backend, database, APIs, agents and workflows. Use for tdt_backend tasks within its charter."
 tools: [Read, Grep, Glob, Edit, Write]
 permissionMode: default
-skills: [thirdeye-team]
+skills: [thirdeye-team, backend]
 maxTurns: 16
 ---
 
