@@ -1,13 +1,13 @@
 name: Neon preview branch expiry
 
-# Vercel-created Neon branches remain available while a PR is active.
-# When the PR closes, give its matching preview database a seven-day retention window.
+# Run from the trusted base branch. Never execute code from the PR being closed.
 on:
-  pull_request:
-    types: [closed]
+  pull_request_target:
+    types: [closed, reopened]
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   set-preview-branch-expiry:
@@ -16,14 +16,43 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Set seven-day expiry on the exact Neon preview branch
+      - name: Confirm the PR is still closed and the branch is not in use
+        id: lifecycle
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const eventPr = context.payload.pull_request;
+            const current = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: eventPr.number,
+            });
+            const openForBranch = await github.paginate(github.rest.pulls.list, {
+              owner,
+              repo,
+              state: 'open',
+              head: `${owner}:${eventPr.head.ref}`,
+              per_page: 100,
+            });
+            const sameHead = current.data.head.sha === eventPr.head.sha;
+            const stillClosed = current.data.state === 'closed';
+            const branchInUse = openForBranch.some((pr) => pr.number !== eventPr.number);
+            const action = stillClosed && sameHead && !branchInUse ? 'expire' : 'clear';
+            core.setOutput('action', action);
+            core.info(`Neon preview branch lifecycle action: ${action}`);
+      - name: Apply lifecycle action to the exact Neon preview branch
         env:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           NEON_PROJECT_ID: shiny-scene-69417365
           NEON_BRANCH_NAME: preview/${{ github.event.pull_request.head.ref }}
+          NEON_BRANCH_ACTION: ${{ steps.lifecycle.outputs.action }}
         run: |
           set -euo pipefail
           if [[ -z "${NEON_API_KEY:-}" ]]; then
