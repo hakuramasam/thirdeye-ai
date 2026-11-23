@@ -26,8 +26,10 @@ for (const unit of org.units) {
   const slug = unit.id.replace(/^tdt_/, '');
   const skillPath = `team/agents/${slug}/SKILL.md`;
   const profilePath = `.github/agents/${slug}.agent.md`;
+  const claudeAgentPath = `.claude/agents/${slug}.md`;
   check(exists(skillPath), `${unit.id}: missing canonical skill ${skillPath}`);
   check(exists(profilePath), `${unit.id}: missing Copilot profile ${profilePath}`);
+  check(exists(claudeAgentPath), `${unit.id}: missing Claude Code subagent ${claudeAgentPath}`);
   check(Array.isArray(unit.owns_paths), `${unit.id}: owns_paths must be an array`);
   check(Array.isArray(unit.handoff_to), `${unit.id}: handoff_to must be an array`);
   for (const next of unit.handoff_to || []) check(ids.has(next), `${unit.id}: unknown handoff target ${next}`);
@@ -77,6 +79,7 @@ for (const role of platforms.role_profiles || []) {
   }
 }
 check((platforms.role_profiles || []).length === org.units.length, 'Every canonical role must have exactly one platform profile');
+check(platforms.platforms.claude_code.agents === '.claude/agents/<role>.md', 'Claude subagent directory mapping is missing');
 
 for (const item of [...resources.knowledge, ...resources.skills, ...resources.workflows, ...resources.schemas]) {
   check(exists(item.path), `Resource registry path does not exist: ${item.path}`);
