@@ -69,11 +69,11 @@ export function validateWritePath(raw: unknown): string {
   if (p.includes('..')) throw new Error('Path traversal is not allowed')
   if (p.includes('\0') || p.length > 300) throw new Error('Invalid path')
   if (DENIED.some((re) => re.test(p))) throw new Error(`Refusing to write ${p}: credentials and internals are off limits`)
-  if (!ALLOWED_PREFIXES.some((pre) => p.startsWith(pre))) {
-    throw new Error(`Refusing to write ${p}: only ${ALLOWED_PREFIXES.join(', ')} are writable`)
-  }
   if (CONTROL_PLANE_PATHS.some((re) => re.test(p))) {
     throw new Error(`Refusing to write ${p}: agent/platform governance configuration requires an owner-managed change`)
+  }
+  if (!ALLOWED_PREFIXES.some((pre) => p.startsWith(pre))) {
+    throw new Error(`Refusing to write ${p}: only ${ALLOWED_PREFIXES.join(', ')} are writable`)
   }
   if (MONEY_PATHS.some((re) => re.test(p))) {
     throw new Error(`Refusing to write ${p}: money and key paths need a named human's signature, not an agent's`)
