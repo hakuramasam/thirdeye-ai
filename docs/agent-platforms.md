@@ -49,3 +49,19 @@ No profile grants autonomous merge or production deployment. Money, signer, wall
 - A role prompt cannot prove the agent actually performed its task. The runtime needs execution evidence and independent checks.
 - The repository's current agent runtime still documents gaps in durable task rows and artifact-only delegation in `team/organization.json`.
 - This configuration does not automatically provision third-party accounts, install MCP servers, distribute secrets, enable provider-side agent teams, or alter GitHub/Vercel/Cloudflare settings.
+
+## GitHub Actions audit — 2026-11-23
+
+The repository's current default-branch workflow set was inspected alongside recent Actions runs.
+
+- Repository workflows on `main`: CI, controlled Vercel preview and Neon preview-branch lifecycle. This PR adds the agent-platform contract validator to CI.
+- GitHub-managed CodeQL and Advanced Security dynamic workflows were observed completing successfully. They are platform-managed, so this change does not add duplicate CodeQL workflows.
+- A recent Dependabot npm update run failed. A repository `.github/dependabot.yml` is added here to make npm and GitHub Actions update cadence explicit; the failed run itself still needs its Dependabot job logs reviewed before calling it fixed.
+- Historical `dependency-health.yml` runs came from `work/wo-team-01-agent-competency-upgrade`, not current `main`. That historical file references `.nvmrc` and `npm run check:runtime`, neither of which is present in the current default-branch tree. It was not copied blindly.
+- Historical `wo02-postgres-integration.yml` runs came from a feature branch and the workflow is absent from current `main`. The current standard CI uses PGlite; this platform configuration does not claim that live PostgreSQL concurrency/integration coverage is active.
+
+## GitHub task intake and PR handoff
+
+- `.github/ISSUE_TEMPLATE/agent-task.yml` captures pipeline, accountable owner, objective, testable acceptance criteria, out-of-scope items, dependencies, risk and approvals. Owner values match the task schema enum.
+- `.github/PULL_REQUEST_TEMPLATE.md` asks for evidence, exact SHA, CI/test results, independent QA/SENTINEL review, rollback and production approval.
+- `.github/dependabot.yml` schedules weekly npm and GitHub Actions version updates. Dependency update PRs still require CI, review and normal approval; Dependabot is not allowed to auto-merge or deploy.
