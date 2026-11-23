@@ -6,7 +6,7 @@ This repository supports multiple coding-agent hosts while keeping one canonical
 
 | Platform | Project instructions | Agent/skill surface | What it loads |
 |---|---|---|---|
-| OpenAI Codex | `AGENTS.md` | `.agents/skills/thirdeye-team/SKILL.md` | Canonical team charter and task workflow |
+| OpenAI Codex | `AGENTS.md` | `.codex/agents/*.toml` + `.agents/skills/thirdeye-team/SKILL.md` | Twelve role-specific subagents with read-only sandbox for HERMES and independent security reviewers |
 | Claude Code | `CLAUDE.md` | `.claude/agents/*.md` + `.claude/skills/thirdeye-team/SKILL.md` | Twelve role-specific subagents with least-privilege tool lists |
 | Cursor | `AGENTS.md` + `.cursor/rules/thirdeye-team.mdc` | Project rules | Team and engineering guardrails |
 | GitHub Copilot | `.github/copilot-instructions.md` | `.github/agents/*.agent.md` | Role-specific custom agents |
@@ -15,6 +15,8 @@ This repository supports multiple coding-agent hosts while keeping one canonical
 The files in `team/agents/<role>/SKILL.md` remain the source of role-specific knowledge. Platform adapters must point back to these files rather than fork their contents. `team/platforms.json` records the mapping and `scripts/validate-agent-platforms.mjs` checks it.
 
 ## Agent roles
+
+Codex custom subagents are defined in `.codex/agents/`. They inherit the parent session's provider, MCP and approval configuration; reviewer roles are configured read-only, and HERMES has shell execution disabled. Do not interpret these profiles as application-level grants.
 
 There are twelve canonical units: HERMES, PRODUCT, ARCHITECT, BACKEND, FRONTEND, BLOCKCHAIN, INTELLIGENCE, AGENT-ENGINEER, QA, SENTINEL, DEVOPS and DOCS. Their IDs, mandates, ownership paths, handoffs and required deliverables come from `team/organization.json`. GitHub Copilot custom profiles are provided under `.github/agents/`; Claude Code subagents are provided under `.claude/agents/`. Both reference the same canonical role skill packs.
 
