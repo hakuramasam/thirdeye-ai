@@ -20,7 +20,7 @@ Read `team/organization.json`. Assign exactly one accountable owner per stage. U
 Read `team/policies/authority.md`. HERMES plans and accepts; specialists execute their mandate; QA and SENTINEL independently verify. Money movement, signer/treasury changes, billing, settlement, key and schema changes, production secrets, customer-data deletion, standing permissions, merges and production deployments require the stated human approval.
 
 ## Verify the actual runtime
-The in-product runner exposes built-in tools such as `delegate_to_agent`, `read_artifact`, `repo_read`, `repo_write` (only with a task-scoped grant), `http_fetch` and configured namespaced MCP tools; x402 payment is separately guarded by seller allowlist and per-call cap. Always inspect current code before relying on this summary. A role prompt cannot grant a tool or bypass server policy.
+The in-product runner exposes built-in tools such as `delegate_to_agent`, `read_artifact`, `repo_read`, `repo_write` (enabled by run-level `allowWrite=true` or agent-record `repo_access=write`; policy requires task-scoped grants and persisted write entitlements need owner approval), `http_fetch` and configured namespaced MCP tools; x402 payment is separately guarded by seller allowlist and per-call cap. Always inspect current code before relying on this summary. A role prompt cannot grant a tool or bypass server policy.
 
 ## Handoff
 Return the artifact, evidence, paths/lines, acceptance status, test commands/results, risks and the named next owner. Never claim tested, merged or deployed unless the corresponding system confirms it.
