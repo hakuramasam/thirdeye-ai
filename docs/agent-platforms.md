@@ -7,7 +7,7 @@ This repository supports multiple coding-agent hosts while keeping one canonical
 | Platform | Project instructions | Agent/skill surface | What it loads |
 |---|---|---|---|
 | OpenAI Codex | `AGENTS.md` | `.agents/skills/thirdeye-team/SKILL.md` | Canonical team charter and task workflow |
-| Claude Code | `CLAUDE.md` | `.claude/skills/thirdeye-team/SKILL.md` | Canonical role packs and authority rules |
+| Claude Code | `CLAUDE.md` | `.claude/agents/*.md` + `.claude/skills/thirdeye-team/SKILL.md` | Twelve role-specific subagents with least-privilege tool lists |
 | Cursor | `AGENTS.md` + `.cursor/rules/thirdeye-team.mdc` | Project rules | Team and engineering guardrails |
 | GitHub Copilot | `.github/copilot-instructions.md` | `.github/agents/*.agent.md` | Role-specific custom agents |
 | Gemini CLI | `GEMINI.md` | Project context | Team charter, role packs and safe tool use |
@@ -16,7 +16,7 @@ The files in `team/agents/<role>/SKILL.md` remain the source of role-specific kn
 
 ## Agent roles
 
-There are twelve canonical units: HERMES, PRODUCT, ARCHITECT, BACKEND, FRONTEND, BLOCKCHAIN, INTELLIGENCE, AGENT-ENGINEER, QA, SENTINEL, DEVOPS and DOCS. Their IDs, mandates, ownership paths, handoffs and required deliverables come from `team/organization.json`. GitHub Copilot custom profiles are provided under `.github/agents/`.
+There are twelve canonical units: HERMES, PRODUCT, ARCHITECT, BACKEND, FRONTEND, BLOCKCHAIN, INTELLIGENCE, AGENT-ENGINEER, QA, SENTINEL, DEVOPS and DOCS. Their IDs, mandates, ownership paths, handoffs and required deliverables come from `team/organization.json`. GitHub Copilot custom profiles are provided under `.github/agents/`; Claude Code subagents are provided under `.claude/agents/`. Both reference the same canonical role skill packs.
 
 ## Tools, resources and knowledge
 
