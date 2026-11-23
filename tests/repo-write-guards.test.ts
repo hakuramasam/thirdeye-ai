@@ -9,9 +9,20 @@ const {
   WRITE_MAX_FILES,
 } = await import('../src/agents/repo-write.js')
 
-test('writable paths inside the allowlist pass', () => {
-  for (const p of ['src/agents/x.ts', 'web/src/a.tsx', 'tests/t.test.ts', 'docs/a.md', 'team/policies/a.md', '.github/workflows/ci.yml']) {
+test('ordinary paths inside the allowlist pass', () => {
+  for (const p of ['src/lib/format.ts', 'web/src/a.tsx', 'tests/t.test.ts', 'docs/a.md', 'web/src/pages1.tsx']) {
     assert.equal(validateWritePath(p), p)
+  }
+})
+
+// Tightened deliberately: team policy and CI workflows used to be writable by an agent because they
+// sat under an allowed prefix. Both are now owner-only classes in src/lib/protectedResources.ts,
+// which is the whole point of centralising the decision.
+test('control plane, team policy and CI workflows are no longer agent-writable', () => {
+  for (const p of ['team/policies/a.md', '.github/workflows/ci.yml', 'team/agents/qa/SKILL.md', 'src/agents/repo-write.ts', 'src/agents/runner.ts', 'src/routes/agents.ts', 'src/app.ts']) {
+    // The owner-approval reason, not merely "any refusal": this pins the protected-class decision
+    // instead of a prefix or credential check that would pass either way.
+    assert.throws(() => validateWritePath(p), /owner's approval/)
   }
 })
 
