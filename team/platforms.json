@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "source_of_truth": {
+    "roster": "team/organization.json",
+    "authority": "team/policies/authority.md",
+    "role_knowledge": "team/agents/<role>/SKILL.md",
+    "pipelines": "team/pipelines/",
+    "workflows": "team/workflows/",
+    "task_contract": "src/team/schemas/task.schema.json",
+    "message_contract": "src/team/schemas/agent-message.schema.json",
+    "report_contract": "src/team/schemas/agent-report.schema.json"
+  },
+  "platforms": {
+    "codex": {"instructions": "AGENTS.md", "skills": ".agents/skills/thirdeye-team/SKILL.md"},
+    "claude_code": {"instructions": "CLAUDE.md", "skills": ".claude/skills/thirdeye-team/SKILL.md"},
+    "cursor": {"instructions": "AGENTS.md", "rules": ".cursor/rules/thirdeye-team.mdc"},
+    "github_copilot": {"instructions": ".github/copilot-instructions.md", "agents": ".github/agents/"},
+    "gemini_cli": {"instructions": "GEMINI.md"}
+  },
+  "tool_authority": {
+    "principle": "Platform profiles describe task focus and expose only necessary host tools; they do not grant application permissions.",
+    "runtime_enforced": ["repo_read", "repo_write", "delegate_to_agent", "http_fetch", "read_artifact", "namespaced_mcp_tools", "x402_payment_policy"],
+    "write_rule": "repo_write requires a task-scoped grant and is enforced server-side; it creates agent/* branches and pull requests, never merges.",
+    "external_mcp": "Only explicitly configured MCP servers with approved public hosts may be used. No provider credentials or endpoints are embedded in this repository."
+  },
+  "verification": {
+    "typecheck": "npm run typecheck",
+    "tests": "env -u DATABASE_URL -u DATABASE_URL_UNPOOLED npm test",
+    "web_build": "npm run build:web",
+    "platform_config": "node scripts/validate-agent-platforms.mjs"
+  }
+}
