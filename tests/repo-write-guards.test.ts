@@ -34,7 +34,11 @@ test('agent repo writes cannot modify agent/platform governance or CI control-pl
     'team/organization.json', 'team/platforms.json', 'team/tools.json', 'team/resources.json',
     'team/agents/hermes/SKILL.md', 'team/policies/authority.md',
     'team/pipelines/feature.pipeline.json', 'team/workflows/job-resolution.workflow.json',
-    'scripts/validate-agent-platforms.mjs',
+    'scripts/validate-agent-platforms.mjs', 'team/ORGANIZATION.md',
+    'src/agents/repo-write.ts', 'src/agents/repo-tools.ts', 'src/agents/runner.ts',
+    'src/agents/mcp.ts', 'src/agents/payments-policy.ts', 'src/agents/x402.ts',
+    'src/agents/audit-log.ts', 'src/agents/pipeline.ts', 'src/lib/ssrf.ts',
+    'src/lib/security.ts', 'src/lib/session.ts', 'src/team/validate.ts', 'src/team/schemas/task.schema.json',
   ]
   for (const path of protectedPaths) {
     assert.throws(() => validateWritePath(path), /owner-managed change/)
