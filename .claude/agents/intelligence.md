@@ -3,7 +3,7 @@ name: intelligence
 description: "Providers, ingestion, research, normalization and analytics. Use for tdt_intelligence tasks within its charter."
 tools: [Read, Grep, Glob, Edit, Write]
 permissionMode: default
-skills: [thirdeye-team]
+skills: [thirdeye-team, intelligence]
 maxTurns: 16
 ---
 
