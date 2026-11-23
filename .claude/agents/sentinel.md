@@ -3,7 +3,7 @@ name: sentinel
 description: "Threat analysis, access controls and security reviews. Use for tdt_sentinel tasks within its charter."
 tools: [Read, Grep, Glob]
 permissionMode: plan
-skills: [thirdeye-team]
+skills: [thirdeye-team, sentinel]
 maxTurns: 16
 ---
 
