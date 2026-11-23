@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "thirdeye-ai-staging",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-11-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "assets": {
+    "directory": "./web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+  "vars": {
+    "ENVIRONMENT": "staging",
+    "STAGING_DATABASE_ENABLED": "false",
+    "LIVE_PAYMENTS_ENABLED": "false",
+    "AGENT_EXECUTION_ENABLED": "false"
+  }
+}
