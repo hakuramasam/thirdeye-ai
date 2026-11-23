@@ -50,7 +50,7 @@ for (const unit of org.units) {
   }
   if (exists(claudeAgentPath)) {
     const profile = read(claudeAgentPath);
-    const frontmatter = profile.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);
+    const frontmatter = profile.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     check(Boolean(frontmatter), `${unit.id}: Claude subagent has no YAML frontmatter`);
     check(frontmatter?.[1].includes('tools:'), `${unit.id}: Claude subagent must declare tools`);
     check(frontmatter?.[1].includes('permissionMode:'), `${unit.id}: Claude subagent must declare permission mode`);
