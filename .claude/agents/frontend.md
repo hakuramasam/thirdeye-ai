@@ -3,7 +3,7 @@ name: frontend
 description: "Dashboard, UI, user experience and API integration. Use for tdt_frontend tasks within its charter."
 tools: [Read, Grep, Glob, Edit, Write]
 permissionMode: default
-skills: [thirdeye-team]
+skills: [thirdeye-team, frontend]
 maxTurns: 16
 ---
 
