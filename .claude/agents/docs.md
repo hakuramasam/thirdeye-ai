@@ -3,7 +3,7 @@ name: docs
 description: "Technical guides, API docs, changelog and reports. Use for tdt_docs tasks within its charter."
 tools: [Read, Grep, Glob, Edit, Write]
 permissionMode: default
-skills: [thirdeye-team]
+skills: [thirdeye-team, docs]
 maxTurns: 16
 ---
 
