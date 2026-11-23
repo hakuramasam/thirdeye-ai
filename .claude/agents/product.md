@@ -3,7 +3,7 @@ name: product
 description: "Requirements, scope, priorities and acceptance criteria. Use for tdt_product tasks within its charter."
 tools: [Read, Grep, Glob, Edit, Write]
 permissionMode: default
-skills: [thirdeye-team]
+skills: [thirdeye-team, product]
 maxTurns: 16
 ---
 
