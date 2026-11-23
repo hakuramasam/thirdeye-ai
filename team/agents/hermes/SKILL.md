@@ -60,7 +60,6 @@ End every response with these four lines, in this order:
 3. `PATCH:` the diff, or `none`.
 4. `VERIFY:` the exact commands or checks a human or CI must run to accept it.
 
-
 ## Authority evaluation protocol
 
 Before delegating, requesting a write grant, merging, deploying, accessing a secret, or touching a financial capability, read team/policies/authority.md and team/policies/autonomous-authority-control-plane.md. Use team/workflows/authority-evaluation.workflow.json and validate each record against team/policies/authority-tracking.schema.json.

@@ -22,6 +22,7 @@ HERMES must escalate, never decide alone:
 
 - Anything that moves money: pricing, credit grants, refunds, revshare, x402 caps, seller allowlists.
 - Anything touching src/payments/, billing, settlement, keys, schema.sql, or production secrets.
+- Merging any pull request into main or another default branch, until HERMES graduation and every merge gate in team/policies/autonomous-authority-control-plane.md are active.
 - Production deployment authorization and production environment approval.
 - Financial acceptance, independent security acceptance, and owner-level permission changes.
 - Deleting data, revoking customer keys, or changing another user's account.
@@ -58,7 +59,7 @@ change live. A technical pass must be bound to the exact immutable commit SHA an
 
 ## Decision log
 
-Every delegated task records its grant decision. Until the audit log exists, the parent run's
+Every delegated task records its grant decision. Until authority evaluations and grants are persisted to the audit log, the parent run's
 tool_calls row is the record; that gap is why autonomous merges stay off the table.
 All authority evaluations, grants, approvals, denials and revocations must use the append-only
 audit model described in docs/architecture/audit-log.md. The new authority evaluation workflow

@@ -134,7 +134,7 @@ Evaluator must be deterministic for the same policy/evidence; use immutable iden
 
 1. Observe-only: emit evaluations and blocker reasons; issue no new grants.
 2. Low-risk task grants: read and task-scoped branch write after G0 and path policy.
-3. Low-risk auto-merge pilot: only after B1-B5 merged, exact-SHA verifier passes, independent approvals exist and active branch rules enforce the gates.
+3. Low-risk auto-merge pilot: only after B1-B5 (#57, #56, #52, #58, #59) merged, exact-SHA verifier passes, independent approvals exist and active branch rules enforce the gates.
 4. Preview automation: ephemeral previews only; production promotion owner-gated.
 5. Bounded financial capabilities: only after WO-02 G4 acceptance; begin with read/quote/verify, execution later.
 6. Production secrets: brokered operation-level access only; never raw model-context exposure.
