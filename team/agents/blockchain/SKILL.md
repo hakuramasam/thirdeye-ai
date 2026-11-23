@@ -33,7 +33,7 @@ Chain adapters, wallet abstraction, payment verification, settlement and reconci
 - Production database: Neon Postgres. The standard automated suite uses isolated PGlite; run it with `DATABASE_URL` and `DATABASE_URL_UNPOOLED` unset.
 - Verification: `npm run typecheck`, `env -u DATABASE_URL -u DATABASE_URL_UNPOOLED npm test`, and `npm run build:web` when the web client changes.
 - Built-in agent tools include `repo_read`, `read_artifact`, and `http_fetch`; HERMES can delegate via `delegate_to_agent`. Configured remote MCP tools are namespaced as `mcp_<server>_<tool>`.
-- `repo_write` is not a standing role permission. It is available only when a write-enabled orchestrator grants it for one task. The server enforces an `agent/*` branch, allowlisted paths, file/byte caps and credential checks; it opens a PR and cannot merge.
+- `repo_write` is included when the run has `allowWrite=true` or the agent record has `repo_access=write`; the team policy requires task-scoped grants, so persisted write entitlements need owner approval. The server enforces an `agent/*` branch, allowlisted paths, file/byte caps and credential checks; it opens a PR and cannot merge.
 - MCP endpoints and user-supplied fetch URLs are checked by the public-host/SSRF policy. x402 payment is separately guarded by seller allowlists and a per-call cap.
 - No agent may merge or deploy production, move funds, change signers, alter billing/settlement/keys/schema, delete customer data or widen standing permissions without owner approval.
 - The current source code, team charter and authority policy outrank historical status notes in older documents. Verify any version, metric, deployment, provider or security-status claim at the exact commit before repeating it.
