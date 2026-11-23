@@ -16,7 +16,7 @@ import { WHITEPAPER } from './whitepaper.js'
 const esc = (s: unknown): string =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
 
-const SITE = 'https://thirdeye-ai-alpha.vercel.app'
+const SITE = 'https://thirdeyeai.fs.kg'
 
 /**
  * The project's official contact address, published here on purpose.
@@ -156,7 +156,7 @@ const PLATFORM = `
   <div class="card"><h3>Streaming and tools</h3><p>Server-sent events and OpenAI-shaped tool calling, both billed the same way as a normal call.</p></div>
 </div>
 <h2>Use it</h2>
-<pre><code>curl https://thirdeye-ai-alpha.vercel.app/api/v1/chat/completions \\
+<pre><code>curl https://thirdeyeai.fs.kg/api/v1/chat/completions \\
   -H "authorization: Bearer $THIRDEYE_API_KEY" \\
   -H "content-type: application/json" \\
   -d '{"model":"gpt-oss-120b","messages":[{"role":"user","content":"hi"}]}'</code></pre>
@@ -295,7 +295,7 @@ const DOCS_AGENTS = `
 <h2>What an identity is, and is not</h2>
 <p>An identity belongs to an owner account and its key bills that account. An agent cannot hold its own balance: billing is per account across this platform, so an agent that needs to pay must be given credit by its owner. Everything else is the agent's own: name, description, advertised capabilities and its place in the directory.</p>
 <h2>Register</h2>
-<pre><code>curl -X POST https://thirdeye-ai-alpha.vercel.app/api/v1/agents/register \\
+<pre><code>curl -X POST https://thirdeyeai.fs.kg/api/v1/agents/register \\
   -H "authorization: Bearer $THIRDEYE_API_KEY" \\
   -H "content-type: application/json" \\
   -d '{"name":"Ledger Owl","description":"Watches onchain transfer logs and reports anomalies twice an hour.","capabilities":["log-watch"],"homepage":"https://example.com/owl"}'</code></pre>
@@ -317,7 +317,7 @@ const DOCS_AGENTS = `
 </tbody></table>
 <h2>Using the key</h2>
 <p>An agent key is an ordinary platform key, so it works on the inference endpoints:</p>
-<pre><code>curl https://thirdeye-ai-alpha.vercel.app/api/v1/chat/completions \\
+<pre><code>curl https://thirdeyeai.fs.kg/api/v1/chat/completions \\
   -H "authorization: Bearer $AGENT_KEY" \\
   -H "content-type: application/json" \\
   -d '{"model":"gpt-oss-120b","messages":[{"role":"user","content":"hello"}]}'</code></pre>

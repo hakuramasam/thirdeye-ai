@@ -139,10 +139,10 @@ test('every public page carries a complete, real social and icon head', async ()
   for (const path of PATHS) {
     const body = await (await a.request(path)).text()
     assert.ok(body.includes('content="summary_large_image"'), `${path} should declare a large social card`)
-    assert.ok(body.includes('https://thirdeye-ai-alpha.vercel.app/og.png'), `${path} should point og:image at the shipped card`)
+    assert.ok(body.includes('https://thirdeyeai.fs.kg/og.png'), `${path} should point og:image at the shipped card`)
     assert.ok(body.includes('rel="icon"'), `${path} should link a favicon`)
     assert.ok(body.includes('rel="manifest"'), `${path} should link the web manifest`)
-    assert.ok(body.includes(`<link rel="canonical" href="https://thirdeye-ai-alpha.vercel.app${path}">`), `${path} should be self-canonical`)
+    assert.ok(body.includes(`<link rel="canonical" href="https://thirdeyeai.fs.kg${path}">`), `${path} should be self-canonical`)
     // every root-relative asset the head references must exist on disk
     for (const [, href] of body.matchAll(/(?:href|src|content)="\/([^"]+\.(?:png|ico|svg|webmanifest))"/g)) {
       assert.ok(existsSync(join(PUBLIC, href)), `${path} references /${href}, which is not in web/public`)
