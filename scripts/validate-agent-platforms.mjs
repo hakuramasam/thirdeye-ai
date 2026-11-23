@@ -85,8 +85,8 @@ for (const role of platforms.role_profiles || []) {
   check(Array.isArray(role.tools) && role.tools.includes('read') && role.tools.includes('search'), `${role.agent_id}: read/search tools are required`);
   if (exists(role.copilot_profile)) {
     const profile = read(role.copilot_profile);
-    const fm = profile.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);
-    const toolLine = fm?.[1].match(/^tools:\\s*\\[(.*?)\\]$/m)?.[1] ?? '';
+    const fm = profile.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    const toolLine = fm?.[1].split('\n').find((line) => line.trim().startsWith('tools:')) ?? '';
     const declared = [...toolLine.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
     check(JSON.stringify(declared) === JSON.stringify(role.tools), `${role.agent_id}: Copilot tools differ from team/platforms.json`);
   }
@@ -94,9 +94,9 @@ for (const role of platforms.role_profiles || []) {
   check(exists(claudePath), `${role.agent_id}: missing Claude profile ${claudePath}`);
   if (exists(claudePath)) {
     const profile = read(claudePath);
-    const fm = profile.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);
-    const toolLine = fm?.[1].match(/^tools:\\s*\\[(.*?)\\]$/m)?.[1] ?? '';
-    const declared = toolLine.split(',').map((value) => value.trim()).filter(Boolean);
+    const fm = profile.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    const toolLine = fm?.[1].split('\n').find((line) => line.trim().startsWith('tools:')) ?? '';
+    const declared = toolLine.slice(toolLine.indexOf('[') + 1, toolLine.lastIndexOf(']')).split(',').map((value) => value.trim().replace(/^"|"$/g, '')).filter(Boolean);
     check(JSON.stringify(declared) === JSON.stringify(role.claude_tools), `${role.agent_id}: Claude tools differ from team/platforms.json`);
   }
   if (role.agent_id === 'tdt_blockchain' || role.agent_id === 'tdt_sentinel') {
