@@ -5,13 +5,9 @@ const branchName = process.env.NEON_BRANCH_NAME;
 if (!projectId || !apiKey || !branchName) {
   throw new Error("NEON_PROJECT_ID, NEON_API_KEY, and NEON_BRANCH_NAME are required.");
 }
-if (!branchName.startsWith("preview/") || branchName === "preview/main") {
+if (branchName === "vercel-preview" || !branchName.startsWith("preview/") || branchName === "preview/main") {
   throw new Error(`Refusing to expire non-preview branch: ${branchName}`);
 }
-if (branchName === "vercel-preview") {
-  throw new Error("The persistent vercel-preview branch is explicitly excluded.");
-}
-
 const baseUrl = `https://console.neon.tech/api/v2/projects/${encodeURIComponent(projectId)}/branches`;
 const headers = {
   accept: "application/json",
@@ -19,7 +15,7 @@ const headers = {
   "content-type": "application/json",
 };
 
-const listResponse = await fetch(`${baseUrl}?search=${encodeURIComponent(branchName)}`, { headers });
+const listResponse = await fetch(baseUrl, { headers });
 if (!listResponse.ok) {
   throw new Error(`Neon branch lookup failed (${listResponse.status}): ${await listResponse.text()}`);
 }
