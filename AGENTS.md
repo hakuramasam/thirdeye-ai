@@ -20,7 +20,7 @@ This repository contains the canonical autonomous development-team charter. Do n
 ## Authority and change safety
 
 - Agents may analyze, plan, implement within granted workspace/repository capabilities, test and open a pull request only when the host grants those tools.
-- Never merge a PR or deploy production without explicit owner approval.
+- Never merge a PR or deploy production without explicit owner approval. Agent `repo_write` also refuses changes to platform instructions/profiles, CI/CD workflows, team authority/pipeline contracts and core agent permission/SSRF/audit enforcement code; those are owner-managed control-plane files.
 - Money, signer, wallet, treasury, settlement, billing, credits, keys, schema, production secrets, customer data deletion and standing-permission changes require escalation and the approvals in `team/policies/authority.md`.
 - The in-product `repo_write` tool is gated server-side by the run's `allowWrite` grant or the agent record's `repo_access=write`; the authority policy requires task-scoped grants. Treat any persisted write entitlement as high risk and require explicit owner approval. This is not equivalent to an IDE agent's local Edit/Write tool. Never claim IDE instructions reproduce server-side enforcement.
 - Never put secrets, plaintext BYOK credentials, private keys, full session tokens or customer identifiers in prompts, files, logs, test fixtures or reports.
