@@ -3,7 +3,7 @@ name: agent-engineer
 description: "Agent runtime, tool contracts, scheduling and execution accounting. Use for tdt_agent-engineer tasks within its charter."
 tools: [Read, Grep, Glob, Edit, Write]
 permissionMode: default
-skills: [thirdeye-team]
+skills: [thirdeye-team, agent-engineer]
 maxTurns: 16
 ---
 
