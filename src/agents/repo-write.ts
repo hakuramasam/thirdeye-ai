@@ -32,6 +32,28 @@ const MONEY_PATHS = [
   /^src\/db\/schema\.sql$/,
 ]
 
+/**
+ * Agent/platform governance is owner-managed. A repo_write grant must not let an agent
+ * rewrite the instructions, tool profiles, CI workflows or authority contracts that
+ * govern its own execution. These paths remain readable and can be changed through an
+ * owner-managed, ordinary reviewable PR.
+ */
+const CONTROL_PLANE_PATHS = [
+  /^AGENTS\.md$/i,
+  /^CLAUDE\.md$/i,
+  /^GEMINI\.md$/i,
+  /^\.agents\//i,
+  /^\.claude\//i,
+  /^\.codex\//i,
+  /^\.cursor\//i,
+  /^\.gemini\//i,
+  /^\.github\/(agents|instructions|workflows|ISSUE_TEMPLATE)\//i,
+  /^\.github\/(copilot-instructions\.md|dependabot\.yml|PULL_REQUEST_TEMPLATE\.md)$/i,
+  /^team\/(organization\.json|platforms\.json|tools\.json|resources\.json)$/i,
+  /^team\/(agents|policies|pipelines|workflows)\//i,
+  /^scripts\/validate-agent-platforms\.mjs$/i,
+]
+
 const DENIED = [
   /(^|\/)\.env(\..*)?$/i,
   /(^|\/)\.git(\/|$)/i,
@@ -49,6 +71,9 @@ export function validateWritePath(raw: unknown): string {
   if (DENIED.some((re) => re.test(p))) throw new Error(`Refusing to write ${p}: credentials and internals are off limits`)
   if (!ALLOWED_PREFIXES.some((pre) => p.startsWith(pre))) {
     throw new Error(`Refusing to write ${p}: only ${ALLOWED_PREFIXES.join(', ')} are writable`)
+  }
+  if (CONTROL_PLANE_PATHS.some((re) => re.test(p))) {
+    throw new Error(\`Refusing to write \${p}: agent/platform governance configuration requires an owner-managed change\`)
   }
   if (MONEY_PATHS.some((re) => re.test(p))) {
     throw new Error(`Refusing to write ${p}: money and key paths need a named human's signature, not an agent's`)
