@@ -11,15 +11,37 @@
     "report_contract": "src/team/schemas/agent-report.schema.json"
   },
   "platforms": {
-    "codex": {"instructions": "AGENTS.md", "skills": ".agents/skills/thirdeye-team/SKILL.md"},
-    "claude_code": {"instructions": "CLAUDE.md", "skills": ".claude/skills/thirdeye-team/SKILL.md"},
-    "cursor": {"instructions": "AGENTS.md", "rules": ".cursor/rules/thirdeye-team.mdc"},
-    "github_copilot": {"instructions": ".github/copilot-instructions.md", "agents": ".github/agents/"},
-    "gemini_cli": {"instructions": "GEMINI.md"}
+    "codex": {
+      "instructions": "AGENTS.md",
+      "skills": ".agents/skills/thirdeye-team/SKILL.md"
+    },
+    "claude_code": {
+      "instructions": "CLAUDE.md",
+      "skills": ".claude/skills/thirdeye-team/SKILL.md"
+    },
+    "cursor": {
+      "instructions": "AGENTS.md",
+      "rules": ".cursor/rules/thirdeye-team.mdc"
+    },
+    "github_copilot": {
+      "instructions": ".github/copilot-instructions.md",
+      "agents": ".github/agents/<role>.agent.md"
+    },
+    "gemini_cli": {
+      "instructions": "GEMINI.md"
+    }
   },
   "tool_authority": {
     "principle": "Platform profiles describe task focus and expose only necessary host tools; they do not grant application permissions.",
-    "runtime_enforced": ["repo_read", "repo_write", "delegate_to_agent", "http_fetch", "read_artifact", "namespaced_mcp_tools", "x402_payment_policy"],
+    "runtime_enforced": [
+      "repo_read",
+      "repo_write",
+      "delegate_to_agent",
+      "http_fetch",
+      "read_artifact",
+      "namespaced_mcp_tools",
+      "x402_payment_policy"
+    ],
     "write_rule": "repo_write requires a task-scoped grant and is enforced server-side; it creates agent/* branches and pull requests, never merges.",
     "external_mcp": "Only explicitly configured MCP servers with approved public hosts may be used. No provider credentials or endpoints are embedded in this repository."
   },
@@ -28,5 +50,138 @@
     "tests": "env -u DATABASE_URL -u DATABASE_URL_UNPOOLED npm test",
     "web_build": "npm run build:web",
     "platform_config": "node scripts/validate-agent-platforms.mjs"
-  }
+  },
+  "role_profiles": [
+    {
+      "agent_id": "tdt_hermes",
+      "slug": "hermes",
+      "skill": "team/agents/hermes/SKILL.md",
+      "copilot_profile": ".github/agents/hermes.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "agent"
+      ]
+    },
+    {
+      "agent_id": "tdt_product",
+      "slug": "product",
+      "skill": "team/agents/product/SKILL.md",
+      "copilot_profile": ".github/agents/product.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit"
+      ]
+    },
+    {
+      "agent_id": "tdt_architect",
+      "slug": "architect",
+      "skill": "team/agents/architect/SKILL.md",
+      "copilot_profile": ".github/agents/architect.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit",
+        "agent"
+      ]
+    },
+    {
+      "agent_id": "tdt_backend",
+      "slug": "backend",
+      "skill": "team/agents/backend/SKILL.md",
+      "copilot_profile": ".github/agents/backend.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit"
+      ]
+    },
+    {
+      "agent_id": "tdt_frontend",
+      "slug": "frontend",
+      "skill": "team/agents/frontend/SKILL.md",
+      "copilot_profile": ".github/agents/frontend.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit"
+      ]
+    },
+    {
+      "agent_id": "tdt_blockchain",
+      "slug": "blockchain",
+      "skill": "team/agents/blockchain/SKILL.md",
+      "copilot_profile": ".github/agents/blockchain.agent.md",
+      "tools": [
+        "read",
+        "search"
+      ]
+    },
+    {
+      "agent_id": "tdt_intelligence",
+      "slug": "intelligence",
+      "skill": "team/agents/intelligence/SKILL.md",
+      "copilot_profile": ".github/agents/intelligence.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit"
+      ]
+    },
+    {
+      "agent_id": "tdt_agent-engineer",
+      "slug": "agent-engineer",
+      "skill": "team/agents/agent-engineer/SKILL.md",
+      "copilot_profile": ".github/agents/agent-engineer.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit"
+      ]
+    },
+    {
+      "agent_id": "tdt_qa",
+      "slug": "qa",
+      "skill": "team/agents/qa/SKILL.md",
+      "copilot_profile": ".github/agents/qa.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "execute"
+      ]
+    },
+    {
+      "agent_id": "tdt_sentinel",
+      "slug": "sentinel",
+      "skill": "team/agents/sentinel/SKILL.md",
+      "copilot_profile": ".github/agents/sentinel.agent.md",
+      "tools": [
+        "read",
+        "search"
+      ]
+    },
+    {
+      "agent_id": "tdt_devops",
+      "slug": "devops",
+      "skill": "team/agents/devops/SKILL.md",
+      "copilot_profile": ".github/agents/devops.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit"
+      ]
+    },
+    {
+      "agent_id": "tdt_docs",
+      "slug": "docs",
+      "skill": "team/agents/docs/SKILL.md",
+      "copilot_profile": ".github/agents/docs.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit"
+      ]
+    }
+  ]
 }
