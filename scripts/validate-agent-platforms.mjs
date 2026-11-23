@@ -82,6 +82,17 @@ for (const role of platforms.role_profiles || []) {
   check(Boolean(unit), `Platform profile references unknown role ${role.agent_id}`);
   check(exists(role.skill), `${role.agent_id}: missing skill reference ${role.skill}`);
   check(exists(role.copilot_profile), `${role.agent_id}: missing profile ${role.copilot_profile}`);
+  check(exists(role.codex_agent), `${role.agent_id}: missing Codex agent ${role.codex_agent}`);
+  if (exists(role.codex_agent)) {
+    const toml = read(role.codex_agent);
+    check(toml.includes(`name = "${role.agent_id}"`), `${role.agent_id}: Codex agent name mismatch`);
+    check(toml.includes('description = '), `${role.agent_id}: Codex agent description missing`);
+    check(toml.includes('developer_instructions = """'), `${role.agent_id}: Codex developer instructions missing`);
+    check(toml.includes(role.skill), `${role.agent_id}: Codex agent must reference its canonical skill`);
+    if (['tdt_hermes', 'tdt_blockchain', 'tdt_sentinel'].includes(role.agent_id)) {
+      check(toml.includes('sandbox_mode = "read-only"') && toml.includes('shell_tool = false'), `${role.agent_id}: Codex reviewer/orchestrator must remain read-only without shell`);
+    }
+  }
   check(Array.isArray(role.tools) && role.tools.includes('read') && role.tools.includes('search'), `${role.agent_id}: read/search tools are required`);
   if (exists(role.copilot_profile)) {
     const profile = read(role.copilot_profile);
@@ -111,6 +122,7 @@ for (const role of platforms.role_profiles || []) {
 }
 check((platforms.role_profiles || []).length === org.units.length, 'Every canonical role must have exactly one platform profile');
 check(platforms.platforms.claude_code.agents === '.claude/agents/<role>.md', 'Claude subagent directory mapping is missing');
+check(platforms.platforms.codex.agents === '.codex/agents/<role>.toml', 'Codex subagent directory mapping is missing');
 
 for (const item of [...resources.knowledge, ...resources.skills, ...resources.workflows, ...resources.schemas]) {
   check(exists(item.path), `Resource registry path does not exist: ${item.path}`);
