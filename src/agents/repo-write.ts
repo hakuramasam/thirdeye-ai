@@ -132,7 +132,7 @@ export const REPO_WRITE_TOOL = {
   function: {
     name: 'repo_write',
     description:
-      'Propose a change to this project by opening a pull request. You cannot commit to main and cannot merge: the tool creates an agent/<branch>, commits your files, and opens a PR. Writable: src/, web/, tests/, docs/, team/, .github/. Refused: money and billing paths, keys, schema.sql, env files. Include the verification you expect CI to prove in the PR body.',
+      'Propose a change to this project by opening a pull request. You cannot commit to main and cannot merge: the tool creates an agent/<branch>, commits your files, and opens a PR. Writable: src/, web/, tests/, docs/, team/, .github/ subject to explicit control-plane and sensitive-path refusals. Refused: money and billing paths, keys, schema.sql, agent/platform instructions and profiles, CI/CD workflows, authority/pipeline contracts, core tool/SSRF/audit enforcement paths, and env files. Include the verification you expect CI to prove in the PR body.',
     parameters: {
       type: 'object',
       properties: {
