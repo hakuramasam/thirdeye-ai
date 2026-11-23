@@ -22,18 +22,18 @@ body:
     attributes:
       label: Proposed accountable owner
       options:
-        - tdt_hermes
-        - tdt_product
-        - tdt_architect
-        - tdt_backend
-        - tdt_frontend
-        - tdt_blockchain
-        - tdt_intelligence
-        - tdt_agent-engineer
-        - tdt_qa
-        - tdt_sentinel
-        - tdt_devops
-        - tdt_docs
+        - hermes
+        - product
+        - architect
+        - backend
+        - frontend
+        - blockchain
+        - intelligence
+        - agent-engineer
+        - qa
+        - sentinel
+        - devops
+        - docs
     validations:
       required: true
   - type: textarea
