@@ -68,6 +68,12 @@ const expectedPlatformPaths = [
   platforms.platforms.cursor.rules,
   platforms.platforms.github_copilot.instructions,
   platforms.platforms.gemini_cli.instructions,
+  platforms.platforms.github_actions.ci,
+  platforms.platforms.github_actions.neon_lifecycle,
+  platforms.platforms.github_actions.controlled_preview,
+  platforms.platforms.github_actions.dependabot,
+  platforms.platforms.github_actions.pull_request_template,
+  platforms.platforms.github_actions.issue_template,
 ];
 for (const path of expectedPlatformPaths) check(exists(path), `Missing platform adapter: ${path}`);
 
@@ -77,6 +83,22 @@ for (const role of platforms.role_profiles || []) {
   check(exists(role.skill), `${role.agent_id}: missing skill reference ${role.skill}`);
   check(exists(role.copilot_profile), `${role.agent_id}: missing profile ${role.copilot_profile}`);
   check(Array.isArray(role.tools) && role.tools.includes('read') && role.tools.includes('search'), `${role.agent_id}: read/search tools are required`);
+  if (exists(role.copilot_profile)) {
+    const profile = read(role.copilot_profile);
+    const fm = profile.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);
+    const toolLine = fm?.[1].match(/^tools:\\s*\\[(.*?)\\]$/m)?.[1] ?? '';
+    const declared = [...toolLine.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    check(JSON.stringify(declared) === JSON.stringify(role.tools), `${role.agent_id}: Copilot tools differ from team/platforms.json`);
+  }
+  const claudePath = `.claude/agents/${role.slug}.md`;
+  check(exists(claudePath), `${role.agent_id}: missing Claude profile ${claudePath}`);
+  if (exists(claudePath)) {
+    const profile = read(claudePath);
+    const fm = profile.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);
+    const toolLine = fm?.[1].match(/^tools:\\s*\\[(.*?)\\]$/m)?.[1] ?? '';
+    const declared = toolLine.split(',').map((value) => value.trim()).filter(Boolean);
+    check(JSON.stringify(declared) === JSON.stringify(role.claude_tools), `${role.agent_id}: Claude tools differ from team/platforms.json`);
+  }
   if (role.agent_id === 'tdt_blockchain' || role.agent_id === 'tdt_sentinel') {
     check(!role.tools.includes('edit'), `${role.agent_id}: sensitive independent reviewer must not have edit tool`);
   }
