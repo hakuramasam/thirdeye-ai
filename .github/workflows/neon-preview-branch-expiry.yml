@@ -1,0 +1,33 @@
+name: Neon preview branch expiry
+
+# Vercel-created Neon branches remain available while a PR is active.
+# When the PR closes, give its matching preview database a seven-day retention window.
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  set-preview-branch-expiry:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Set seven-day expiry on the exact Neon preview branch
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: shiny-scene-69417365
+          NEON_BRANCH_NAME: preview/${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${NEON_API_KEY:-}" ]]; then
+            echo "::error::Add NEON_API_KEY as a GitHub Actions repository secret before relying on preview-branch expiry."
+            exit 1
+          fi
+          node scripts/neon/expire-preview-branch.mjs
