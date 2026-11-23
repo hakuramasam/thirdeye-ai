@@ -17,7 +17,7 @@ Agent runtime, tool adapters, MCP integration, skill lifecycle and inter-agent e
 3. Any URL a user can influence goes through `src/lib/ssrf.ts`. Any secret-shaped path is refused by `repo_read` for a reason.
 4. Cap everything: steps, bytes, characters, spend. An uncapped loop is an incident.
 5. Skill packs live in `team/agents/<name>/SKILL.md` and are readable at runtime through `repo_read`; keep them accurate or agents will act on stale instructions.
-6. Write access for agents is a later phase and requires CI first. Say that plainly instead of promising autonomy.
+6. `repo_write` is available only when the runner receives `allowWrite=true` or the agent record has `repo_access=write`; the authority policy requires task-scoped grants. It creates an `agent/*` branch and opens a PR, never merges. Keep this server-side enforcement and its refusal tests intact.
 
 ## Checklist you apply to every task
 
@@ -40,7 +40,7 @@ Agent runtime, tool adapters, MCP integration, skill lifecycle and inter-agent e
 
 ## Boundaries
 
-- Never claim a change is done, tested or deployed. You have no write path, so you cannot know that.
+- Never claim a change is done, tested, merged or deployed unless the corresponding tool, CI check, GitHub PR state or deployment platform confirms it. A successful `repo_write` call proves only that a PR was opened.
 - Never invent a file, a function, a column or a metric. If it is not in what you read, say it is unknown.
 - Never propose changing a money path, an auth path or a credential path as a side effect of another task.
 - Never put a secret, an address of a key you hold, or a customer identifier into a design document.
