@@ -7,48 +7,110 @@
       "implementation": "src/agents/repo-tools.ts",
       "purpose": "List, read and search the configured GitHub repository.",
       "access": "Agent must have repo_access read or write.",
-      "limits": {"max_read_chars": 20000, "max_search_results": 20},
-      "refusals": ["path traversal", "env files", "git internals", "node_modules", "private keys and key stores", "secret-shaped files"]
+      "limits": {
+        "max_read_chars": 20000,
+        "max_search_results": 20
+      },
+      "refusals": [
+        "path traversal",
+        "env files",
+        "git internals",
+        "node_modules",
+        "private keys and key stores",
+        "secret-shaped files"
+      ]
     },
     {
       "name": "repo_write",
       "implementation": "src/agents/repo-write.ts",
       "purpose": "Create an agent branch, commit an allowlisted file batch and open a pull request.",
       "access": "Runner adds this when the run receives allowWrite=true or the agent record has repo_access=write. The authority policy requires task-scoped grants; persisted write entitlements must be treated as high risk and explicitly approved.",
-      "limits": {"max_files": 12, "max_total_bytes": 200000, "branch_prefix": "agent/"},
-      "allowed_prefixes": ["src/", "web/", "tests/", "docs/", "team/", ".github/"],
-      "refused_paths": ["src/payments/**", "src/lib/billing.ts", "src/lib/settle.ts", "src/lib/reconcile.ts", "src/lib/profit.ts", "src/lib/keycredit.ts", "src/lib/keybudget.ts", "src/lib/creditPolicy.ts", "src/lib/keys.ts", "src/db/schema.sql", "env files", ".git/**", credential and key material"],
-      "effects": ["creates a non-default agent/* branch", "opens a pull request"],
-      "never": ["commits to main", "merges a pull request", "deploys production"]
+      "limits": {
+        "max_files": 12,
+        "max_total_bytes": 200000,
+        "branch_prefix": "agent/"
+      },
+      "allowed_prefixes": [
+        "src/",
+        "web/",
+        "tests/",
+        "docs/",
+        "team/",
+        ".github/"
+      ],
+      "refused_paths": [
+        "src/payments/**",
+        "src/lib/billing.ts",
+        "src/lib/settle.ts",
+        "src/lib/reconcile.ts",
+        "src/lib/profit.ts",
+        "src/lib/keycredit.ts",
+        "src/lib/keybudget.ts",
+        "src/lib/creditPolicy.ts",
+        "src/lib/keys.ts",
+        "src/db/schema.sql",
+        "env files",
+        ".git/**",
+        "credential and key material"
+      ],
+      "effects": [
+        "creates a non-default agent/* branch",
+        "opens a pull request"
+      ],
+      "never": [
+        "commits to main",
+        "merges a pull request",
+        "deploys production"
+      ]
     },
     {
       "name": "delegate_to_agent",
       "implementation": "src/agents/runner.ts",
       "purpose": "Delegate one bounded task to a named teammate with its own prompt, budget and step limit.",
       "access": "Runner adds this tool when the agent record has can_delegate=true; the team charter reserves dispatch responsibility to HERMES.",
-      "limits": {"max_delegation_depth": 3}
+      "limits": {
+        "max_delegation_depth": 3
+      }
     },
     {
       "name": "read_artifact",
       "implementation": "src/agents/runner.ts and src/agents/artifacts.ts",
       "purpose": "Read an addressable teammate artifact by artifact ID and offset.",
       "access": "Available to agents for handoff continuity.",
-      "limits": {"max_chars_per_read": 40000}
+      "limits": {
+        "max_chars_per_read": 40000
+      }
     },
     {
       "name": "http_fetch",
       "implementation": "src/agents/runner.ts and src/agents/x402.ts",
       "purpose": "Fetch public HTTP(S) resources; paid x402 requests are separately gated when enabled.",
       "access": "Added only when the agent record has x402_enabled=true; network destination is guarded.",
-      "limits": {"methods": ["GET", "POST"], "paid_per_call_hard_cap_usd": 1.0, "default_paid_per_call_cap_usd": 0.02},
-      "guards": ["public URL / SSRF validation", "x402 seller allowlist defaults to deny", "per-call cap is the minimum of agent, caller and platform cap"]
+      "limits": {
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "paid_per_call_hard_cap_usd": 1,
+        "default_paid_per_call_cap_usd": 0.02
+      },
+      "guards": [
+        "public URL / SSRF validation",
+        "x402 seller allowlist defaults to deny",
+        "per-call cap is the minimum of agent, caller and platform cap"
+      ]
     },
     {
       "name": "namespaced_mcp_tools",
       "implementation": "src/agents/mcp.ts",
       "purpose": "Expose tools discovered from explicitly configured remote MCP servers as mcp_<server>_<tool>.",
       "access": "Only from the agent's configured MCP server list.",
-      "guards": ["public-host allowlist", "URL validation before connection", "URL revalidation before each tool call", "per-server failure isolation"]
+      "guards": [
+        "public-host allowlist",
+        "URL validation before connection",
+        "URL revalidation before each tool call",
+        "per-server failure isolation"
+      ]
     }
   ],
   "policy_note": "This manifest describes the current in-product runtime. Host-specific IDE tools are separate and cannot grant or bypass these server-side controls."
