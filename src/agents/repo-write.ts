@@ -73,7 +73,7 @@ export function validateWritePath(raw: unknown): string {
     throw new Error(`Refusing to write ${p}: only ${ALLOWED_PREFIXES.join(', ')} are writable`)
   }
   if (CONTROL_PLANE_PATHS.some((re) => re.test(p))) {
-    throw new Error(\`Refusing to write \${p}: agent/platform governance configuration requires an owner-managed change\`)
+    throw new Error(`Refusing to write ${p}: agent/platform governance configuration requires an owner-managed change`)
   }
   if (MONEY_PATHS.some((re) => re.test(p))) {
     throw new Error(`Refusing to write ${p}: money and key paths need a named human's signature, not an agent's`)
