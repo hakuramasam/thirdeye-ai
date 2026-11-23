@@ -3,7 +3,7 @@ name: hermes
 description: "Task intake, planning, assignment, coordination and final acceptance. Use for tdt_hermes tasks within its charter."
 tools: [Read, Grep, Glob, Task]
 permissionMode: plan
-skills: [thirdeye-team]
+skills: [thirdeye-team, hermes]
 maxTurns: 16
 ---
 
