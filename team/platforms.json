@@ -13,7 +13,8 @@
   "platforms": {
     "codex": {
       "instructions": "AGENTS.md",
-      "skills": ".agents/skills/thirdeye-team/SKILL.md"
+      "skills": ".agents/skills/thirdeye-team/SKILL.md",
+      "agents": ".codex/agents/<role>.toml"
     },
     "claude_code": {
       "instructions": "CLAUDE.md",
@@ -76,7 +77,8 @@
         "Grep",
         "Glob",
         "Task"
-      ]
+      ],
+      "codex_agent": ".codex/agents/hermes.toml"
     },
     {
       "agent_id": "tdt_product",
@@ -94,7 +96,8 @@
         "Glob",
         "Edit",
         "Write"
-      ]
+      ],
+      "codex_agent": ".codex/agents/product.toml"
     },
     {
       "agent_id": "tdt_architect",
@@ -113,7 +116,8 @@
         "Glob",
         "Edit",
         "Write"
-      ]
+      ],
+      "codex_agent": ".codex/agents/architect.toml"
     },
     {
       "agent_id": "tdt_backend",
@@ -131,7 +135,8 @@
         "Glob",
         "Edit",
         "Write"
-      ]
+      ],
+      "codex_agent": ".codex/agents/backend.toml"
     },
     {
       "agent_id": "tdt_frontend",
@@ -149,7 +154,8 @@
         "Glob",
         "Edit",
         "Write"
-      ]
+      ],
+      "codex_agent": ".codex/agents/frontend.toml"
     },
     {
       "agent_id": "tdt_blockchain",
@@ -164,7 +170,8 @@
         "Read",
         "Grep",
         "Glob"
-      ]
+      ],
+      "codex_agent": ".codex/agents/blockchain.toml"
     },
     {
       "agent_id": "tdt_intelligence",
@@ -182,7 +189,8 @@
         "Glob",
         "Edit",
         "Write"
-      ]
+      ],
+      "codex_agent": ".codex/agents/intelligence.toml"
     },
     {
       "agent_id": "tdt_agent-engineer",
@@ -200,7 +208,8 @@
         "Glob",
         "Edit",
         "Write"
-      ]
+      ],
+      "codex_agent": ".codex/agents/agent-engineer.toml"
     },
     {
       "agent_id": "tdt_qa",
@@ -217,7 +226,8 @@
         "Grep",
         "Glob",
         "Bash"
-      ]
+      ],
+      "codex_agent": ".codex/agents/qa.toml"
     },
     {
       "agent_id": "tdt_sentinel",
@@ -232,7 +242,8 @@
         "Read",
         "Grep",
         "Glob"
-      ]
+      ],
+      "codex_agent": ".codex/agents/sentinel.toml"
     },
     {
       "agent_id": "tdt_devops",
@@ -250,7 +261,8 @@
         "Glob",
         "Edit",
         "Write"
-      ]
+      ],
+      "codex_agent": ".codex/agents/devops.toml"
     },
     {
       "agent_id": "tdt_docs",
@@ -268,7 +280,8 @@
         "Glob",
         "Edit",
         "Write"
-      ]
+      ],
+      "codex_agent": ".codex/agents/docs.toml"
     }
   ]
 }
