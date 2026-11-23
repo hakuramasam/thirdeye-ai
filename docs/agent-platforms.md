@@ -28,7 +28,7 @@ There are twelve canonical units: HERMES, PRODUCT, ARCHITECT, BACKEND, FRONTEND,
 
 ## Tool authority is not portable
 
-IDE and cloud coding-agent tool lists only filter the tools provided by that host. They do not create or inherit ThirdEye application permissions. In particular, a local editor's `edit` tool is not the in-product `repo_write` grant. The latter is task-scoped, server-enforced, branch/PR-only and has sensitive-path, file-count, byte-count and credential checks. External platform profiles must never claim to reproduce those controls.
+IDE and cloud coding-agent tool lists only filter the tools provided by that host. They do not create or inherit ThirdEye application permissions. In particular, a local editor's `edit` tool is not the in-product `repo_write` grant. The latter is server-enforced and branch/PR-only, with sensitive-path, file-count, byte-count and credential checks. The runner currently enables it through run-level `allowWrite` or agent-record `repo_access=write`; policy requires task-scoped grants, so persisted write entitlements need explicit owner approval. External platform profiles must never claim to reproduce those controls.
 
 No repository MCP endpoint is configured by default. This is intentional: MCP server URLs, host allowlists, authentication headers and secrets must be configured and approved in the consuming platform/environment. Do not commit credentials or placeholder endpoints that appear usable.
 
