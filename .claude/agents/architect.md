@@ -3,7 +3,7 @@ name: architect
 description: "Architecture, APIs, dependencies and integration decisions. Use for tdt_architect tasks within its charter."
 tools: [Read, Grep, Glob, Edit, Write]
 permissionMode: default
-skills: [thirdeye-team]
+skills: [thirdeye-team, architect]
 maxTurns: 16
 ---
 
