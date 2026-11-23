@@ -27,6 +27,8 @@ jobs:
           DATABASE_URL: ''
           DATABASE_URL_UNPOOLED: ''
         run: npm test
+      - name: Cloudflare staging worker tests
+        run: npm run test:cloudflare
       - name: No credentials in the diff
         run: |
           if git diff --unified=0 "origin/${{ github.base_ref || 'main' }}...HEAD" | grep -nE '(sk-thirdeye-[A-Za-z0-9]{8,}|sk-(proj|ant)-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,})'; then
