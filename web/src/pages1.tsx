@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { ABUND_URL, TELEGRAM_URL, X_URL } from './brand'
 import './styles.css'
 import { api, fmtUsd, fmtMicroPerM, short, fmtDate, toast, Toasts, useWallets, signInWith, connectWalletConnect, walletConnectConfigured, readChainId, chainById, NetworkPrompt } from './wallet'
 import type { User, KeyRow, ByokRow, ChainInfo } from './wallet'
@@ -85,6 +86,9 @@ function Landing({ onSignedIn }: { onSignedIn: (u: User, mode: string) => void }
           <a href="/contact">Contact and verification</a>
           <a href="/whitepaper">Whitepaper</a>
           <a href="/status">Status</a>
+          <a href={X_URL} rel="me noopener noreferrer" target="_blank">X @Thirdeye_Infra</a>
+          <a href={TELEGRAM_URL} rel="noopener noreferrer" target="_blank">Telegram @Thirdeye_AI_Bot</a>
+          <a href={ABUND_URL} rel="me noopener noreferrer" target="_blank">Abund agent</a>
         </footer>
       </div>
       {wrongNet && <NetworkPrompt onDismiss={() => setWrongNet(false)} />}
