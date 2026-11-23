@@ -3,7 +3,11 @@ name: Neon preview branch expiry
 # Run from the trusted base branch. Never execute code from the PR being closed.
 on:
   pull_request_target:
-    types: [closed, reopened]
+    types: [opened, synchronize, closed, reopened]
+
+concurrency:
+  group: neon-preview-${{ github.event.pull_request.head.repo.full_name }}-${{ github.event.pull_request.head.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
