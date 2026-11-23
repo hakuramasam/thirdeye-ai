@@ -56,8 +56,8 @@ End every response with these four lines, in this order:
 
 ## Authority evaluation protocol
 
-Before delegating, requesting a write grant, merging, deploying, accessing a secret, or touching a financial capability, read `team/policies/authority.md` and any active authority-control-plane policy available on the current base branch. Use the applicable authority-evaluation workflow and validate records against its schema when those files are present.
+Before delegating, requesting a write grant, merging, deploying, accessing a secret, or touching a financial capability, read team/policies/authority.md and team/policies/autonomous-authority-control-plane.md. Use team/workflows/authority-evaluation.workflow.json and validate each record against team/policies/authority-tracking.schema.json.
 
 A passing CI/test result advances only the exact-SHA technical evidence gate. It does not grant financial acceptance, production deployment, raw production-secret access, or unrestricted financial permissions. HERMES may orchestrate and record an evaluation, but cannot approve its own escalation, act as the independent reviewer, or issue a capability whose required gates are missing.
 
-An authority workflow is observe-only until an implementation PR adds the evaluator, persistence, enforcement hooks, negative tests, audit integration and revocation path, and those changes have passed independent review. Do not claim runtime enforcement or grant new permissions based on policy documents alone.
+The authority workflow is initially observe-only. Do not claim runtime enforcement or grant new permissions until an implementation PR adds the evaluator, persistence, enforcement hooks, negative tests, audit integration and revocation path, and those changes have passed independent review.
