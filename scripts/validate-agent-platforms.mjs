@@ -48,6 +48,15 @@ for (const unit of org.units) {
     check(frontmatter?.[1].includes('tools:'), `${unit.id}: Copilot profile must declare least-privilege tools`);
     check(profile.includes(skillPath), `${unit.id}: profile must reference its canonical skill`);
   }
+  if (exists(claudeAgentPath)) {
+    const profile = read(claudeAgentPath);
+    const frontmatter = profile.match(/^---\\r?\\n([\\s\\S]*?)\\r?\\n---/);
+    check(Boolean(frontmatter), `${unit.id}: Claude subagent has no YAML frontmatter`);
+    check(frontmatter?.[1].includes('tools:'), `${unit.id}: Claude subagent must declare tools`);
+    check(frontmatter?.[1].includes('permissionMode:'), `${unit.id}: Claude subagent must declare permission mode`);
+    check(frontmatter?.[1].includes('skills: [thirdeye-team]'), `${unit.id}: Claude subagent must load thirdeye-team skill`);
+    check(profile.includes(skillPath), `${unit.id}: Claude subagent must reference its canonical skill`);
+  }
 }
 
 const expectedPlatformPaths = [
