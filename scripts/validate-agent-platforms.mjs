@@ -54,7 +54,7 @@ for (const unit of org.units) {
     check(Boolean(frontmatter), `${unit.id}: Claude subagent has no YAML frontmatter`);
     check(frontmatter?.[1].includes('tools:'), `${unit.id}: Claude subagent must declare tools`);
     check(frontmatter?.[1].includes('permissionMode:'), `${unit.id}: Claude subagent must declare permission mode`);
-    check(frontmatter?.[1].includes('skills: [thirdeye-team]'), `${unit.id}: Claude subagent must load thirdeye-team skill`);
+    check(frontmatter?.[1].includes(`skills: [thirdeye-team, ${slug}]`), `${unit.id}: Claude subagent must load its role skill`);
     check(profile.includes(skillPath), `${unit.id}: Claude subagent must reference its canonical skill`);
   }
 }
@@ -81,6 +81,10 @@ for (const role of platforms.role_profiles || []) {
   const unit = org.units.find((item) => item.id === role.agent_id);
   check(Boolean(unit), `Platform profile references unknown role ${role.agent_id}`);
   check(exists(role.skill), `${role.agent_id}: missing skill reference ${role.skill}`);
+  check(exists(role.agent_skill), `${role.agent_id}: missing Codex/Gemini skill adapter ${role.agent_skill}`);
+  check(exists(role.claude_skill), `${role.agent_id}: missing Claude skill adapter ${role.claude_skill}`);
+  if (exists(role.agent_skill)) check(read(role.agent_skill).includes(role.skill), `${role.agent_id}: Codex/Gemini skill adapter must reference canonical role skill`);
+  if (exists(role.claude_skill)) check(read(role.claude_skill).includes(role.skill), `${role.agent_id}: Claude skill adapter must reference canonical role skill`);
   check(exists(role.copilot_profile), `${role.agent_id}: missing profile ${role.copilot_profile}`);
   check(exists(role.codex_agent), `${role.agent_id}: missing Codex agent ${role.codex_agent}`);
   if (exists(role.codex_agent)) {
@@ -124,7 +128,7 @@ check((platforms.role_profiles || []).length === org.units.length, 'Every canoni
 check(platforms.platforms.claude_code.agents === '.claude/agents/<role>.md', 'Claude subagent directory mapping is missing');
 check(platforms.platforms.codex.agents === '.codex/agents/<role>.toml', 'Codex subagent directory mapping is missing');
 
-for (const item of [...resources.knowledge, ...resources.skills, ...resources.workflows, ...resources.schemas]) {
+for (const item of [...resources.knowledge, ...resources.skills, ...resources.platform_skills, ...resources.workflows, ...resources.schemas]) {
   check(exists(item.path), `Resource registry path does not exist: ${item.path}`);
 }
 
