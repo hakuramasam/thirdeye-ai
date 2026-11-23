@@ -13,12 +13,12 @@
   "platforms": {
     "codex": {
       "instructions": "AGENTS.md",
-      "skills": ".agents/skills/thirdeye-team/SKILL.md",
+      "skills": ".agents/skills/",
       "agents": ".codex/agents/<role>.toml"
     },
     "claude_code": {
       "instructions": "CLAUDE.md",
-      "skills": ".claude/skills/thirdeye-team/SKILL.md",
+      "skills": ".claude/skills/",
       "agents": ".claude/agents/<role>.md"
     },
     "cursor": {
@@ -30,7 +30,8 @@
       "agents": ".github/agents/<role>.agent.md"
     },
     "gemini_cli": {
-      "instructions": "GEMINI.md"
+      "instructions": "GEMINI.md",
+      "skills": ".agents/skills/"
     },
     "github_actions": {
       "ci": ".github/workflows/ci.yml",
@@ -78,7 +79,9 @@
         "Glob",
         "Task"
       ],
-      "codex_agent": ".codex/agents/hermes.toml"
+      "codex_agent": ".codex/agents/hermes.toml",
+      "agent_skill": ".agents/skills/hermes/SKILL.md",
+      "claude_skill": ".claude/skills/hermes/SKILL.md"
     },
     {
       "agent_id": "tdt_product",
@@ -97,7 +100,9 @@
         "Edit",
         "Write"
       ],
-      "codex_agent": ".codex/agents/product.toml"
+      "codex_agent": ".codex/agents/product.toml",
+      "agent_skill": ".agents/skills/product/SKILL.md",
+      "claude_skill": ".claude/skills/product/SKILL.md"
     },
     {
       "agent_id": "tdt_architect",
@@ -117,7 +122,9 @@
         "Edit",
         "Write"
       ],
-      "codex_agent": ".codex/agents/architect.toml"
+      "codex_agent": ".codex/agents/architect.toml",
+      "agent_skill": ".agents/skills/architect/SKILL.md",
+      "claude_skill": ".claude/skills/architect/SKILL.md"
     },
     {
       "agent_id": "tdt_backend",
@@ -136,7 +143,9 @@
         "Edit",
         "Write"
       ],
-      "codex_agent": ".codex/agents/backend.toml"
+      "codex_agent": ".codex/agents/backend.toml",
+      "agent_skill": ".agents/skills/backend/SKILL.md",
+      "claude_skill": ".claude/skills/backend/SKILL.md"
     },
     {
       "agent_id": "tdt_frontend",
@@ -155,7 +164,9 @@
         "Edit",
         "Write"
       ],
-      "codex_agent": ".codex/agents/frontend.toml"
+      "codex_agent": ".codex/agents/frontend.toml",
+      "agent_skill": ".agents/skills/frontend/SKILL.md",
+      "claude_skill": ".claude/skills/frontend/SKILL.md"
     },
     {
       "agent_id": "tdt_blockchain",
@@ -171,7 +182,9 @@
         "Grep",
         "Glob"
       ],
-      "codex_agent": ".codex/agents/blockchain.toml"
+      "codex_agent": ".codex/agents/blockchain.toml",
+      "agent_skill": ".agents/skills/blockchain/SKILL.md",
+      "claude_skill": ".claude/skills/blockchain/SKILL.md"
     },
     {
       "agent_id": "tdt_intelligence",
@@ -190,7 +203,9 @@
         "Edit",
         "Write"
       ],
-      "codex_agent": ".codex/agents/intelligence.toml"
+      "codex_agent": ".codex/agents/intelligence.toml",
+      "agent_skill": ".agents/skills/intelligence/SKILL.md",
+      "claude_skill": ".claude/skills/intelligence/SKILL.md"
     },
     {
       "agent_id": "tdt_agent-engineer",
@@ -209,7 +224,9 @@
         "Edit",
         "Write"
       ],
-      "codex_agent": ".codex/agents/agent-engineer.toml"
+      "codex_agent": ".codex/agents/agent-engineer.toml",
+      "agent_skill": ".agents/skills/agent-engineer/SKILL.md",
+      "claude_skill": ".claude/skills/agent-engineer/SKILL.md"
     },
     {
       "agent_id": "tdt_qa",
@@ -227,7 +244,9 @@
         "Glob",
         "Bash"
       ],
-      "codex_agent": ".codex/agents/qa.toml"
+      "codex_agent": ".codex/agents/qa.toml",
+      "agent_skill": ".agents/skills/qa/SKILL.md",
+      "claude_skill": ".claude/skills/qa/SKILL.md"
     },
     {
       "agent_id": "tdt_sentinel",
@@ -243,7 +262,9 @@
         "Grep",
         "Glob"
       ],
-      "codex_agent": ".codex/agents/sentinel.toml"
+      "codex_agent": ".codex/agents/sentinel.toml",
+      "agent_skill": ".agents/skills/sentinel/SKILL.md",
+      "claude_skill": ".claude/skills/sentinel/SKILL.md"
     },
     {
       "agent_id": "tdt_devops",
@@ -262,7 +283,9 @@
         "Edit",
         "Write"
       ],
-      "codex_agent": ".codex/agents/devops.toml"
+      "codex_agent": ".codex/agents/devops.toml",
+      "agent_skill": ".agents/skills/devops/SKILL.md",
+      "claude_skill": ".claude/skills/devops/SKILL.md"
     },
     {
       "agent_id": "tdt_docs",
@@ -281,7 +304,9 @@
         "Edit",
         "Write"
       ],
-      "codex_agent": ".codex/agents/docs.toml"
+      "codex_agent": ".codex/agents/docs.toml",
+      "agent_skill": ".agents/skills/docs/SKILL.md",
+      "claude_skill": ".claude/skills/docs/SKILL.md"
     }
   ]
 }
