@@ -52,6 +52,10 @@ const CONTROL_PLANE_PATHS = [
   /^team\/(organization\.json|platforms\.json|tools\.json|resources\.json)$/i,
   /^team\/(agents|policies|pipelines|workflows)\//i,
   /^scripts\/validate-agent-platforms\.mjs$/i,
+  /^team\/ORGANIZATION\.md$/i,
+  /^src\/agents\/(repo-write|repo-tools|runner|mcp|payments-policy|x402|audit-log|pipeline)\.ts$/i,
+  /^src\/lib\/(ssrf|security|session)\.ts$/i,
+  /^src\/team\/(validate\.ts|schemas\/)/i,
 ]
 
 const DENIED = [
