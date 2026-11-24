@@ -110,8 +110,12 @@ test('a serverless boot with no connection string is refused, not silently run i
 test('a production boot without a connection string is refused even off serverless', () => {
   assert.equal(validateDatabase({ databaseUrl: '', nodeEnv: 'production' }).length, 1)
   // Local work and the test suite run the file-backed database on purpose.
-  assert.deepEqual(validateDatabase({ databaseUrl: '', nodeEnv: 'development' }), [])
-  assert.deepEqual(validateDatabase({ databaseUrl: '', isServerless: false }), [])
+  assert.deepEqual(validateDatabase({ databaseUrl: '', nodeEnv: 'development', pgliteEnabled: true }), [])
+  assert.deepEqual(validateDatabase({ databaseUrl: '', isServerless: false, pgliteEnabled: true }), [])
+  const implicit = validateDatabase({ databaseUrl: '', nodeEnv: 'development' })
+  assert.equal(implicit.length, 1)
+  assert.equal(implicit[0].name, 'PGLITE_MODE')
+  assert.match(implicit[0].problem, /PGLITE_MODE=1/)
 })
 
 test('a real connection string passes, and a wrong scheme does not', () => {
@@ -249,7 +253,7 @@ test('the probe answers against a live database and is bounded when there is non
        })`,
     ],
     {
-      env: { ...process.env, DATABASE_URL: '', PREVIEW_DATABASE_URL: '', PGLITE_DIR: 'memory://' },
+      env: { ...process.env, DATABASE_URL: '', PREVIEW_DATABASE_URL: '', PGLITE_MODE: '1', PGLITE_DIR: 'memory://' },
       encoding: 'utf8',
       timeout: 60_000,
     }
@@ -276,6 +280,7 @@ test('the probe answers against a live database and is bounded when there is non
         ...process.env,
         DATABASE_URL: 'postgres://probeuser:probesecret@127.0.0.1:1/probedb',
         PREVIEW_DATABASE_URL: '',
+        PGLITE_MODE: '1',
         PGLITE_DIR: 'memory://',
       },
       encoding: 'utf8',
