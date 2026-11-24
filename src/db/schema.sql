@@ -452,6 +452,29 @@ CREATE TABLE IF NOT EXISTS agent_credit_ledger (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_credit_ledger_agent_time
   ON agent_credit_ledger(agent_id, created_at DESC);
+
+-- API-key credit subledger mirrors agent pots: key deposits, usage, refunds and adjustments
+-- must reconcile to the spendable balance on each key.
+CREATE TABLE IF NOT EXISTS api_key_credit_ledger (
+  id                 bigserial PRIMARY KEY,
+  api_key_id         text NOT NULL,
+  amount_usd_micros  bigint NOT NULL,
+  kind               text NOT NULL, -- opening_balance | deposit | usage | refund | adjust
+  ref                text,
+  actor              text NOT NULL DEFAULT 'system',
+  balance_after      bigint NOT NULL,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_api_key_credit_ledger_key_time
+  ON api_key_credit_ledger(api_key_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_credit_ledger_opening
+  ON api_key_credit_ledger(api_key_id) WHERE ref = 'migration:api-key-credit-ledger-v1';
+
+INSERT INTO api_key_credit_ledger (api_key_id, amount_usd_micros, kind, ref, actor, balance_after)
+SELECT id, credit_usd_micros, 'opening_balance', 'migration:api-key-credit-ledger-v1', 'migration', credit_usd_micros
+  FROM api_keys
+ WHERE credit_usd_micros <> 0
+ON CONFLICT (api_key_id) WHERE ref = 'migration:api-key-credit-ledger-v1' DO NOTHING;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_credit_ledger_opening
   ON agent_credit_ledger(agent_id) WHERE ref = 'migration:agent-credit-ledger-v1';
 
