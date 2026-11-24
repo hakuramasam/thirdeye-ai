@@ -163,6 +163,7 @@ export type GuardInput = {
   vault_stable_usd_micros: number
   outstanding_credit_usd_micros: number
   agent_credit_ledger_drift_usd_micros?: number
+  api_key_credit_ledger_drift_usd_micros?: number
   opex_usd_micros?: number
   existing_status?: string
 }
@@ -191,6 +192,13 @@ export function distributionGuards(input: GuardInput): Guard[] {
       code: 'backing_below_liability',
       blocks: true,
       detail: 'Vault stablecoin does not cover outstanding prepaid credit, so it holds customer money rather than profit.',
+    })
+  }
+  if ((input.api_key_credit_ledger_drift_usd_micros ?? 0) !== 0) {
+    guards.push({
+      code: 'api_key_credit_ledger_drift',
+      blocks: true,
+      detail: 'API-key credit balances do not reconcile to their subledger; resolve the difference before distributing profit.',
     })
   }
   if ((input.agent_credit_ledger_drift_usd_micros ?? 0) !== 0) {
@@ -225,6 +233,9 @@ export type PeriodMeasurement = {
   agent_credit_usd_micros: number
   agent_credit_ledger_usd_micros: number
   agent_credit_ledger_drift_usd_micros: number
+  api_key_credit_usd_micros: number
+  api_key_credit_ledger_usd_micros: number
+  api_key_credit_ledger_drift_usd_micros: number
 }
 
 /**
@@ -267,6 +278,7 @@ export async function measurePeriod(
   // distribution guard treat already-promised inference credit as distributable profit.
   const agentCredit = await one(`SELECT coalesce(sum(credit_usd_micros), 0)::bigint AS credit FROM agents`)
   const agentCreditLedger = await one(`SELECT coalesce(sum(amount_usd_micros), 0)::bigint AS credit FROM agent_credit_ledger`)
+  const apiKeyCreditLedger = await one(`SELECT coalesce(sum(amount_usd_micros), 0)::bigint AS credit FROM api_key_credit_ledger`)
 
   const chatRevenue = Number(chat?.billed ?? 0)
   const runRevenue = Number(runs?.billed ?? 0)
@@ -280,6 +292,8 @@ export async function measurePeriod(
   const agentCreditMicros = Math.max(0, Number(agentCredit?.credit ?? 0))
   const agentCreditLedgerMicros = Number(agentCreditLedger?.credit ?? 0)
   const agentCreditLedgerDriftMicros = agentCreditMicros - agentCreditLedgerMicros
+  const apiKeyCreditLedgerMicros = Number(apiKeyCreditLedger?.credit ?? 0)
+  const apiKeyCreditLedgerDriftMicros = keyCreditMicros - apiKeyCreditLedgerMicros
   const outstandingCredit = ledgerCredit + keyCreditMicros + agentCreditMicros
 
   return {
@@ -297,6 +311,9 @@ export async function measurePeriod(
     agent_credit_usd_micros: agentCreditMicros,
     agent_credit_ledger_usd_micros: agentCreditLedgerMicros,
     agent_credit_ledger_drift_usd_micros: agentCreditLedgerDriftMicros,
+    api_key_credit_usd_micros: keyCreditMicros,
+    api_key_credit_ledger_usd_micros: apiKeyCreditLedgerMicros,
+    api_key_credit_ledger_drift_usd_micros: apiKeyCreditLedgerDriftMicros,
   }
 }
 
