@@ -273,12 +273,36 @@ export async function measurePeriod(
        FROM (SELECT sum(amount_usd_micros) AS bal FROM ledger GROUP BY user_id) t
       WHERE bal > 0`
   )
-  const keyCredit = await one(`SELECT coalesce(sum(credit_usd_micros), 0)::bigint AS credit FROM api_keys`)
+  // Key and agent balances are checked per owner: one negative pot must never net away
+  // another key or agent's positive prepaid liability.
+  const keyCredit = await one(`
+    WITH balances AS (SELECT id, credit_usd_micros AS balance FROM api_keys),
+    entries AS (SELECT api_key_id, sum(amount_usd_micros) AS balance FROM api_key_credit_ledger GROUP BY api_key_id),
+    joined AS (
+      SELECT coalesce(b.id, e.api_key_id) AS id,
+             coalesce(b.balance, 0)::bigint AS current_balance,
+             coalesce(e.balance, 0)::bigint AS ledger_balance
+        FROM balances b FULL JOIN entries e ON e.api_key_id = b.id
+    )
+    SELECT coalesce(sum(greatest(current_balance, 0)), 0)::bigint AS credit,
+           coalesce(sum(ledger_balance), 0)::bigint AS ledger_credit,
+           coalesce(sum(abs(current_balance - ledger_balance)), 0)::bigint AS drift
+      FROM joined`)
   // Agent pots are also prepaid inference liabilities. Omitting them would let the
   // distribution guard treat already-promised inference credit as distributable profit.
-  const agentCredit = await one(`SELECT coalesce(sum(credit_usd_micros), 0)::bigint AS credit FROM agents`)
-  const agentCreditLedger = await one(`SELECT coalesce(sum(amount_usd_micros), 0)::bigint AS credit FROM agent_credit_ledger`)
-  const apiKeyCreditLedger = await one(`SELECT coalesce(sum(amount_usd_micros), 0)::bigint AS credit FROM api_key_credit_ledger`)
+  const agentCredit = await one(`
+    WITH balances AS (SELECT id, credit_usd_micros AS balance FROM agents),
+    entries AS (SELECT agent_id, sum(amount_usd_micros) AS balance FROM agent_credit_ledger GROUP BY agent_id),
+    joined AS (
+      SELECT coalesce(b.id, e.agent_id) AS id,
+             coalesce(b.balance, 0)::bigint AS current_balance,
+             coalesce(e.balance, 0)::bigint AS ledger_balance
+        FROM balances b FULL JOIN entries e ON e.agent_id = b.id
+    )
+    SELECT coalesce(sum(greatest(current_balance, 0)), 0)::bigint AS credit,
+           coalesce(sum(ledger_balance), 0)::bigint AS ledger_credit,
+           coalesce(sum(abs(current_balance - ledger_balance)), 0)::bigint AS drift
+      FROM joined`)
 
   const chatRevenue = Number(chat?.billed ?? 0)
   const runRevenue = Number(runs?.billed ?? 0)
@@ -290,10 +314,10 @@ export async function measurePeriod(
   const ledgerCredit = Math.max(0, Number(liability?.credit ?? 0))
   const keyCreditMicros = Math.max(0, Number(keyCredit?.credit ?? 0))
   const agentCreditMicros = Math.max(0, Number(agentCredit?.credit ?? 0))
-  const agentCreditLedgerMicros = Number(agentCreditLedger?.credit ?? 0)
-  const agentCreditLedgerDriftMicros = agentCreditMicros - agentCreditLedgerMicros
-  const apiKeyCreditLedgerMicros = Number(apiKeyCreditLedger?.credit ?? 0)
-  const apiKeyCreditLedgerDriftMicros = keyCreditMicros - apiKeyCreditLedgerMicros
+  const agentCreditLedgerMicros = Number(agentCredit?.ledger_credit ?? 0)
+  const agentCreditLedgerDriftMicros = Number(agentCredit?.drift ?? 0)
+  const apiKeyCreditLedgerMicros = Number(keyCredit?.ledger_credit ?? 0)
+  const apiKeyCreditLedgerDriftMicros = Number(keyCredit?.drift ?? 0)
   const outstandingCredit = ledgerCredit + keyCreditMicros + agentCreditMicros
 
   return {
