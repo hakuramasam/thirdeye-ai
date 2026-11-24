@@ -164,6 +164,7 @@ export type GuardInput = {
   outstanding_credit_usd_micros: number
   agent_credit_ledger_drift_usd_micros?: number
   api_key_credit_ledger_drift_usd_micros?: number
+  unpayable_recipient_count?: number
   opex_usd_micros?: number
   existing_status?: string
 }
@@ -192,6 +193,13 @@ export function distributionGuards(input: GuardInput): Guard[] {
       code: 'backing_below_liability',
       blocks: true,
       detail: 'Vault stablecoin does not cover outstanding prepaid credit, so it holds customer money rather than profit.',
+    })
+  }
+  if ((input.unpayable_recipient_count ?? 0) > 0) {
+    guards.push({
+      code: 'recipient_wallets_unconfigured',
+      blocks: true,
+      detail: `${input.unpayable_recipient_count} planned profit recipient(s) do not have a verified payout wallet.`,
     })
   }
   if ((input.api_key_credit_ledger_drift_usd_micros ?? 0) !== 0) {
