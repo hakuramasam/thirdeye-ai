@@ -4,7 +4,7 @@ process.env.PGLITE_DIR = 'memory://'
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import assert from 'node:assert/strict'
-import {
+const {
   bpsOf,
   blockedBy,
   distributionGuards,
@@ -13,7 +13,7 @@ import {
   usdToMicros,
   microsToUsd,
   measurePeriod,
-} from '../src/lib/profit.js'
+} = await import('../src/lib/profit.js')
 
 test('bpsOf floors and ignores non-positive input', () => {
   assert.equal(bpsOf(usdToMicros(1000), 200), usdToMicros(20))
