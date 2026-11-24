@@ -26,9 +26,9 @@ const n = (v: unknown): number => {
 /** True only when the upstream supplied both input and output token counts. */
 export function hasProviderUsage(raw: any): boolean {
   if (!raw || typeof raw !== 'object') return false
-  const prompt = raw.prompt_tokens ?? raw.input_tokens
-  const completion = raw.completion_tokens ?? raw.output_tokens
-  return typeof prompt === 'number' && typeof completion === 'number'
+  const prompt = n(raw.prompt_tokens ?? raw.input_tokens)
+  const completion = n(raw.completion_tokens ?? raw.output_tokens)
+  return prompt > 0 && completion > 0
 }
 
 export function normalizeUsage(raw: any, fallback?: { prompt?: number; completion?: number }): TokenUsage {
