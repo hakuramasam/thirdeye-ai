@@ -14,6 +14,7 @@ const { measurePeriod } = await import('../src/lib/profit.js')
 const ownerId = 'key_credit_ledger_owner'
 const keyId = 'key_credit_ledger_probe'
 
+// The PostgreSQL integration workflow runs this file sequentially against a shared isolated DB.
 describe('API-key credit subledger', () => {
   before(async () => {
     await migrate()
