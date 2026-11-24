@@ -1,5 +1,7 @@
-process.env.PGLITE_MODE = '1'
-process.env.PGLITE_DIR = 'memory://'
+if (!process.env.DATABASE_URL) {
+  process.env.PGLITE_MODE = '1'
+  process.env.PGLITE_DIR = 'memory://'
+}
 
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
