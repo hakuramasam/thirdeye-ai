@@ -53,6 +53,7 @@ export type DailyUsageSeries = {
   day: string
   requests: number
   tokens: number
+  provider_reported_tokens: number
   estimated_tokens: number
   unclassified_tokens: number
   cost_usd_micros: number
@@ -63,7 +64,8 @@ export async function getUserUsageSeries(userId: string, days: number = 14): Pro
     `SELECT
        created_at::date::text AS day,
        COUNT(*)::int AS requests,
-       SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END)::bigint AS tokens,
+       SUM(prompt_tokens + completion_tokens + estimated_prompt_tokens + estimated_completion_tokens)::bigint AS tokens,
+       SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END)::bigint AS provider_reported_tokens,
        SUM(CASE WHEN usage_source IN ('estimate', 'chars') THEN estimated_prompt_tokens + estimated_completion_tokens ELSE 0 END)::bigint AS estimated_tokens,
        SUM(CASE WHEN usage_source = 'unknown' THEN prompt_tokens + completion_tokens ELSE 0 END)::bigint AS unclassified_tokens,
        SUM(cost_usd_micros)::bigint AS cost_usd_micros
@@ -74,11 +76,12 @@ export async function getUserUsageSeries(userId: string, days: number = 14): Pro
     [userId, days]
   )
 
-  const map = new Map<string, { requests: number; tokens: number; estimated_tokens: number; unclassified_tokens: number; cost_usd_micros: number }>()
+  const map = new Map<string, { requests: number; tokens: number; provider_reported_tokens: number; estimated_tokens: number; unclassified_tokens: number; cost_usd_micros: number }>()
   for (const r of res.rows) {
     map.set(r.day, {
       requests: Number(r.requests ?? 0),
       tokens: Number(r.tokens ?? 0),
+      provider_reported_tokens: Number(r.provider_reported_tokens ?? 0),
       estimated_tokens: Number(r.estimated_tokens ?? 0),
       unclassified_tokens: Number(r.unclassified_tokens ?? 0),
       cost_usd_micros: Number(r.cost_usd_micros ?? 0),
@@ -95,7 +98,7 @@ export async function getUserUsageSeries(userId: string, days: number = 14): Pro
     if (existing) {
       series.push({ day: dayStr, ...existing })
     } else {
-      series.push({ day: dayStr, requests: 0, tokens: 0, estimated_tokens: 0, unclassified_tokens: 0, cost_usd_micros: 0 })
+      series.push({ day: dayStr, requests: 0, tokens: 0, provider_reported_tokens: 0, estimated_tokens: 0, unclassified_tokens: 0, cost_usd_micros: 0 })
     }
   }
 
