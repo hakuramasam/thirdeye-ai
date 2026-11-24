@@ -203,7 +203,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
   app.get('/api/payments', requireUser, async (c) => {
     const user = c.get('user')!
     const rows = (await query(
-      `SELECT p.id, p.intent_id, p.chain_id, p.token, p.tx_hash, p.received_by, p.sender,
+      `SELECT p.id, p.intent_id, p.chain_id, p.token, p.tx_hash, p.received_by, p.received_by_address, p.sender,
               p.raw_amount, p.decimals, p.usd_value_micros, p.price_usd, p.purpose, p.memo,
               p.status, p.refusal_code, p.created_at
        FROM payments p WHERE p.user_id = $1 ORDER BY p.created_at DESC LIMIT 100`,
@@ -217,6 +217,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
         token: r.token,
         tx_hash: r.tx_hash,
         received_by: r.received_by,
+        received_by_address: r.received_by_address,
         sender: r.sender,
         amount: Number(r.raw_amount) / 10 ** Number(r.decimals),
         usd_value: Number(r.usd_value_micros) / 1_000_000,
