@@ -8,7 +8,8 @@
  * return null with a reason instead of pretending, so a pending deposit is parked, not lost.
  */
 import { privateKeyToAccount } from 'viem/accounts'
-import type { Hex } from 'viem'
+import type { Chain, Hex } from 'viem'
+import { CHAINS } from './chains.js'
 
 export type SendTxArgs = { to: `0x${string}`; data?: `0x${string}`; value?: bigint; chainId: number }
 
@@ -24,6 +25,24 @@ import { authorizationHeaders } from './privyAuth.js'
 
 const PRIVY_API = 'https://api.privy.io/v1'
 
+/**
+ * Resolve the signer chain from the payment's actual chain ID. Never silently
+ * submit a BSC or Robinhood transaction through the Base client.
+ */
+export function signerChainForId(chainId: number): Chain {
+  const config = CHAINS.find((candidate) => candidate.chainId === chainId)
+  if (!config) throw new Error(`Unsupported signer chain ID: ${chainId}`)
+  const nativeCurrency = chainId === 56
+    ? { name: 'BNB', symbol: 'BNB', decimals: 18 }
+    : { name: 'Ether', symbol: 'ETH', decimals: 18 }
+  return {
+    id: config.chainId,
+    name: config.name,
+    nativeCurrency,
+    rpcUrls: { default: { http: [config.rpc] } },
+  } as Chain
+}
+
 function localSigner(key: string): Signer {
   const account = privateKeyToAccount((key.startsWith('0x') ? key : `0x${key}`) as Hex)
   return {
@@ -31,15 +50,17 @@ function localSigner(key: string): Signer {
     address: account.address,
     async sendTransaction(args) {
       const { createWalletClient, http } = await import('viem')
-      const { base } = await import('viem/chains')
-      const client = createWalletClient({ account, chain: base, transport: http(process.env.BASE_RPC_URL || 'https://mainnet.base.org') })
-      const hash = await client.sendTransaction({
+      const chain = signerChainForId(args.chainId)
+      const rpcUrl = args.chainId === 8453
+        ? (process.env.BASE_RPC_URL || chain.rpcUrls.default.http[0])
+        : chain.rpcUrls.default.http[0]
+      const client = createWalletClient({ account, chain, transport: http(rpcUrl) })
+      return client.sendTransaction({
         to: args.to,
         data: args.data,
         value: args.value ?? 0n,
-        chain: base,
+        chain,
       })
-      return hash
     },
   }
 }
