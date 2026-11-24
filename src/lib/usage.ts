@@ -1,5 +1,12 @@
 import { query } from '../db/index.js'
 
+/** Shared aggregation used by user, public and library usage reports. */
+export const USAGE_TOKEN_BUCKETS_SQL = `COALESCE(SUM(prompt_tokens + completion_tokens + estimated_prompt_tokens + estimated_completion_tokens), 0)::bigint AS tokens,
+       COALESCE(SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS provider_reported_tokens,
+       COALESCE(SUM(CASE WHEN usage_source = 'mock' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS mock_tokens,
+       COALESCE(SUM(CASE WHEN usage_source IN ('estimate', 'chars') THEN estimated_prompt_tokens + estimated_completion_tokens ELSE 0 END), 0)::bigint AS estimated_tokens,
+       COALESCE(SUM(CASE WHEN usage_source = 'unknown' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS unclassified_tokens`
+
 export type UsageEventInput = {
   user_id: string
   api_key_id: string
@@ -65,11 +72,7 @@ export async function getUserUsageSeries(userId: string, days: number = 14): Pro
     `SELECT
        created_at::date::text AS day,
        COUNT(*)::int AS requests,
-       SUM(prompt_tokens + completion_tokens + estimated_prompt_tokens + estimated_completion_tokens)::bigint AS tokens,
-       SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END)::bigint AS provider_reported_tokens,
-       SUM(CASE WHEN usage_source = 'mock' THEN prompt_tokens + completion_tokens ELSE 0 END)::bigint AS mock_tokens,
-       SUM(CASE WHEN usage_source IN ('estimate', 'chars') THEN estimated_prompt_tokens + estimated_completion_tokens ELSE 0 END)::bigint AS estimated_tokens,
-       SUM(CASE WHEN usage_source = 'unknown' THEN prompt_tokens + completion_tokens ELSE 0 END)::bigint AS unclassified_tokens,
+       ${USAGE_TOKEN_BUCKETS_SQL},
        SUM(cost_usd_micros)::bigint AS cost_usd_micros
      FROM usage_events
      WHERE user_id = $1 AND created_at >= NOW() - ($2 || ' days')::interval
