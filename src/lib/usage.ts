@@ -54,6 +54,7 @@ export type DailyUsageSeries = {
   requests: number
   tokens: number
   provider_reported_tokens: number
+  mock_tokens: number
   estimated_tokens: number
   unclassified_tokens: number
   cost_usd_micros: number
