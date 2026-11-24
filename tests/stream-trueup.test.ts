@@ -194,7 +194,7 @@ test('streaming settles inside the response stream', async (t) => {
 
     const settlement = await accountant.done
     assert.equal(settlement.settled, true)
-    assert.equal(settlement.usage_source, 'chars')
+    assert.equal(settlement.usage_source, 'mock')
     const usage = await one('SELECT status FROM usage_events WHERE user_id = $1', [userId])
     assert.equal(usage.status, 'stream')
   })
