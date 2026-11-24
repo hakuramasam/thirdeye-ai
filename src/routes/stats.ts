@@ -1,6 +1,7 @@
 import type { SessionApp } from '../lib/session.js'
 import { requireUser } from '../lib/session.js'
 import { query, one } from '../db/index.js'
+import { USAGE_TOKEN_BUCKETS_SQL } from '../lib/usage.js'
 
 function getLastNDaysUTC(n: number): string[] {
   const dates: string[] = []
@@ -21,11 +22,7 @@ export function registerStatsRoutes(app: SessionApp): void {
       `SELECT
         TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
         COUNT(*)::int AS requests,
-        COALESCE(SUM(prompt_tokens + completion_tokens + estimated_prompt_tokens + estimated_completion_tokens), 0)::bigint AS tokens,
-        COALESCE(SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS provider_reported_tokens,
-        COALESCE(SUM(CASE WHEN usage_source = 'mock' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS mock_tokens,
-        COALESCE(SUM(CASE WHEN usage_source IN ('estimate', 'chars') THEN estimated_prompt_tokens + estimated_completion_tokens ELSE 0 END), 0)::bigint AS estimated_tokens,
-        COALESCE(SUM(CASE WHEN usage_source = 'unknown' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS unclassified_tokens,
+        ${USAGE_TOKEN_BUCKETS_SQL},
         COALESCE(SUM(cost_usd_micros), 0)::bigint AS cost_usd_micros
        FROM usage_events
        WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '14 days'
@@ -82,11 +79,7 @@ export function registerStatsRoutes(app: SessionApp): void {
     const reqsRow = await one(`SELECT COUNT(*)::int AS requests FROM usage_events`)
     const tokensRow = await one(
       `SELECT
-        COALESCE(SUM(prompt_tokens + completion_tokens + estimated_prompt_tokens + estimated_completion_tokens), 0)::bigint AS tokens,
-        COALESCE(SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS provider_reported_tokens,
-        COALESCE(SUM(CASE WHEN usage_source = 'mock' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS mock_tokens,
-        COALESCE(SUM(CASE WHEN usage_source IN ('estimate', 'chars') THEN estimated_prompt_tokens + estimated_completion_tokens ELSE 0 END), 0)::bigint AS estimated_tokens,
-        COALESCE(SUM(CASE WHEN usage_source = 'unknown' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS unclassified_tokens
+        ${USAGE_TOKEN_BUCKETS_SQL}
        FROM usage_events`
     )
     const inflowRow = await one(
@@ -113,11 +106,7 @@ export function registerStatsRoutes(app: SessionApp): void {
       `SELECT
         TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
         COUNT(*)::int AS requests,
-        COALESCE(SUM(prompt_tokens + completion_tokens + estimated_prompt_tokens + estimated_completion_tokens), 0)::bigint AS tokens,
-        COALESCE(SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS provider_reported_tokens,
-        COALESCE(SUM(CASE WHEN usage_source = 'mock' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS mock_tokens,
-        COALESCE(SUM(CASE WHEN usage_source IN ('estimate', 'chars') THEN estimated_prompt_tokens + estimated_completion_tokens ELSE 0 END), 0)::bigint AS estimated_tokens,
-        COALESCE(SUM(CASE WHEN usage_source = 'unknown' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS unclassified_tokens
+        ${USAGE_TOKEN_BUCKETS_SQL}
        FROM usage_events
        WHERE created_at >= NOW() - INTERVAL '30 days'
        GROUP BY 1`
