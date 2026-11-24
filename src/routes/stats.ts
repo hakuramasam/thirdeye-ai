@@ -21,7 +21,8 @@ export function registerStatsRoutes(app: SessionApp): void {
       `SELECT
         TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
         COUNT(*)::int AS requests,
-        COALESCE(SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS tokens,
+        COALESCE(SUM(prompt_tokens + completion_tokens + estimated_prompt_tokens + estimated_completion_tokens), 0)::bigint AS tokens,
+        COALESCE(SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS provider_reported_tokens,
         COALESCE(SUM(CASE WHEN usage_source IN ('estimate', 'chars') THEN estimated_prompt_tokens + estimated_completion_tokens ELSE 0 END), 0)::bigint AS estimated_tokens,
         COALESCE(SUM(CASE WHEN usage_source = 'unknown' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS unclassified_tokens,
         COALESCE(SUM(cost_usd_micros), 0)::bigint AS cost_usd_micros
@@ -41,11 +42,12 @@ export function registerStatsRoutes(app: SessionApp): void {
       [user.id]
     )
 
-    const usageMap: Record<string, { requests: number; tokens: number; estimated_tokens: number; unclassified_tokens: number; cost_usd_micros: number }> = {}
+    const usageMap: Record<string, { requests: number; tokens: number; provider_reported_tokens: number; estimated_tokens: number; unclassified_tokens: number; cost_usd_micros: number }> = {}
     for (const r of usageRes.rows) {
       usageMap[r.day] = {
         requests: Number(r.requests),
         tokens: Number(r.tokens),
+        provider_reported_tokens: Number(r.provider_reported_tokens),
         estimated_tokens: Number(r.estimated_tokens),
         unclassified_tokens: Number(r.unclassified_tokens),
         cost_usd_micros: Number(r.cost_usd_micros),
@@ -62,6 +64,7 @@ export function registerStatsRoutes(app: SessionApp): void {
       day,
       requests: usageMap[day]?.requests ?? 0,
       tokens: usageMap[day]?.tokens ?? 0,
+      provider_reported_tokens: usageMap[day]?.provider_reported_tokens ?? 0,
       estimated_tokens: usageMap[day]?.estimated_tokens ?? 0,
       unclassified_tokens: usageMap[day]?.unclassified_tokens ?? 0,
       cost_usd_micros: usageMap[day]?.cost_usd_micros ?? 0,
@@ -76,7 +79,8 @@ export function registerStatsRoutes(app: SessionApp): void {
     const reqsRow = await one(`SELECT COUNT(*)::int AS requests FROM usage_events`)
     const tokensRow = await one(
       `SELECT
-        COALESCE(SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS tokens,
+        COALESCE(SUM(prompt_tokens + completion_tokens + estimated_prompt_tokens + estimated_completion_tokens), 0)::bigint AS tokens,
+        COALESCE(SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS provider_reported_tokens,
         COALESCE(SUM(CASE WHEN usage_source IN ('estimate', 'chars') THEN estimated_prompt_tokens + estimated_completion_tokens ELSE 0 END), 0)::bigint AS estimated_tokens,
         COALESCE(SUM(CASE WHEN usage_source = 'unknown' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS unclassified_tokens
        FROM usage_events`
@@ -92,6 +96,7 @@ export function registerStatsRoutes(app: SessionApp): void {
     const totals = {
       requests: Number(reqsRow?.requests ?? 0),
       tokens: Number(tokensRow?.tokens ?? 0),
+      provider_reported_tokens: Number(tokensRow?.provider_reported_tokens ?? 0),
       estimated_tokens: Number(tokensRow?.estimated_tokens ?? 0),
       unclassified_tokens: Number(tokensRow?.unclassified_tokens ?? 0),
       inflow_usd_micros: Number(inflowRow?.inflow ?? 0),
@@ -129,11 +134,12 @@ export function registerStatsRoutes(app: SessionApp): void {
        GROUP BY 1`
     )
 
-    const usageMap: Record<string, { requests: number; tokens: number; estimated_tokens: number; unclassified_tokens: number }> = {}
+    const usageMap: Record<string, { requests: number; tokens: number; provider_reported_tokens: number; estimated_tokens: number; unclassified_tokens: number }> = {}
     for (const r of usageRes.rows) {
       usageMap[r.day] = {
         requests: Number(r.requests),
         tokens: Number(r.tokens),
+        provider_reported_tokens: Number(r.provider_reported_tokens),
         estimated_tokens: Number(r.estimated_tokens),
         unclassified_tokens: Number(r.unclassified_tokens),
       }
@@ -154,6 +160,7 @@ export function registerStatsRoutes(app: SessionApp): void {
       day,
       requests: usageMap[day]?.requests ?? 0,
       tokens: usageMap[day]?.tokens ?? 0,
+      provider_reported_tokens: usageMap[day]?.provider_reported_tokens ?? 0,
       estimated_tokens: usageMap[day]?.estimated_tokens ?? 0,
       unclassified_tokens: usageMap[day]?.unclassified_tokens ?? 0,
       inflow_usd_micros: inflowMap[day] ?? 0,
