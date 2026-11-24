@@ -191,7 +191,7 @@ authorization: Bearer $THIRDEYE_API_KEY</code></pre>
 <tr><td>GET</td><td><code>/api/keys</code></td><td>List your keys with per-key credit, budget and rate limits.</td></tr>
 <tr><td>POST</td><td><code>/api/keys</code></td><td>Issue a key. The secret is shown once.</td></tr>
 <tr><td>POST</td><td><code>/api/payments/intent</code></td><td>Create a deposit intent, optionally tagged to one key.</td></tr>
-<tr><td>GET</td><td><code>/api/stats/me</code></td><td>Your usage by day, with provider-reported, estimated and historical-unclassified tokens plus billed cost.</td></tr>
+<tr><td>GET</td><td><code>/api/stats/me</code></td><td>Your usage by day, with total, provider-reported, estimated and historical-unclassified tokens plus billed cost.</td></tr>
 <tr><td>POST</td><td><code>/api/feedback</code></td><td>Public issue or idea intake. Anonymous is allowed.</td></tr>
 </tbody></table>
 <h2>Billing headers</h2>
