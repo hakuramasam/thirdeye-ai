@@ -109,7 +109,15 @@ test('guards block a distribution with no profit, thin reserves or unbacked cred
     agent_credit_ledger_drift_usd_micros: 1,
   })
   assert.ok(drift.some((g) => g.code === 'agent_credit_ledger_drift'))
+  const keyDrift = distributionGuards({
+    profit_usd_micros: usdToMicros(2_000),
+    vault_stable_usd_micros: usdToMicros(10_000),
+    outstanding_credit_usd_micros: 0,
+    api_key_credit_ledger_drift_usd_micros: 1,
+  })
+  assert.ok(keyDrift.some((g) => g.code === 'api_key_credit_ledger_drift'))
   assert.ok(blockedBy(drift))
+  assert.ok(blockedBy(keyDrift))
 })
 
 test('a healthy period clears every guard', () => {
