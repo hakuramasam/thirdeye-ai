@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { randomUUID } from 'node:crypto'
 import assert from 'node:assert/strict'
 import {
   bpsOf,
@@ -8,6 +9,7 @@ import {
   splitProfit,
   usdToMicros,
   microsToUsd,
+  measurePeriod,
 } from '../src/lib/profit.js'
 
 test('bpsOf floors and ignores non-positive input', () => {
@@ -106,4 +108,33 @@ test('a healthy period clears every guard', () => {
     opex_usd_micros: usdToMicros(100),
   })
   assert.equal(blockedBy(guards), false, JSON.stringify(guards))
+})
+
+
+test('outstanding prepaid credit includes active agent inference pots', async () => {
+  const { migrate, query } = await import('../src/db/index.js')
+  await migrate()
+  const suffix = randomUUID().replace(/-/g, '')
+  const userId = `profit_agent_liability_${suffix}`
+  const agentId = `tdt_profit_liability_${suffix}`
+  const potMicros = 12_345_678
+  await query('INSERT INTO users (id, wallet, role) VALUES ($1, $2, $3)', [
+    userId,
+    `0x${suffix.slice(0, 40).padEnd(40, '0')}`,
+    'user',
+  ])
+  try {
+    const before = await measurePeriod('2099-01-01T00:00:00.000Z', '2099-01-02T00:00:00.000Z')
+    await query(
+      `INSERT INTO agents (id, user_id, name, system_prompt, model, credit_usd_micros)
+       VALUES ($1, $2, 'liability probe', 'test', 'thirdeye-mock', $3)`,
+      [agentId, userId, potMicros]
+    )
+    const after = await measurePeriod('2099-01-01T00:00:00.000Z', '2099-01-02T00:00:00.000Z')
+    assert.equal(after.agent_credit_usd_micros - before.agent_credit_usd_micros, potMicros)
+    assert.equal(after.outstanding_credit_usd_micros - before.outstanding_credit_usd_micros, potMicros)
+  } finally {
+    await query('DELETE FROM agents WHERE id = $1', [agentId])
+    await query('DELETE FROM users WHERE id = $1', [userId])
+  }
 })
