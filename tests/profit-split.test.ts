@@ -128,6 +128,14 @@ test('guards block a distribution with no profit, thin reserves or unbacked cred
   })
   assert.ok(missingWallets.some((g) => g.code === 'recipient_wallets_unconfigured'))
   assert.ok(blockedBy(missingWallets))
+  const unverifiedCosts = distributionGuards({
+    profit_usd_micros: usdToMicros(2_000),
+    vault_stable_usd_micros: usdToMicros(10_000),
+    outstanding_credit_usd_micros: 0,
+    operating_costs_verified: false,
+  })
+  assert.ok(unverifiedCosts.some((g) => g.code === 'operating_costs_unverified'))
+  assert.ok(blockedBy(unverifiedCosts))
 })
 
 test('a healthy period clears every guard', () => {
@@ -135,6 +143,7 @@ test('a healthy period clears every guard', () => {
     profit_usd_micros: usdToMicros(2_000),
     vault_stable_usd_micros: usdToMicros(10_000),
     outstanding_credit_usd_micros: usdToMicros(500),
+    operating_costs_verified: true,
     opex_usd_micros: usdToMicros(100),
   })
   assert.equal(blockedBy(guards), false, JSON.stringify(guards))
