@@ -80,6 +80,7 @@ async function buildReport(from: string, to: string, opts: { gasUsd?: number; in
     agent_credit_ledger_drift_usd_micros: measured.agent_credit_ledger_drift_usd_micros,
     api_key_credit_ledger_drift_usd_micros: measured.api_key_credit_ledger_drift_usd_micros,
     unpayable_recipient_count: lines.filter((line) => !line.payable).length,
+    operating_costs_verified: opts.gasUsd != null && opts.infraUsd != null,
   })
   if (opts.vaultUsdMicros == null) {
     guards.push({
@@ -130,7 +131,7 @@ async function buildReport(from: string, to: string, opts: { gasUsd?: number; in
     notes: [
       'Revenue is billed consumption only. Deposits are liabilities and are reported separately as outstanding credit.',
       'Provider cost is derived as billed / (1 + PLATFORM_MARGIN_PCT). If the margin changed mid-period the figure drifts.',
-      'Gas and infra are zero unless passed explicitly, because neither is recorded per transaction yet.',
+      'Gas and infra must be explicitly supplied or recorded per transaction; otherwise the distribution guard blocks payout.',
       'Agent and API-key credit balances must reconcile to their subledgers before a distribution can be marked distributable.',
       'Every payout recipient must have an explicitly configured wallet; fallback addresses are not used.',
       'Team agent lines show payable:false until those wallets exist.',
