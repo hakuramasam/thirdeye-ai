@@ -4,9 +4,8 @@ process.env.PGLITE_DIR = 'memory://'
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { env } from '../src/lib/env.js'
-import { resolveProvider, UpstreamError } from '../src/providers/index.js'
-
+const { env } = await import('../src/lib/env.js')
+const { resolveProvider, UpstreamError } = await import('../src/providers/index.js')
 const { migrate } = await import('../src/db/index.js')
 
 before(async () => { await migrate() })
