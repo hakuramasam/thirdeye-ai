@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
-import { privySigner, sponsorAttempts } from '../src/payments/signer.js'
+import { privySigner, sponsorAttempts, signerChainForId } from '../src/payments/signer.js'
 
 // A real P-256 key, because the signer refuses to build an authorization header without one.
 const TEST_KEY = (() => {
@@ -93,4 +93,22 @@ test('an empty wallet surfaces the funding error rather than silently retrying',
     await assert.rejects(send(signer('auto')), /insufficient funds/)
     assert.equal(stub.calls.length, 1)
   } finally { stub.restore() }
+})
+
+
+test('local signer chain resolution follows the payment chain ID, not Base by default', () => {
+  const base = signerChainForId(8453)
+  const bsc = signerChainForId(56)
+  const robinhood = signerChainForId(4663)
+  assert.equal(base.id, 8453)
+  assert.equal(base.rpcUrls.default.http[0], 'https://mainnet.base.org')
+  assert.equal(bsc.id, 56)
+  assert.equal(bsc.nativeCurrency.symbol, 'BNB')
+  assert.equal(bsc.rpcUrls.default.http[0], 'https://bsc-dataseed.binance.org')
+  assert.equal(robinhood.id, 4663)
+  assert.equal(robinhood.rpcUrls.default.http[0], 'https://rpc.mainnet.chain.robinhood.com')
+})
+
+test('local signer refuses an unsupported chain instead of submitting on Base', () => {
+  assert.throws(() => signerChainForId(1), /Unsupported signer chain ID: 1/)
 })
