@@ -138,11 +138,16 @@ export async function migrate(): Promise<void> {
     ['usage_events_usage_source_check'],
   )
   if (!provenanceConstraint) {
-    await query(
-      `ALTER TABLE usage_events
-       ADD CONSTRAINT usage_events_usage_source_check
-       CHECK (usage_source IN ('provider', 'mock', 'estimate', 'chars', 'unknown'))`,
-    )
+    try {
+      await query(
+        `ALTER TABLE usage_events
+         ADD CONSTRAINT usage_events_usage_source_check
+         CHECK (usage_source IN ('provider', 'mock', 'estimate', 'chars', 'unknown'))`,
+      )
+    } catch (error: any) {
+      // Multiple serverless instances may race the first migration; tolerate only that race.
+      if (String(error?.code ?? '') !== '42710') throw error
+    }
   }
   migrated = true
 }
