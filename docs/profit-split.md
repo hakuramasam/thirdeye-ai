@@ -18,6 +18,9 @@ zero revenue: that is a liability sitting in a ledger, not earnings.
 Only that number is divisible. A deposit nobody has spent is a pending obligation; a
 volatile token that has not been swapped is not profit either, because we have already
 learned the hard way that crediting an oracle value before a swap leaves us holding the bag.
+Outstanding prepaid credit must include positive user-ledger balances, API-key credit pots,
+and per-agent inference-credit pots. These are all spendable promises and must be reserved
+before profit can be distributed.
 
 ## 2. The split
 
