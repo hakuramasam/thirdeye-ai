@@ -76,14 +76,14 @@ describe('per-agent inference credit', () => {
        VALUES ($1,$2,$3,$4,$5,0) ON CONFLICT (id) DO UPDATE SET credit_usd_micros = 0`,
       [id, 'probe_owner', 'RACE PROBE', 'x', 'ministral-3b']
     )
-    await fundAgentCredit(id, 100)
-    const [a, b] = await Promise.all([takeAgentCredit(id, 80), takeAgentCredit(id, 80)])
+    await fundAgentCredit(id, 100, 'add', { ref: 'race-fund' })
+    const [a, b] = await Promise.all([takeAgentCredit(id, 80, 'race-run'), takeAgentCredit(id, 80, 'race-run')])
     assert.equal(a + b, 80, 'only one of the two spends can win the same micros')
     assert.equal(await getAgentCredit(id), 20)
 
     await refundAgentCredit(id, 80, 'race-refund')
     assert.equal(await getAgentCredit(id), 100, 'a refund restores exactly what was taken')
-    const audit = await query(`SELECT kind, amount_usd_micros FROM agent_credit_ledger WHERE agent_id = $1 ORDER BY id`, [id])
+    const audit = await query(`SELECT kind, amount_usd_micros FROM agent_credit_ledger WHERE agent_id = $1 AND ref IN ('race-fund', 'race-run', 'race-refund') ORDER BY id`, [id])
     assert.deepEqual(audit.rows.map((x: any) => [x.kind, Number(x.amount_usd_micros)]), [['fund', 100], ['usage', -80], ['refund', 80]])
 
     await fundAgentCredit(id, 0, 'set')
