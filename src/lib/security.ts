@@ -62,10 +62,19 @@ export function validateDatabase(input: {
   databaseUrlVar?: string
   isServerless?: boolean
   nodeEnv?: string
+  /** PGlite is a deliberate local/test mode, never an implicit fallback. */
+  pgliteEnabled?: boolean
 }): SecretProblem[] {
   const deployed = Boolean(input.isServerless) || (input.nodeEnv ?? 'development') === 'production'
-  if (!deployed) return []
   const problems: SecretProblem[] = []
+  if (!deployed && !input.databaseUrl && !input.pgliteEnabled) {
+    problems.push({
+      name: 'PGLITE_MODE',
+      problem: 'unset database URL requires an explicit local/test opt-in with PGLITE_MODE=1; implicit embedded-database fallback is disabled',
+    })
+    return problems
+  }
+  if (!deployed) return []
   // Name the variable in play, not the conventional one: a preview reads PREVIEW_DATABASE_URL, so
   // reporting DATABASE_URL would send an operator to a variable that is not being consulted.
   const name = input.databaseUrlVar || 'DATABASE_URL'
