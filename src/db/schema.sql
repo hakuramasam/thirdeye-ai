@@ -65,23 +65,14 @@ CREATE TABLE IF NOT EXISTS usage_events (
   cost_usd_micros  bigint NOT NULL,          -- billed to user (after margin) or 0 for BYOK
   status            text NOT NULL,           -- 200 | 4xx | 5xx | stream
   latency_ms        integer NOT NULL,
-  created_at        timestamptz NOT NULL DEFAULT now()
+  created_at        timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT usage_events_usage_source_check
+    CHECK (usage_source IN ('provider', 'mock', 'estimate', 'chars', 'unknown'))
 );
 ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS estimated_prompt_tokens integer NOT NULL DEFAULT 0;
 ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS estimated_completion_tokens integer NOT NULL DEFAULT 0;
 ALTER TABLE usage_events ADD COLUMN IF NOT EXISTS usage_source text NOT NULL DEFAULT 'unknown';
-DO $
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'usage_events_usage_source_check'
-      AND conrelid = 'usage_events'::regclass
-  ) THEN
-    ALTER TABLE usage_events
-      ADD CONSTRAINT usage_events_usage_source_check
-      CHECK (usage_source IN ('provider', 'mock', 'estimate', 'chars', 'unknown'));
-  END IF;
-END $;
+
 CREATE INDEX IF NOT EXISTS idx_usage_user_time ON usage_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_usage_time ON usage_events(created_at);
 
