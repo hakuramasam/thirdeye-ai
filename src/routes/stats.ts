@@ -108,7 +108,8 @@ export function registerStatsRoutes(app: SessionApp): void {
       `SELECT
         TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
         COUNT(*)::int AS requests,
-        COALESCE(SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS tokens,
+        COALESCE(SUM(prompt_tokens + completion_tokens + estimated_prompt_tokens + estimated_completion_tokens), 0)::bigint AS tokens,
+        COALESCE(SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS provider_reported_tokens,
         COALESCE(SUM(CASE WHEN usage_source IN ('estimate', 'chars') THEN estimated_prompt_tokens + estimated_completion_tokens ELSE 0 END), 0)::bigint AS estimated_tokens,
         COALESCE(SUM(CASE WHEN usage_source = 'unknown' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS unclassified_tokens
        FROM usage_events
