@@ -1,3 +1,4 @@
+process.env.PGLITE_MODE = '1'
 process.env.PGLITE_DIR = 'memory://'
 
 import { describe, it, before } from 'node:test'
@@ -38,8 +39,10 @@ describe('per-agent inference credit', () => {
     const id = 'tdt_credit_probe'
     await query(
       `INSERT INTO agents (id, user_id, name, system_prompt, model, credit_usd_micros)
-       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO UPDATE SET credit_usd_micros = $6`,
-      [id, 'probe_owner', 'CREDIT PROBE', 'x', 'ministral-3b', 50_000_000]
+       VALUES ($1,$2,$3,$4,$5,0) ON CONFLICT (id) DO UPDATE SET credit_usd_micros = 0`,
+      [id, 'probe_owner', 'CREDIT PROBE', 'x', 'ministral-3b']
+    )
+    await fundAgentCredit(id, 50_000_000)
     )
     assert.equal(await getAgentCredit(id), 50_000_000)
 
@@ -48,6 +51,10 @@ describe('per-agent inference credit', () => {
     const paid = await payForStep({ agentId: id, userId: 'probe_owner', wallet: '0xprobe', runId: 'run-1', costMicros: 120 })
     assert.deepEqual(paid, { ok: true, fromPot: 120, fromLedger: 0 })
     assert.equal(await getAgentCredit(id), 50_000_000 - 120)
+    const usageRows = await query(`SELECT amount_usd_micros, kind, ref, balance_after FROM agent_credit_ledger WHERE agent_id = $1 AND ref = 'run-1'`, [id])
+    assert.equal(usageRows.rows.length, 1)
+    assert.equal(Number(usageRows.rows[0].amount_usd_micros), -120)
+    assert.equal(usageRows.rows[0].kind, 'usage')
 
     // an empty pot falls through to the ledger, which refuses: the step fails whole
     await fundAgentCredit(id, 0, 'set')
@@ -64,15 +71,19 @@ describe('per-agent inference credit', () => {
     await fundAgentCredit(id, 0, 'set').catch(() => null)
     await query(
       `INSERT INTO agents (id, user_id, name, system_prompt, model, credit_usd_micros)
-       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO UPDATE SET credit_usd_micros = $6`,
-      [id, 'probe_owner', 'RACE PROBE', 'x', 'ministral-3b', 100]
+       VALUES ($1,$2,$3,$4,$5,0) ON CONFLICT (id) DO UPDATE SET credit_usd_micros = 0`,
+      [id, 'probe_owner', 'RACE PROBE', 'x', 'ministral-3b']
+    )
+    await fundAgentCredit(id, 100)
     )
     const [a, b] = await Promise.all([takeAgentCredit(id, 80), takeAgentCredit(id, 80)])
     assert.equal(a + b, 80, 'only one of the two spends can win the same micros')
     assert.equal(await getAgentCredit(id), 20)
 
-    await refundAgentCredit(id, 80)
+    await refundAgentCredit(id, 80, 'race-refund')
     assert.equal(await getAgentCredit(id), 100, 'a refund restores exactly what was taken')
+    const audit = await query(`SELECT kind, amount_usd_micros FROM agent_credit_ledger WHERE agent_id = $1 ORDER BY id`, [id])
+    assert.deepEqual(audit.rows.map((x: any) => [x.kind, Number(x.amount_usd_micros)]), [['fund', 100], ['usage', -80], ['refund', 80]])
 
     await query(`DELETE FROM agents WHERE id = $1`, [id])
   })
