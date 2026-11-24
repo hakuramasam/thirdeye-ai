@@ -74,7 +74,7 @@ export async function getUserUsageSeries(userId: string, days: number = 14): Pro
     [userId, days]
   )
 
-  const map = new Map<string, { requests: number; tokens: number; cost_usd_micros: number }>()
+  const map = new Map<string, { requests: number; tokens: number; estimated_tokens: number; unclassified_tokens: number; cost_usd_micros: number }>()
   for (const r of res.rows) {
     map.set(r.day, {
       requests: Number(r.requests ?? 0),
