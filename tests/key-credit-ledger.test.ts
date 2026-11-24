@@ -24,9 +24,11 @@ describe('API-key credit subledger', () => {
     await query(
       `INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, credit_usd_micros)
        VALUES ($1,$2,'key ledger probe','hash','sk-thirdeye-probe',0)
-       ON CONFLICT (id) DO UPDATE SET credit_usd_micros = 0`,
+       ON CONFLICT (id) DO NOTHING`,
       [keyId, ownerId]
     )
+    const existingCredit = await getKeyCreditMicros(keyId)
+    if (existingCredit > 0) await debitKey(keyId, existingCredit, 'test-reset-before-suite')
   })
 
   it('records verified deposits, usage and refunds with matching balances', async () => {
@@ -37,7 +39,8 @@ describe('API-key credit subledger', () => {
     assert.equal(await getKeyCreditMicros(keyId), 750)
 
     const rows = await query(
-      'SELECT kind, amount_usd_micros, ref FROM api_key_credit_ledger WHERE api_key_id = $1 ORDER BY id',
+      `SELECT kind, amount_usd_micros, ref FROM api_key_credit_ledger
+        WHERE api_key_id = $1 AND ref IN ('base:deposit-1', 'req:call-1', 'refund:call-1') ORDER BY id`,
       [keyId]
     )
     assert.deepEqual(rows.rows.map((r: any) => [r.kind, Number(r.amount_usd_micros), r.ref]), [
@@ -53,13 +56,13 @@ describe('API-key credit subledger', () => {
 
   it('settles a key-tagged on-chain deposit into the key subledger atomically', async () => {
     const { creditDeposit } = await import('../src/lib/billing.js')
-    await query('UPDATE api_keys SET credit_usd_micros = 0 WHERE id = $1', [keyId])
-    await query('DELETE FROM api_key_credit_ledger WHERE api_key_id = $1', [keyId])
+    const existingCredit = await getKeyCreditMicros(keyId)
+    if (existingCredit > 0) await debitKey(keyId, existingCredit, 'test-reset-before-deposit')
     const txHash = '0x' + randomUUID().replace(/-/g, '').padEnd(64, '0')
     const result = await creditDeposit(ownerId, 500, { chain: 'base', txHash, token: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' }, { toKeyId: keyId })
     assert.equal(result.credited, true)
     assert.equal(result.keyCredit, 500)
-    const rows = await query('SELECT kind, amount_usd_micros, ref FROM api_key_credit_ledger WHERE api_key_id = $1', [keyId])
+    const rows = await query('SELECT kind, amount_usd_micros, ref FROM api_key_credit_ledger WHERE api_key_id = $1 AND ref = $2', [keyId, `base:${txHash}`])
     assert.deepEqual(rows.rows.map((r: any) => [r.kind, Number(r.amount_usd_micros), r.ref]), [
       ['deposit', 500, `base:${txHash}`],
     ])
@@ -68,8 +71,8 @@ describe('API-key credit subledger', () => {
   })
 
   it('refunds key credit atomically when the owner account cannot cover the remainder', async () => {
-    await query('UPDATE api_keys SET credit_usd_micros = 0 WHERE id = $1', [keyId])
-    await query('DELETE FROM api_key_credit_ledger WHERE api_key_id = $1', [keyId])
+    const existingCredit = await getKeyCreditMicros(keyId)
+    if (existingCredit > 0) await debitKey(keyId, existingCredit, 'test-reset-before-refund')
     await creditKey(keyId, 100, { kind: 'deposit', ref: 'base:deposit-2' })
     const before = await getKeyCreditMicros(keyId)
     const result = await chargeCall(keyId, ownerId, 200, 'req:charge-failed')
@@ -87,8 +90,8 @@ describe('API-key credit subledger', () => {
   })
 
   it('serializes concurrent key spends so the same credit is never used twice', async () => {
-    await query('UPDATE api_keys SET credit_usd_micros = 0 WHERE id = $1', [keyId])
-    await query('DELETE FROM api_key_credit_ledger WHERE api_key_id = $1', [keyId])
+    const existingCredit = await getKeyCreditMicros(keyId)
+    if (existingCredit > 0) await debitKey(keyId, existingCredit, 'test-reset-before-race')
     await creditKey(keyId, 100, { kind: 'adjust', ref: 'race-opening' })
     const [a, b] = await Promise.all([debitKey(keyId, 80, 'race-a'), debitKey(keyId, 80, 'race-b')])
     assert.equal(a + b, 80)
