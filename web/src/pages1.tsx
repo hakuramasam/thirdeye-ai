@@ -102,13 +102,15 @@ function Overview({ user, refreshKey }: { user: User; refreshKey: number }) {
   }, [refreshKey])
   const totReq = (stats || []).reduce((s, d) => s + d.requests, 0)
   const totTok = (stats || []).reduce((s, d) => s + d.tokens, 0)
+  const totEstimatedTok = (stats || []).reduce((s, d) => s + (d.estimated_tokens || 0), 0)
+  const totUnclassifiedTok = (stats || []).reduce((s, d) => s + (d.unclassified_tokens || 0), 0)
   const totCost = (stats || []).reduce((s, d) => s + d.cost_usd_micros, 0)
   return (
     <div>
       <div className="grid cols-3">
         <div className="stat"><div className="label">Balance</div><div className="value">{credits ? fmtUsd(credits.balance_usd_micros) : '…'}</div><div className="sub">prepaid credits</div></div>
         <div className="stat"><div className="label">Requests (14d)</div><div className="value">{totReq.toLocaleString()}</div></div>
-        <div className="stat"><div className="label">Tokens (14d)</div><div className="value">{totTok.toLocaleString()}</div><div className="sub">{fmtUsd(totCost)} spent</div></div>
+        <div className="stat"><div className="label">Provider-reported tokens (14d)</div><div className="value">{totTok.toLocaleString()}</div><div className="sub">{totEstimatedTok.toLocaleString()} estimated · {totUnclassifiedTok.toLocaleString()} historical unclassified · {fmtUsd(totCost)} spent</div></div>
       </div>
       <div className="card">
         <h2>Last 14 days</h2>
@@ -149,7 +151,7 @@ function BarChart({ data }: { data: any[] }) {
         return (
           <g key={d.day}>
             <rect className="bar" x={x} y={H - 22 - h} width={bw} height={h} rx={2}>
-              <title>{`${d.day}: ${d.requests} req · ${d.tokens.toLocaleString()} tokens · ${fmtUsd(d.cost_usd_micros)}`}</title>
+              <title>{`${d.day}: ${d.requests} req · ${d.tokens.toLocaleString()} provider tokens · ${(d.estimated_tokens || 0).toLocaleString()} estimated · ${(d.unclassified_tokens || 0).toLocaleString()} unclassified · ${fmtUsd(d.cost_usd_micros)}`}</title>
             </rect>
             {d.deposits_usd_micros > 0 && (
               <rect className="bar deposit" x={x} y={H - 22 - h - 5} width={bw} height={4} rx={1}>
