@@ -30,6 +30,20 @@ export function registerAdminRoutes(app: SessionApp) {
     return c.json({ agents: r.rows, total_usd_micros: total, ledger: ledger.rows })
   })
 
+  /** GET /api/admin/credits/ledger — unified key and agent credit audit trail. */
+  app.get('/api/admin/credits/ledger', async (c) => {
+    if (c.req.header('x-master-key') !== env.masterKey) return c.json({ error: { message: 'Forbidden', type: 'auth', code: 403 } }, 403)
+    const rows = await query(
+      `SELECT 'agent' AS account_type, agent_id AS account_id, amount_usd_micros, kind, ref, actor, balance_after, created_at
+         FROM agent_credit_ledger
+       UNION ALL
+       SELECT 'api_key' AS account_type, api_key_id AS account_id, amount_usd_micros, kind, ref, actor, balance_after, created_at
+         FROM api_key_credit_ledger
+       ORDER BY created_at DESC LIMIT 500`
+    )
+    return c.json({ entries: rows.rows })
+  })
+
   /**
    * POST /api/admin/agents/:id/credit — add to (default) or set one agent's pot.
    * Body: { usd_micros, mode?: 'add' | 'set' }.
