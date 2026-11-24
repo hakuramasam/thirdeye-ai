@@ -1,0 +1,65 @@
+name: Credit ledger PostgreSQL integration
+
+on:
+  pull_request:
+    paths:
+      - 'src/agents/credit.ts'
+      - 'src/lib/keycredit.ts'
+      - 'src/lib/billing.ts'
+      - 'src/lib/profit.ts'
+      - 'src/db/schema.sql'
+      - 'src/routes/admin.ts'
+      - 'src/routes/profit.ts'
+      - 'tests/agent-credit.test.ts'
+      - 'tests/key-credit-ledger.test.ts'
+      - 'tests/profit-split.test.ts'
+      - '.github/workflows/credit-ledger-postgres.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/agents/credit.ts'
+      - 'src/lib/keycredit.ts'
+      - 'src/lib/billing.ts'
+      - 'src/lib/profit.ts'
+      - 'src/db/schema.sql'
+      - 'tests/agent-credit.test.ts'
+      - 'tests/key-credit-ledger.test.ts'
+      - 'tests/profit-split.test.ts'
+      - '.github/workflows/credit-ledger-postgres.yml'
+
+jobs:
+  postgres-credit-ledger:
+    name: Credit ledger transactions against PostgreSQL 16
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: thirdeye_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d thirdeye_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/thirdeye_test
+      PREVIEW_DATABASE_URL: ''
+      PGLITE_MODE: ''
+      NODE_ENV: test
+      MASTER_KEY: test-master-key
+      COOKIE_SECRET: test-cookie-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Run credit ledger and liability tests on PostgreSQL
+        run: npx tsx --test tests/agent-credit.test.ts tests/key-credit-ledger.test.ts tests/profit-split.test.ts
