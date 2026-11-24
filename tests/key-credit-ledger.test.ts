@@ -1,5 +1,7 @@
-process.env.PGLITE_MODE = '1'
-process.env.PGLITE_DIR = 'memory://'
+if (!process.env.DATABASE_URL) {
+  process.env.PGLITE_MODE = '1'
+  process.env.PGLITE_DIR = 'memory://'
+}
 
 import { describe, it, before } from 'node:test'
 import assert from 'node:assert/strict'
