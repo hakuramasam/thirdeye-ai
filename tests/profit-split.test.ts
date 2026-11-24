@@ -1,3 +1,4 @@
+process.env.PGLITE_MODE = '1'
 process.env.PGLITE_DIR = 'memory://'
 
 import test from 'node:test'
