@@ -49,6 +49,13 @@ describe('API-key credit subledger', () => {
       ['refund', 50, 'refund:call-1'],
     ])
     assert.equal(rows.rows.reduce((n: number, r: any) => n + Number(r.amount_usd_micros), 0), await getKeyCreditMicros(keyId))
+    const usageId = await query(`SELECT id FROM api_key_credit_ledger WHERE api_key_id = $1 AND ref = 'req:call-1'`, [keyId])
+    await assert.rejects(query(`UPDATE api_key_credit_ledger SET amount_usd_micros = 0 WHERE id = $1`, [usageId.rows[0].id]), /append-only/)
+    await assert.rejects(query(`DELETE FROM api_key_credit_ledger WHERE id = $1`, [usageId.rows[0].id]), /append-only/)
+    const userLedger = await query(`INSERT INTO ledger (user_id, amount_usd_micros, kind, ref) VALUES ($1, 100, 'adjust', 'append-only-probe') RETURNING id`, [ownerId])
+    await query(`INSERT INTO ledger (user_id, amount_usd_micros, kind, ref) VALUES ($1, -100, 'adjust', 'append-only-compensation')`, [ownerId])
+    await assert.rejects(query(`UPDATE ledger SET amount_usd_micros = 200 WHERE id = $1`, [userLedger.rows[0].id]), /append-only/)
+    await assert.rejects(query(`DELETE FROM ledger WHERE id = $1`, [userLedger.rows[0].id]), /append-only/)
     const after = await measurePeriod('2099-01-01T00:00:00.000Z', '2099-01-02T00:00:00.000Z')
     assert.equal(after.api_key_credit_usd_micros - before.api_key_credit_usd_micros, 750)
     assert.equal(after.api_key_credit_ledger_drift_usd_micros, 0)
