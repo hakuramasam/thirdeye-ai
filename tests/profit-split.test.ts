@@ -101,6 +101,15 @@ test('guards block a distribution with no profit, thin reserves or unbacked cred
   })
   assert.ok(unbacked.some((g) => g.code === 'backing_below_liability'))
   assert.ok(blockedBy(unbacked))
+
+  const drift = distributionGuards({
+    profit_usd_micros: usdToMicros(2_000),
+    vault_stable_usd_micros: usdToMicros(10_000),
+    outstanding_credit_usd_micros: 0,
+    agent_credit_ledger_drift_usd_micros: 1,
+  })
+  assert.ok(drift.some((g) => g.code === 'agent_credit_ledger_drift'))
+  assert.ok(blockedBy(drift))
 })
 
 test('a healthy period clears every guard', () => {
@@ -116,6 +125,7 @@ test('a healthy period clears every guard', () => {
 
 test('outstanding prepaid credit includes active agent inference pots', async () => {
   const { migrate, query } = await import('../src/db/index.js')
+  const { fundAgentCredit } = await import('../src/agents/credit.js')
   await migrate()
   const suffix = randomUUID().replace(/-/g, '')
   const userId = `profit_agent_liability_${suffix}`
@@ -130,13 +140,16 @@ test('outstanding prepaid credit includes active agent inference pots', async ()
     const before = await measurePeriod('2099-01-01T00:00:00.000Z', '2099-01-02T00:00:00.000Z')
     await query(
       `INSERT INTO agents (id, user_id, name, system_prompt, model, credit_usd_micros)
-       VALUES ($1, $2, 'liability probe', 'test', 'thirdeye-mock', $3)`,
-      [agentId, userId, potMicros]
+       VALUES ($1, $2, 'liability probe', 'test', 'thirdeye-mock', 0)`,
+      [agentId, userId]
     )
+    await fundAgentCredit(agentId, potMicros)
     const after = await measurePeriod('2099-01-01T00:00:00.000Z', '2099-01-02T00:00:00.000Z')
     assert.equal(after.agent_credit_usd_micros - before.agent_credit_usd_micros, potMicros)
     assert.equal(after.outstanding_credit_usd_micros - before.outstanding_credit_usd_micros, potMicros)
+    assert.equal(after.agent_credit_ledger_drift_usd_micros, 0)
   } finally {
+    await query('DELETE FROM agent_credit_ledger WHERE agent_id = $1', [agentId])
     await query('DELETE FROM agents WHERE id = $1', [agentId])
     await query('DELETE FROM users WHERE id = $1', [userId])
   }
