@@ -452,8 +452,8 @@ CREATE TABLE IF NOT EXISTS agent_credit_ledger (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_credit_ledger_agent_time
   ON agent_credit_ledger(agent_id, created_at DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_credit_ledger_ref
-  ON agent_credit_ledger(agent_id, ref) WHERE ref IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_credit_ledger_opening
+  ON agent_credit_ledger(agent_id) WHERE ref = 'migration:agent-credit-ledger-v1';
 
 -- Preserve existing pots as opening balances; this is a migration snapshot, not proof of
 -- the original funding source. It makes the current liability visible without inventing history.
@@ -461,7 +461,7 @@ INSERT INTO agent_credit_ledger (agent_id, amount_usd_micros, kind, ref, actor, 
 SELECT id, credit_usd_micros, 'opening_balance', 'migration:agent-credit-ledger-v1', 'migration', credit_usd_micros
   FROM agents
  WHERE credit_usd_micros <> 0
-ON CONFLICT (agent_id, ref) WHERE ref IS NOT NULL DO NOTHING;
+ON CONFLICT (agent_id) WHERE ref = 'migration:agent-credit-ledger-v1' DO NOTHING;
 
 -- Profit accounting (docs/profit-split.md). A period records what was measured, so a
 -- distribution can be recomputed and audited later instead of living in a spreadsheet.
