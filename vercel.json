@@ -3,6 +3,14 @@
   "outputDirectory": "web/dist",
   "rewrites": [
     {
+      "source": "/api/x402",
+      "destination": "/api/x402"
+    },
+    {
+      "source": "/api/x402/(.*)",
+      "destination": "/api/x402"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api"
     },
