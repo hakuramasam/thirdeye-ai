@@ -96,6 +96,7 @@ async function buildReport(from: string, to: string, opts: { gasUsd?: number; in
       cost_usd: microsToUsd(measured.cost_usd_micros),
       profit_usd: microsToUsd(measured.profit_usd_micros),
       outstanding_credit_usd: microsToUsd(measured.outstanding_credit_usd_micros),
+      agent_credit_usd: microsToUsd(measured.agent_credit_usd_micros),
     },
     level: {
       applied: level.level,
