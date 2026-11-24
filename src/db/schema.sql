@@ -472,8 +472,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_credit_ledger_opening
 
 INSERT INTO api_key_credit_ledger (api_key_id, amount_usd_micros, kind, ref, actor, balance_after)
 SELECT id, credit_usd_micros, 'opening_balance', 'migration:api-key-credit-ledger-v1', 'migration', credit_usd_micros
-  FROM api_keys
- WHERE credit_usd_micros <> 0
+  FROM api_keys k
+ WHERE k.credit_usd_micros <> 0
+   AND NOT EXISTS (SELECT 1 FROM api_key_credit_ledger l WHERE l.api_key_id = k.id)
 ON CONFLICT (api_key_id) WHERE ref = 'migration:api-key-credit-ledger-v1' DO NOTHING;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_credit_ledger_opening
   ON agent_credit_ledger(agent_id) WHERE ref = 'migration:agent-credit-ledger-v1';
@@ -482,8 +483,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_credit_ledger_opening
 -- the original funding source. It makes the current liability visible without inventing history.
 INSERT INTO agent_credit_ledger (agent_id, amount_usd_micros, kind, ref, actor, balance_after)
 SELECT id, credit_usd_micros, 'opening_balance', 'migration:agent-credit-ledger-v1', 'migration', credit_usd_micros
-  FROM agents
- WHERE credit_usd_micros <> 0
+  FROM agents a
+ WHERE a.credit_usd_micros <> 0
+   AND NOT EXISTS (SELECT 1 FROM agent_credit_ledger l WHERE l.agent_id = a.id)
 ON CONFLICT (agent_id) WHERE ref = 'migration:agent-credit-ledger-v1' DO NOTHING;
 
 -- Profit accounting (docs/profit-split.md). A period records what was measured, so a
