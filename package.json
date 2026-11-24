@@ -17,20 +17,20 @@
     "agent:platforms:check": "node scripts/validate-agent-platforms.mjs"
   },
   "dependencies": {
-    "@electric-sql/pglite": "^0.5.8",
-    "@hono/node-server": "^2.1.6",
+    "@electric-sql/pglite": "^0.5.17",
+    "@hono/node-server": "^2.1.11",
     "@modelcontextprotocol/sdk": "^1.32.2",
-    "@neondatabase/serverless": "^1.2.0",
+    "@neondatabase/serverless": "^1.2.1",
     "@vercel/speed-insights": "^2.1.0",
     "@walletconnect/ethereum-provider": "^2.25.0",
-    "hono": "^4.13.17",
+    "hono": "^4.13.19",
     "inngest": "^4.26.2",
     "jose": "^5.9.0",
     "pg": "^8.12.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "siwe": "^3.0.0",
-    "viem": "^2.57.17",
+    "viem": "^2.58.4",
     "x402-fetch": "^1.2.0"
   },
   "devDependencies": {
@@ -41,6 +41,6 @@
     "@vitejs/plugin-react": "^6.3.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
-    "vite": "^8.3.7"
+    "vite": "^8.3.8"
   }
 }
