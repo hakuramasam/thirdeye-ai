@@ -43,7 +43,6 @@ describe('per-agent inference credit', () => {
       [id, 'probe_owner', 'CREDIT PROBE', 'x', 'ministral-3b']
     )
     await fundAgentCredit(id, 50_000_000)
-    )
     assert.equal(await getAgentCredit(id), 50_000_000)
 
     // 120 micros, an owner wallet with no allowance: everything must come from the pot,
@@ -75,7 +74,6 @@ describe('per-agent inference credit', () => {
       [id, 'probe_owner', 'RACE PROBE', 'x', 'ministral-3b']
     )
     await fundAgentCredit(id, 100)
-    )
     const [a, b] = await Promise.all([takeAgentCredit(id, 80), takeAgentCredit(id, 80)])
     assert.equal(a + b, 80, 'only one of the two spends can win the same micros')
     assert.equal(await getAgentCredit(id), 20)
