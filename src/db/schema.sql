@@ -635,11 +635,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_sha_unique
 ALTER TABLE agent_audit_events ADD COLUMN IF NOT EXISTS insert_seq bigserial;
 
 -- Financial ledgers are append-only. Corrections are compensating entries, never rewrites.
-CREATE OR REPLACE FUNCTION credit_ledger_append_only() RETURNS trigger AS $
-BEGIN
-  RAISE EXCEPTION '% is append-only (%; write a compensating entry instead)', TG_TABLE_NAME, TG_OP;
-END;
-$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION credit_ledger_append_only() RETURNS trigger AS 'BEGIN
+  RAISE EXCEPTION ''% is append-only (%; write a compensating entry instead)'', TG_TABLE_NAME, TG_OP;
+  RETURN OLD;
+END;' LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS ledger_no_rewrite ON ledger;
 CREATE TRIGGER ledger_no_rewrite
@@ -656,11 +655,10 @@ CREATE TRIGGER api_key_credit_ledger_no_rewrite
   BEFORE UPDATE OR DELETE ON api_key_credit_ledger
   FOR EACH ROW EXECUTE FUNCTION credit_ledger_append_only();
 
-CREATE OR REPLACE FUNCTION agent_audit_events_append_only() RETURNS trigger AS $
-BEGIN
-  RAISE EXCEPTION 'agent_audit_events is append-only (%; write a new event instead)', TG_OP;
-END;
-$$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION agent_audit_events_append_only() RETURNS trigger AS 'BEGIN
+  RAISE EXCEPTION ''agent_audit_events is append-only (%; write a new event instead)'', TG_OP;
+  RETURN OLD;
+END;' LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS agent_audit_events_no_rewrite ON agent_audit_events;
 CREATE TRIGGER agent_audit_events_no_rewrite
