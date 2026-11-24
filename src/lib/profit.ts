@@ -214,6 +214,7 @@ export type PeriodMeasurement = {
   cost_usd_micros: number
   profit_usd_micros: number
   outstanding_credit_usd_micros: number
+  agent_credit_usd_micros: number
 }
 
 /**
@@ -252,6 +253,9 @@ export async function measurePeriod(
       WHERE bal > 0`
   )
   const keyCredit = await one(`SELECT coalesce(sum(credit_usd_micros), 0)::bigint AS credit FROM api_keys`)
+  // Agent pots are also prepaid inference liabilities. Omitting them would let the
+  // distribution guard treat already-promised inference credit as distributable profit.
+  const agentCredit = await one(`SELECT coalesce(sum(credit_usd_micros), 0)::bigint AS credit FROM agents`)
 
   const chatRevenue = Number(chat?.billed ?? 0)
   const runRevenue = Number(runs?.billed ?? 0)
@@ -260,7 +264,10 @@ export async function measurePeriod(
   const gas = Math.max(0, Math.round(opts.gasCostUsdMicros ?? 0))
   const infra = Math.max(0, Math.round(opts.infraCostUsdMicros ?? 0))
   const cost = providerCost + gas + infra
-  const outstandingCredit = Math.max(0, Number(liability?.credit ?? 0)) + Math.max(0, Number(keyCredit?.credit ?? 0))
+  const ledgerCredit = Math.max(0, Number(liability?.credit ?? 0))
+  const keyCreditMicros = Math.max(0, Number(keyCredit?.credit ?? 0))
+  const agentCreditMicros = Math.max(0, Number(agentCredit?.credit ?? 0))
+  const outstandingCredit = ledgerCredit + keyCreditMicros + agentCreditMicros
 
   return {
     period_start: from,
@@ -274,6 +281,7 @@ export async function measurePeriod(
     cost_usd_micros: cost,
     profit_usd_micros: revenue - cost,
     outstanding_credit_usd_micros: outstandingCredit,
+    agent_credit_usd_micros: agentCreditMicros,
   }
 }
 
