@@ -3,7 +3,7 @@
 OpenRouter-style AI gateway + autonomous agent platform. Working name, easy to rename.
 
 - **Runtime**: Node 20+, TypeScript ESM (`"type": "module"`), Hono web framework.
-- **DB**: Postgres. Dual driver via `src/db/index.ts`: `DATABASE_URL` set → hosted Postgres (`pg`), unset → embedded PGlite (demo mode).
+- **DB**: Production and shared environments require Postgres (`DATABASE_URL` / `PREVIEW_DATABASE_URL`). PGlite is only available when explicitly opted into for local/test work with `PGLITE_MODE=1`; there is no implicit fallback when a database URL is missing.
 - **Frontend**: Vite + React in `web/`, served at `/`, API under `/api/*` (same origin; Vite dev proxy forwards `/api` to :8787).
 - **Money**: all amounts are **USD micros integers** (1,000,000 = $1.00).
 - **Errors** (OpenAI-style, everywhere):
@@ -29,7 +29,7 @@ routes are session-auth (`requireUser`). The app object is created in `src/app.t
 by the integrator; do not create servers.
 
 Hono context: `c.get('user')`, `c.get('apiKey')` (typed via `AppEnv`).
-Always call `await migrate()` before any DB use in tests (`migrate()` is idempotent).
+Always call `await migrate()` before any DB use in tests (`migrate()` is idempotent). The standard `npm test` runner explicitly sets `PGLITE_MODE=1`; never set it in Vercel or production. Local development without a Postgres URL must deliberately opt in with `PGLITE_MODE=1`.
 
 ## Modules / file ownership
 
