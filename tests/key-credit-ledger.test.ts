@@ -51,6 +51,22 @@ describe('API-key credit subledger', () => {
     assert.equal(after.api_key_credit_ledger_drift_usd_micros, 0)
   })
 
+  it('settles a key-tagged on-chain deposit into the key subledger atomically', async () => {
+    const { creditDeposit } = await import('../src/lib/billing.js')
+    await query('UPDATE api_keys SET credit_usd_micros = 0 WHERE id = $1', [keyId])
+    await query('DELETE FROM api_key_credit_ledger WHERE api_key_id = $1', [keyId])
+    const txHash = '0x' + randomUUID().replace(/-/g, '').padEnd(64, '0')
+    const result = await creditDeposit(ownerId, 500, { chain: 'base', txHash, token: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' }, { toKeyId: keyId })
+    assert.equal(result.credited, true)
+    assert.equal(result.keyCredit, 500)
+    const rows = await query('SELECT kind, amount_usd_micros, ref FROM api_key_credit_ledger WHERE api_key_id = $1', [keyId])
+    assert.deepEqual(rows.rows.map((r: any) => [r.kind, Number(r.amount_usd_micros), r.ref]), [
+      ['deposit', 500, `base:${txHash}`],
+    ])
+    const measured = await measurePeriod('2099-01-01T00:00:00.000Z', '2099-01-02T00:00:00.000Z')
+    assert.equal(measured.api_key_credit_ledger_drift_usd_micros, 0)
+  })
+
   it('refunds key credit atomically when the owner account cannot cover the remainder', async () => {
     await query('UPDATE api_keys SET credit_usd_micros = 0 WHERE id = $1', [keyId])
     await query('DELETE FROM api_key_credit_ledger WHERE api_key_id = $1', [keyId])
