@@ -76,6 +76,7 @@ async function buildReport(from: string, to: string, opts: { gasUsd?: number; in
     profit_usd_micros: measured.profit_usd_micros,
     vault_stable_usd_micros: opts.vaultUsdMicros ?? 0,
     outstanding_credit_usd_micros: measured.outstanding_credit_usd_micros,
+    agent_credit_ledger_drift_usd_micros: measured.agent_credit_ledger_drift_usd_micros,
   })
   if (opts.vaultUsdMicros == null) {
     guards.push({
@@ -97,6 +98,8 @@ async function buildReport(from: string, to: string, opts: { gasUsd?: number; in
       profit_usd: microsToUsd(measured.profit_usd_micros),
       outstanding_credit_usd: microsToUsd(measured.outstanding_credit_usd_micros),
       agent_credit_usd: microsToUsd(measured.agent_credit_usd_micros),
+      agent_credit_ledger_usd: microsToUsd(measured.agent_credit_ledger_usd_micros),
+      agent_credit_ledger_drift_usd: microsToUsd(measured.agent_credit_ledger_drift_usd_micros),
     },
     level: {
       applied: level.level,
@@ -122,6 +125,7 @@ async function buildReport(from: string, to: string, opts: { gasUsd?: number; in
       'Revenue is billed consumption only. Deposits are liabilities and are reported separately as outstanding credit.',
       'Provider cost is derived as billed / (1 + PLATFORM_MARGIN_PCT). If the margin changed mid-period the figure drifts.',
       'Gas and infra are zero unless passed explicitly, because neither is recorded per transaction yet.',
+      'Agent credit must reconcile to its subledger before a distribution can be marked distributable.',
       'Team agent lines show payable:false until those wallets exist.',
     ],
   }
