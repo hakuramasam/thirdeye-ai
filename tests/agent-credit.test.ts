@@ -46,7 +46,7 @@ describe('per-agent inference credit', () => {
     assert.equal(await getAgentCredit(id), 50_000_000)
 
     // 120 micros, an owner wallet with no allowance: everything must come from the pot,
-    // so no ledger row is written at all.
+    // so no owner-ledger row is written; the agent subledger still records the pot spend.
     const paid = await payForStep({ agentId: id, userId: 'probe_owner', wallet: '0xprobe', runId: 'run-1', costMicros: 120 })
     assert.deepEqual(paid, { ok: true, fromPot: 120, fromLedger: 0 })
     assert.equal(await getAgentCredit(id), 50_000_000 - 120)
