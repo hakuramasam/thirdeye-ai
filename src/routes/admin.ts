@@ -23,7 +23,11 @@ export function registerAdminRoutes(app: SessionApp) {
       `SELECT id, name, status, credit_usd_micros, budget_usd_micros FROM agents ORDER BY id`
     )
     const total = r.rows.reduce((n: number, x: any) => n + Number(x.credit_usd_micros ?? 0), 0)
-    return c.json({ agents: r.rows, total_usd_micros: total })
+    const ledger = await query(
+      `SELECT agent_id, amount_usd_micros, kind, ref, actor, balance_after, created_at
+         FROM agent_credit_ledger ORDER BY created_at DESC, id DESC LIMIT 200`
+    )
+    return c.json({ agents: r.rows, total_usd_micros: total, ledger: ledger.rows })
   })
 
   /**
