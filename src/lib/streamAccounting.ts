@@ -68,6 +68,7 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
   let completionTokens = 0
   let totalChars = 0
   let streamUsage: any = null
+  let providerUsageSeen = false
   let buffer = ''
   let settled = false
 
@@ -91,12 +92,14 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
     try {
       const parsed = JSON.parse(jsonStr)
       if (parsed.usage) {
-        const reportedPrompt = parsed.usage.prompt_tokens ?? parsed.usage.input_tokens
-        const reportedCompletion = parsed.usage.completion_tokens ?? parsed.usage.output_tokens
-        if (typeof reportedPrompt === 'number') promptTokens = reportedPrompt
-        if (typeof reportedCompletion === 'number') completionTokens = reportedCompletion
-        // Keep the provider's own usage object so cache and reasoning tokens survive streaming.
-        streamUsage = parsed.usage
+        const parsedUsage = normalizeUsage(parsed.usage)
+        if (parsedUsage.prompt_tokens > 0) promptTokens = parsedUsage.prompt_tokens
+        if (parsedUsage.completion_tokens > 0) completionTokens = parsedUsage.completion_tokens
+        // Merge partial usage frames so a later cache-only frame cannot erase token counts.
+        streamUsage = { ...(streamUsage ?? {}), ...parsed.usage }
+        // Once both provider counters have been observed, later partial frames must not
+        // downgrade the provenance of the already measured stream.
+        providerUsageSeen = providerUsageSeen || hasProviderUsage(streamUsage)
       }
       if (parsed.choices?.[0]?.delta?.content) {
         totalChars += String(parsed.choices[0].delta.content).length
@@ -108,12 +111,12 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
 
   const usageSource = (): StreamSettlement['usage_source'] => {
     if (opts.provider === 'mock') return 'mock'
-    if (hasProviderUsage(streamUsage)) return 'provider'
+    if (providerUsageSeen) return 'provider'
     return totalChars > 0 ? 'chars' : 'estimate'
   }
 
   const usageWithFallback = (): TokenUsage => {
-    if (!streamUsage && completionTokens === 0 && totalChars > 0) {
+    if (!providerUsageSeen && completionTokens === 0 && totalChars > 0) {
       completionTokens = Math.ceil(totalChars / 4)
     }
     return normalizeUsage(streamUsage, { prompt: promptTokens, completion: completionTokens })
