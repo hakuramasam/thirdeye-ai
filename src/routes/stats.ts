@@ -84,6 +84,7 @@ export function registerStatsRoutes(app: SessionApp): void {
       `SELECT
         COALESCE(SUM(prompt_tokens + completion_tokens + estimated_prompt_tokens + estimated_completion_tokens), 0)::bigint AS tokens,
         COALESCE(SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS provider_reported_tokens,
+        COALESCE(SUM(CASE WHEN usage_source = 'mock' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS mock_tokens,
         COALESCE(SUM(CASE WHEN usage_source IN ('estimate', 'chars') THEN estimated_prompt_tokens + estimated_completion_tokens ELSE 0 END), 0)::bigint AS estimated_tokens,
         COALESCE(SUM(CASE WHEN usage_source = 'unknown' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS unclassified_tokens
        FROM usage_events`
@@ -114,6 +115,7 @@ export function registerStatsRoutes(app: SessionApp): void {
         COUNT(*)::int AS requests,
         COALESCE(SUM(prompt_tokens + completion_tokens + estimated_prompt_tokens + estimated_completion_tokens), 0)::bigint AS tokens,
         COALESCE(SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS provider_reported_tokens,
+        COALESCE(SUM(CASE WHEN usage_source = 'mock' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS mock_tokens,
         COALESCE(SUM(CASE WHEN usage_source IN ('estimate', 'chars') THEN estimated_prompt_tokens + estimated_completion_tokens ELSE 0 END), 0)::bigint AS estimated_tokens,
         COALESCE(SUM(CASE WHEN usage_source = 'unknown' THEN prompt_tokens + completion_tokens ELSE 0 END), 0)::bigint AS unclassified_tokens
        FROM usage_events
@@ -139,12 +141,13 @@ export function registerStatsRoutes(app: SessionApp): void {
        GROUP BY 1`
     )
 
-    const usageMap: Record<string, { requests: number; tokens: number; provider_reported_tokens: number; estimated_tokens: number; unclassified_tokens: number }> = {}
+    const usageMap: Record<string, { requests: number; tokens: number; provider_reported_tokens: number; mock_tokens: number; estimated_tokens: number; unclassified_tokens: number }> = {}
     for (const r of usageRes.rows) {
       usageMap[r.day] = {
         requests: Number(r.requests),
         tokens: Number(r.tokens),
         provider_reported_tokens: Number(r.provider_reported_tokens),
+        mock_tokens: Number(r.mock_tokens),
         estimated_tokens: Number(r.estimated_tokens),
         unclassified_tokens: Number(r.unclassified_tokens),
       }
@@ -166,6 +169,7 @@ export function registerStatsRoutes(app: SessionApp): void {
       requests: usageMap[day]?.requests ?? 0,
       tokens: usageMap[day]?.tokens ?? 0,
       provider_reported_tokens: usageMap[day]?.provider_reported_tokens ?? 0,
+      mock_tokens: usageMap[day]?.mock_tokens ?? 0,
       estimated_tokens: usageMap[day]?.estimated_tokens ?? 0,
       unclassified_tokens: usageMap[day]?.unclassified_tokens ?? 0,
       inflow_usd_micros: inflowMap[day] ?? 0,
