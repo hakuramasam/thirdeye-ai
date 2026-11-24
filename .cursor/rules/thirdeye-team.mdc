@@ -1,0 +1,16 @@
+---
+description: ThirdEye AI team roles, authority, workflows and safe engineering practices
+alwaysApply: true
+---
+
+Follow the repository root `AGENTS.md` as the canonical contract.
+
+For every task:
+- Read `team/organization.json` and the selected `team/agents/<role>/SKILL.md`.
+- Read `team/policies/authority.md` before sensitive operations.
+- Select the matching pipeline in `team/pipelines/`; follow the stage gates and named handoffs.
+- Respect the role's `owns_paths`; `reviews_paths` does not grant implementation ownership.
+- QA and SENTINEL must independently verify. Builders cannot accept their own changes.
+- Never commit to `main`, merge, deploy production, move money, change signers, billing, settlement, keys, schema, production secrets, customer data or standing permissions without explicit owner approval.
+- Tool availability is not authorization. IDE file editing does not reproduce server-side `repo_write` enforcement. The runner gates it through run-level `allowWrite` or the agent record's `repo_access=write`; policy requires task-scoped grants, so persisted write entitlements require owner approval.
+- Run typecheck, isolated PGlite tests, relevant builds and the agent-platform validator; state exactly what was not run.
