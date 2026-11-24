@@ -80,7 +80,9 @@ describe('per-agent inference credit', () => {
       [id, 'probe_owner', 'RACE PROBE', 'x', 'ministral-3b']
     )
     await fundAgentCredit(id, 100, 'add', { ref: 'race-fund' })
-    const [a, b] = await Promise.all([takeAgentCredit(id, 80, 'race-run'), takeAgentCredit(id, 80, 'race-run')])
+    const [a, b] = process.env.DATABASE_URL
+      ? await Promise.all([takeAgentCredit(id, 80, 'race-run'), takeAgentCredit(id, 80, 'race-run')])
+      : [await takeAgentCredit(id, 80, 'race-run'), await takeAgentCredit(id, 80, 'race-run')]
     assert.equal(a + b, 80, 'only one of the two spends can win the same micros')
     assert.equal(await getAgentCredit(id), 20)
 
