@@ -52,7 +52,7 @@ export type StreamSettlement = {
   cost_usd_micros: number
   delta_micros: number
   /** `provider` when the upstream reported usage, `chars` when we had to infer it. */
-  usage_source: 'provider' | 'chars' | 'estimate'
+  usage_source: 'provider' | 'mock' | 'chars' | 'estimate'
   settled: boolean
 }
 
@@ -107,6 +107,7 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
   }
 
   const usageSource = (): StreamSettlement['usage_source'] => {
+    if (opts.provider === 'mock') return 'mock'
     if (hasProviderUsage(streamUsage)) return 'provider'
     return totalChars > 0 ? 'chars' : 'estimate'
   }
@@ -160,10 +161,10 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
         model: opts.requestedModel,
         provider: opts.provider,
         byok: opts.byok,
-        prompt_tokens: result.usage_source === 'provider' ? usage.prompt_tokens : 0,
-        completion_tokens: result.usage_source === 'provider' ? usage.completion_tokens : 0,
-        estimated_prompt_tokens: result.usage_source === 'provider' ? 0 : usage.prompt_tokens,
-        estimated_completion_tokens: result.usage_source === 'provider' ? 0 : usage.completion_tokens,
+        prompt_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? usage.prompt_tokens : 0,
+        completion_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? usage.completion_tokens : 0,
+        estimated_prompt_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? 0 : usage.prompt_tokens,
+        estimated_completion_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? 0 : usage.completion_tokens,
         usage_source: result.usage_source,
         input_cached_read: result.usage_source === 'provider' ? usage.input_cached_read : 0,
         input_cache_write: result.usage_source === 'provider' ? usage.input_cache_write : 0,
@@ -194,10 +195,10 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
           model: opts.requestedModel,
           provider: opts.provider,
           byok: opts.byok,
-          prompt_tokens: result.usage_source === 'provider' ? usage.prompt_tokens : 0,
-          completion_tokens: result.usage_source === 'provider' ? usage.completion_tokens : 0,
-          estimated_prompt_tokens: result.usage_source === 'provider' ? 0 : usage.prompt_tokens,
-          estimated_completion_tokens: result.usage_source === 'provider' ? 0 : usage.completion_tokens,
+          prompt_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? usage.prompt_tokens : 0,
+          completion_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? usage.completion_tokens : 0,
+          estimated_prompt_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? 0 : usage.prompt_tokens,
+          estimated_completion_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? 0 : usage.completion_tokens,
           usage_source: result.usage_source,
           rate_card_version: opts.rateCardVersion,
           cost_usd_micros: opts.reservedMicros,
