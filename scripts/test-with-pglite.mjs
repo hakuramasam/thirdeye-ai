@@ -7,6 +7,7 @@ import { resolve } from 'node:path'
  * Production/runtime code never enables this automatically.
  */
 process.env.PGLITE_MODE = '1'
+process.env.PGLITE_DIR = 'memory://'
 
 const requested = process.argv.slice(2)
 const files = requested.length
@@ -19,7 +20,7 @@ const files = requested.length
 const bin = resolve('node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx')
 const result = spawnSync(bin, ['--test', ...files], {
   stdio: 'inherit',
-  env: { ...process.env, PGLITE_MODE: '1' },
+  env: { ...process.env, PGLITE_MODE: '1', PGLITE_DIR: 'memory://' },
   shell: process.platform === 'win32',
 })
 
