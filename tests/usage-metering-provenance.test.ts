@@ -109,7 +109,12 @@ test('actual, estimated and legacy-unclassified tokens remain separate', async (
 test('provider usage detection accepts OpenAI and Anthropic token field names', () => {
   assert.equal(hasProviderUsage({ prompt_tokens: 12, completion_tokens: 8 }), true)
   assert.equal(hasProviderUsage({ input_tokens: 12, output_tokens: 8 }), true)
+  assert.equal(hasProviderUsage({ prompt_tokens: '12', completion_tokens: '8' }), true)
   assert.equal(hasProviderUsage({ prompt_tokens: 12 }), false)
+  assert.equal(hasProviderUsage({ prompt_tokens: Number.NaN, completion_tokens: 8 }), false)
+  assert.equal(hasProviderUsage({ prompt_tokens: Number.POSITIVE_INFINITY, completion_tokens: 8 }), false)
+  assert.equal(hasProviderUsage({ prompt_tokens: -1, completion_tokens: 8 }), false)
+  assert.equal(hasProviderUsage({ prompt_tokens: 12, completion_tokens: 0 }), false)
   assert.equal(hasProviderUsage(null), false)
 
   const anthropic = normalizeUsage({ input_tokens: 12, output_tokens: 8 })
