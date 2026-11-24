@@ -24,7 +24,7 @@ export type UsageEventInput = {
   rate_card_version?: string | null
   provider_request_id?: string | null
   /** provider = exact upstream counts; estimate/chars = inferred counts; unknown = legacy row. */
-  usage_source?: 'provider' | 'mock' | 'estimate' | 'chars' | 'none' | 'unknown'
+  usage_source?: 'provider' | 'mock' | 'estimate' | 'chars' | 'unknown'
   estimated_prompt_tokens?: number
   estimated_completion_tokens?: number
 }
