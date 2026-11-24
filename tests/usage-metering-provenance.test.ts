@@ -50,7 +50,8 @@ test('actual, estimated and legacy-unclassified tokens remain separate', async (
 
   const series = await getUserUsageSeries(userId, 1)
   assert.equal(series.length, 1)
-  assert.equal(series[0].tokens, 150)
+  assert.equal(series[0].tokens, 2160)
+  assert.equal(series[0].provider_reported_tokens, 150)
   assert.equal(series[0].estimated_tokens, 2000)
   assert.equal(series[0].unclassified_tokens, 10)
   assert.equal(series[0].cost_usd_micros, 15)
