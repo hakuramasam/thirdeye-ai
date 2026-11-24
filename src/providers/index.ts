@@ -127,12 +127,12 @@ export async function resolveProvider(user: UserRow, model: ModelRow): Promise<P
       if (!apiKey) {
         throw new UpstreamError(
           `No API key available for provider ${providerName}. Add one in the dashboard (BYOK) or use a model the platform brokers.`,
-          402,
+          503,
           {
             error: {
               message: `No API key available for provider ${providerName}. Add one in the dashboard (BYOK) or use a model the platform brokers.`,
-              type: 'billing',
-              code: 402,
+              type: 'configuration',
+              code: 503,
             },
           }
         )
