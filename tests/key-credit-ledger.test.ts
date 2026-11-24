@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 
 const { migrate, query } = await import('../src/db/index.js')
 const { creditKey, debitKey, getKeyCreditMicros, chargeCall } = await import('../src/lib/keycredit.js')
+const { measurePeriod } = await import('../src/lib/profit.js')
 
 const ownerId = 'key_credit_ledger_owner'
 const keyId = 'key_credit_ledger_probe'
@@ -27,6 +28,7 @@ describe('API-key credit subledger', () => {
   })
 
   it('records verified deposits, usage and refunds with matching balances', async () => {
+    const before = await measurePeriod('2099-01-01T00:00:00.000Z', '2099-01-02T00:00:00.000Z')
     assert.equal(await creditKey(keyId, 1_000, { kind: 'deposit', ref: 'base:deposit-1' }), 1_000)
     assert.equal(await debitKey(keyId, 300, 'req:call-1'), 300)
     assert.equal(await creditKey(keyId, 50, { kind: 'refund', ref: 'refund:call-1' }), 750)
@@ -42,6 +44,9 @@ describe('API-key credit subledger', () => {
       ['refund', 50, 'refund:call-1'],
     ])
     assert.equal(rows.rows.reduce((n: number, r: any) => n + Number(r.amount_usd_micros), 0), await getKeyCreditMicros(keyId))
+    const after = await measurePeriod('2099-01-01T00:00:00.000Z', '2099-01-02T00:00:00.000Z')
+    assert.equal(after.api_key_credit_usd_micros - before.api_key_credit_usd_micros, 750)
+    assert.equal(after.api_key_credit_ledger_drift_usd_micros, 0)
   })
 
   it('refunds key credit atomically when the owner account cannot cover the remainder', async () => {
