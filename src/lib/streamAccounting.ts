@@ -95,11 +95,12 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
         const parsedUsage = normalizeUsage(parsed.usage)
         if (parsedUsage.prompt_tokens > 0) promptTokens = parsedUsage.prompt_tokens
         if (parsedUsage.completion_tokens > 0) completionTokens = parsedUsage.completion_tokens
-        // Merge partial usage frames so a later cache-only frame cannot erase token counts.
-        streamUsage = { ...(streamUsage ?? {}), ...parsed.usage }
+        // Keep the last provider usage object for cache/reasoning metadata. Token counters
+        // are also retained separately so a later partial frame cannot erase earlier counts.
+        streamUsage = parsed.usage
         // Once both provider counters have been observed, later partial frames must not
         // downgrade the provenance of the already measured stream.
-        providerUsageSeen = providerUsageSeen || hasProviderUsage(streamUsage)
+        providerUsageSeen = providerUsageSeen || hasProviderUsage(parsed.usage)
       }
       if (parsed.choices?.[0]?.delta?.content) {
         totalChars += String(parsed.choices[0].delta.content).length
@@ -116,7 +117,7 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
   }
 
   const usageWithFallback = (): TokenUsage => {
-    if (!providerUsageSeen && completionTokens === 0 && totalChars > 0) {
+    if (!streamUsage && completionTokens === 0 && totalChars > 0) {
       completionTokens = Math.ceil(totalChars / 4)
     }
     return normalizeUsage(streamUsage, { prompt: promptTokens, completion: completionTokens })
