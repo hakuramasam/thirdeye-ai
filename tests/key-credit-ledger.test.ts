@@ -45,6 +45,8 @@ describe('API-key credit subledger', () => {
   })
 
   it('refunds key credit atomically when the owner account cannot cover the remainder', async () => {
+    await query('UPDATE api_keys SET credit_usd_micros = 0 WHERE id = $1', [keyId])
+    await query('DELETE FROM api_key_credit_ledger WHERE api_key_id = $1', [keyId])
     await creditKey(keyId, 100, { kind: 'deposit', ref: 'base:deposit-2' })
     const before = await getKeyCreditMicros(keyId)
     const result = await chargeCall(keyId, ownerId, 200, 'req:charge-failed')
@@ -62,7 +64,7 @@ describe('API-key credit subledger', () => {
   })
 
   it('serializes concurrent key spends so the same credit is never used twice', async () => {
-    await query('UPDATE api_keys SET credit_usd_micros = 100 WHERE id = $1', [keyId])
+    await query('UPDATE api_keys SET credit_usd_micros = 0 WHERE id = $1', [keyId])
     await query('DELETE FROM api_key_credit_ledger WHERE api_key_id = $1', [keyId])
     await creditKey(keyId, 100, { kind: 'adjust', ref: 'race-opening' })
     const [a, b] = await Promise.all([debitKey(keyId, 80, 'race-a'), debitKey(keyId, 80, 'race-b')])
