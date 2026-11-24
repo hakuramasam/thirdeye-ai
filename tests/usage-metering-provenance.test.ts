@@ -1,4 +1,5 @@
 process.env.PGLITE_DIR = 'memory://'
+delete process.env.DATABASE_URL
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -7,6 +8,8 @@ import { randomUUID } from 'node:crypto'
 const { migrate, query } = await import('../src/db/index.js')
 const { recordUsage, getUserUsageSeries } = await import('../src/lib/usage.js')
 const { hasProviderUsage, normalizeUsage } = await import('../src/lib/tokenUsage.js')
+const { Hono } = await import('hono')
+const { registerStatsRoutes } = await import('../src/routes/stats.js')
 
 await migrate()
 
@@ -76,6 +79,31 @@ test('actual, estimated and legacy-unclassified tokens remain separate', async (
   assert.deepEqual(rows.rows.map((r: any) => r.usage_source), ['provider', 'estimate', 'mock', 'unknown'])
   assert.equal(Number(rows.rows[1].prompt_tokens), 0)
   assert.equal(Number(rows.rows[1].estimated_prompt_tokens), 2000)
+
+  const statsApp = new Hono()
+  registerStatsRoutes(statsApp as any)
+  const response = await statsApp.request('/api/stats/public')
+  assert.equal(response.status, 200)
+  const publicStats = await response.json() as any
+  assert.equal(publicStats.totals.tokens, 2220)
+  assert.equal(publicStats.totals.provider_reported_tokens, 150)
+  assert.equal(publicStats.totals.mock_tokens, 60)
+  assert.equal(publicStats.totals.estimated_tokens, 2000)
+  assert.equal(publicStats.totals.unclassified_tokens, 10)
+  const today = new Date().toISOString().slice(0, 10)
+  const todayStats = publicStats.series.find((day: any) => day.day === today)
+  assert.ok(todayStats)
+  assert.equal(todayStats.provider_reported_tokens, 150)
+  assert.equal(todayStats.mock_tokens, 60)
+
+  await assert.rejects(
+    query(
+      `INSERT INTO usage_events (user_id, api_key_id, model, provider, byok, prompt_tokens, completion_tokens, usage_source, cost_usd_micros, status, latency_ms)
+       VALUES ($1, 'bad-key', 'bad-model', 'bad-provider', false, 1, 1, 'invalid-source', 0, '200', 1)`,
+      [userId],
+    ),
+    /usage_events_usage_source_check/,
+  )
 })
 
 test('provider usage detection accepts OpenAI and Anthropic token field names', () => {
