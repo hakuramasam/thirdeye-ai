@@ -1,3 +1,5 @@
+process.env.PGLITE_DIR = 'memory://'
+
 import test from 'node:test'
 import { randomUUID } from 'node:crypto'
 import assert from 'node:assert/strict'
