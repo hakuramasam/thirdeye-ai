@@ -69,6 +69,8 @@ export const AUTH_VERIFY_RPM = 10
 export const FEEDBACK_RPM = 6
 /** A nonce older than this cannot be used, so it should not be kept either. */
 export const NONCE_TTL_MINUTES = 15
+/** EIP-4361 chain IDs the connected wallet may use for a Thirdeye AI session. */
+export const SUPPORTED_SIWE_CHAIN_IDS = [8453, 4663] as const
 
 export function clientBucket(kind: 'nonce' | 'verify' | 'feedback' | 'agent_register', c: any): string {
   const fwd = String(c?.req?.header?.('x-forwarded-for') || '').split(',')[0].trim()
@@ -195,6 +197,7 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
       // was refused in production with a message that told the user nothing.
       const addr = normalized.match(/0x[a-fA-F0-9]{40}/)?.[0]
       const nonce = normalized.match(/Nonce:\s*([A-Za-z0-9_-]+)/i)?.[1]
+      const chainId = Number(normalized.match(/^Chain ID:\s*(\d+)\s*$/im)?.[1])
       if (!addr || !nonce) {
         console.warn('[auth] SIWE parse failed', describeSiweParseFailure(normalized, e))
         await recordSignInDiagnostic({
@@ -213,10 +216,21 @@ export function registerAuthRoutes(app: Hono<AppEnv>): void {
       siweMsg = {
         address: addr,
         nonce,
+        chainId,
         issuedAt: '',
         domain: extractSiweDomain(normalized) ?? undefined,
       } as unknown as SiweMessage
       console.warn('[auth] SIWE strict parse failed, using lenient parse', describeSiweParseFailure(normalized, e))
+    }
+
+    // SEC-007: bind the signed-in session to an explicit supported EIP-4361 chain.
+    // Lenient parsing must recover the same field; a missing or unsupported chain is never accepted.
+    const signedChainId = Number((siweMsg as any).chainId)
+    if (!Number.isSafeInteger(signedChainId) || !SUPPORTED_SIWE_CHAIN_IDS.includes(signedChainId as 8453 | 4663)) {
+      return c.json(
+        { error: { message: 'SIWE message must include a supported chain ID (Base or Robinhood Chain).', type: 'invalid_request', code: 400 } },
+        400
+      )
     }
 
     // Single-use nonce check
