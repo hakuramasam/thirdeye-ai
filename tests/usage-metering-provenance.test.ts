@@ -39,6 +39,14 @@ test('actual, estimated and legacy-unclassified tokens remain separate', async (
     status: '429',
   })
 
+  await recordUsage({
+    ...base,
+    prompt_tokens: 40,
+    completion_tokens: 20,
+    usage_source: 'mock',
+    status: '200',
+  })
+
   // Historical rows have no provenance. They remain visible as unclassified rather than
   // being silently presented as provider-reported usage.
   await recordUsage({
@@ -50,8 +58,9 @@ test('actual, estimated and legacy-unclassified tokens remain separate', async (
 
   const series = await getUserUsageSeries(userId, 1)
   assert.equal(series.length, 1)
-  assert.equal(series[0].tokens, 2160)
+  assert.equal(series[0].tokens, 2220)
   assert.equal(series[0].provider_reported_tokens, 150)
+  assert.equal(series[0].mock_tokens, 60)
   assert.equal(series[0].estimated_tokens, 2000)
   assert.equal(series[0].unclassified_tokens, 10)
   assert.equal(series[0].cost_usd_micros, 15)
@@ -62,7 +71,7 @@ test('actual, estimated and legacy-unclassified tokens remain separate', async (
        FROM usage_events WHERE user_id = $1 ORDER BY id ASC`,
     [userId],
   )
-  assert.deepEqual(rows.rows.map((r: any) => r.usage_source), ['provider', 'estimate', 'unknown'])
+  assert.deepEqual(rows.rows.map((r: any) => r.usage_source), ['provider', 'estimate', 'mock', 'unknown'])
   assert.equal(Number(rows.rows[1].prompt_tokens), 0)
   assert.equal(Number(rows.rows[1].estimated_prompt_tokens), 2000)
 })
