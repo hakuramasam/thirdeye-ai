@@ -1,6 +1,5 @@
-// Deposit address selection: the platform may nominate a sponsored wallet as the address users
-// send to, but a deposit is only creditable if verification accepts every wallet we control.
-// These tests pin both halves, plus the guard that keeps the signer identity separate.
+// Deposit address selection: new deposits should land in the wallet the server can sign for.
+// Other platform wallets remain verifiable for older transfers, but cannot be assumed signable.
 process.env.PGLITE_DIR = 'memory://'
 process.env.PLATFORM_RECEIVER_ADDRESS = '0x1111111111111111111111111111111111111111'
 process.env.PLATFORM_AGENT_RECEIVER = '0x3333333333333333333333333333333333333333'
@@ -43,8 +42,18 @@ function receiptTo(to: string, value = 5_000_000n) {
 }
 
 describe('deposit address', () => {
-  it('advertises the sponsored wallet when one is configured', () => {
-    assert.equal(depositAddress(), '0x4444444444444444444444444444444444444444')
+  it('advertises the signer-capable agent wallet when configured', () => {
+    assert.equal(depositAddress(), '0x3333333333333333333333333333333333333333')
+  })
+
+  it('falls back to the sponsor receiver only when no signer wallet is configured', () => {
+    const original = env.platformAgentReceiver
+    env.platformAgentReceiver = ''
+    try {
+      assert.equal(depositAddress(), '0x4444444444444444444444444444444444444444')
+    } finally {
+      env.platformAgentReceiver = original
+    }
   })
 
   it('treats every configured wallet as ours, with no duplicates or blanks', () => {
@@ -110,8 +119,8 @@ describe('deposit address', () => {
   })
 
   it('does not let the sponsored address stand in for a signer it has no key for', () => {
-    // With only the sponsor receiver configured, no Privy triple and no local key, the platform
-    // must report that it cannot sign rather than borrowing the sponsored address as its own.
+    // A sponsor receiver alone is not a signing credential; the platform must report that it
+    // cannot sign rather than borrowing that address as its own.
     const signer = getSigner({
       PLATFORM_SPONSORED_RECEIVER: '0x4444444444444444444444444444444444444444',
     } as NodeJS.ProcessEnv)
