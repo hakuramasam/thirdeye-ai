@@ -18,8 +18,8 @@ export async function seedDemoData(): Promise<void> {
       const ct = 40 + Math.round(Math.random() * 500)
       const cost = Math.round((pt * 150000 + ct * 600000) / 1e6)
       await query(
-        `INSERT INTO usage_events (user_id, api_key_id, model, provider, byok, prompt_tokens, completion_tokens, cost_usd_micros, status, latency_ms, created_at)
-         VALUES ($1, 'demo-key', 'gpt-4o-mini', 'openai', false, $2, $3, $4, '200', $5, now() - ($6 || ' days')::interval + ($7 || ' minutes')::interval)`,
+        `INSERT INTO usage_events (user_id, api_key_id, model, provider, byok, prompt_tokens, completion_tokens, estimated_prompt_tokens, estimated_completion_tokens, usage_source, cost_usd_micros, status, latency_ms, created_at)
+         VALUES ($1, 'demo-key', 'gpt-4o-mini', 'openai', false, $2, $3, 0, 0, 'mock', $4, '200', $5, now() - ($6 || ' days')::interval + ($7 || ' minutes')::interval)`,
         ['demo-user', pt, ct, cost, 300 + Math.round(Math.random() * 1500), d, Math.round(Math.random() * 1440)]
       )
     }
