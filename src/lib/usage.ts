@@ -16,12 +16,16 @@ export type UsageEventInput = {
   reasoning_tokens?: number
   rate_card_version?: string | null
   provider_request_id?: string | null
+  /** provider = exact upstream counts; estimate/chars = inferred counts; unknown = legacy row. */
+  usage_source?: 'provider' | 'estimate' | 'chars' | 'none' | 'unknown'
+  estimated_prompt_tokens?: number
+  estimated_completion_tokens?: number
 }
 
 export async function recordUsage(event: UsageEventInput): Promise<void> {
   await query(
-    `INSERT INTO usage_events (user_id, api_key_id, model, provider, byok, prompt_tokens, completion_tokens, cost_usd_micros, status, latency_ms, input_cached_read, input_cache_write, reasoning_tokens, rate_card_version, provider_request_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+    `INSERT INTO usage_events (user_id, api_key_id, model, provider, byok, prompt_tokens, completion_tokens, estimated_prompt_tokens, estimated_completion_tokens, usage_source, cost_usd_micros, status, latency_ms, input_cached_read, input_cache_write, reasoning_tokens, rate_card_version, provider_request_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
     [
       event.user_id,
       event.api_key_id,
@@ -30,14 +34,17 @@ export async function recordUsage(event: UsageEventInput): Promise<void> {
       event.byok,
       event.prompt_tokens,
       event.completion_tokens,
+      event.estimated_prompt_tokens ?? 0,
+      event.estimated_completion_tokens ?? 0,
+      event.usage_source ?? 'unknown',
       event.cost_usd_micros,
       event.status,
       event.latency_ms,
-      (event as any).input_cached_read ?? 0,
-      (event as any).input_cache_write ?? 0,
-      (event as any).reasoning_tokens ?? 0,
-      (event as any).rate_card_version ?? null,
-      (event as any).provider_request_id ?? null,
+      event.input_cached_read ?? 0,
+      event.input_cache_write ?? 0,
+      event.reasoning_tokens ?? 0,
+      event.rate_card_version ?? null,
+      event.provider_request_id ?? null,
     ]
   )
 }
@@ -46,6 +53,8 @@ export type DailyUsageSeries = {
   day: string
   requests: number
   tokens: number
+  estimated_tokens: number
+  unclassified_tokens: number
   cost_usd_micros: number
 }
 
@@ -54,7 +63,9 @@ export async function getUserUsageSeries(userId: string, days: number = 14): Pro
     `SELECT
        created_at::date::text AS day,
        COUNT(*)::int AS requests,
-       SUM(prompt_tokens + completion_tokens)::bigint AS tokens,
+       SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END)::bigint AS tokens,
+       SUM(CASE WHEN usage_source IN ('estimate', 'chars') THEN estimated_prompt_tokens + estimated_completion_tokens ELSE 0 END)::bigint AS estimated_tokens,
+       SUM(CASE WHEN usage_source = 'unknown' THEN prompt_tokens + completion_tokens ELSE 0 END)::bigint AS unclassified_tokens,
        SUM(cost_usd_micros)::bigint AS cost_usd_micros
      FROM usage_events
      WHERE user_id = $1 AND created_at >= NOW() - ($2 || ' days')::interval
@@ -68,6 +79,8 @@ export async function getUserUsageSeries(userId: string, days: number = 14): Pro
     map.set(r.day, {
       requests: Number(r.requests ?? 0),
       tokens: Number(r.tokens ?? 0),
+      estimated_tokens: Number(r.estimated_tokens ?? 0),
+      unclassified_tokens: Number(r.unclassified_tokens ?? 0),
       cost_usd_micros: Number(r.cost_usd_micros ?? 0),
     })
   }
@@ -82,7 +95,7 @@ export async function getUserUsageSeries(userId: string, days: number = 14): Pro
     if (existing) {
       series.push({ day: dayStr, ...existing })
     } else {
-      series.push({ day: dayStr, requests: 0, tokens: 0, cost_usd_micros: 0 })
+      series.push({ day: dayStr, requests: 0, tokens: 0, estimated_tokens: 0, unclassified_tokens: 0, cost_usd_micros: 0 })
     }
   }
 
