@@ -266,8 +266,10 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
       const pt = usage.prompt_tokens
       const ct = usage.completion_tokens
       const costMicros = computeCostMicrosDetailed(modelRow, usage, env.platformMarginPct, providerCall.byok)
-      const usageSource: 'provider' | 'estimate' =
-        hasProviderUsage((res.raw as any)?.usage) ? 'provider' : 'estimate'
+      const usageSource: 'provider' | 'mock' | 'estimate' =
+        modelRow.provider === 'mock'
+          ? 'mock'
+          : hasProviderUsage((res.raw as any)?.usage) ? 'provider' : 'estimate'
       const chatId = 'chatcmpl-thirdeye-' + newId()
       const created = Math.floor(Date.now() / 1000)
 
@@ -297,10 +299,10 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
         model: requestedModel,
         provider: modelRow.provider,
         byok: providerCall.byok,
-        prompt_tokens: usageSource === 'provider' ? pt : 0,
-        completion_tokens: usageSource === 'provider' ? ct : 0,
-        estimated_prompt_tokens: usageSource === 'provider' ? 0 : pt,
-        estimated_completion_tokens: usageSource === 'provider' ? 0 : ct,
+        prompt_tokens: usageSource === 'provider' || usageSource === 'mock' ? pt : 0,
+        completion_tokens: usageSource === 'provider' || usageSource === 'mock' ? ct : 0,
+        estimated_prompt_tokens: usageSource === 'provider' || usageSource === 'mock' ? 0 : pt,
+        estimated_completion_tokens: usageSource === 'provider' || usageSource === 'mock' ? 0 : ct,
         usage_source: usageSource,
         input_cached_read: usageSource === 'provider' ? usage.input_cached_read : 0,
         input_cache_write: usageSource === 'provider' ? usage.input_cache_write : 0,
