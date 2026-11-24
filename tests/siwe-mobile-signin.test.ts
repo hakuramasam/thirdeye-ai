@@ -5,6 +5,7 @@
 // the strict EIP-4361 parser could not read (CRLF endings, a browser that re-serialises the text),
 // and a domain in the message that did not match the host the request arrived on (a proxy browser
 // or a wallet in-app browser presenting a different location than the request it just made).
+process.env.PGLITE_MODE = '1'
 process.env.PGLITE_DIR = 'memory://'
 delete process.env.DATABASE_URL
 delete process.env.DATABASE_URL_UNPOOLED
