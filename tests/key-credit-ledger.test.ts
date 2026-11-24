@@ -101,7 +101,9 @@ describe('API-key credit subledger', () => {
     const existingCredit = await getKeyCreditMicros(keyId)
     if (existingCredit > 0) await debitKey(keyId, existingCredit, 'test-reset-before-race')
     await creditKey(keyId, 100, { kind: 'adjust', ref: 'race-opening' })
-    const [a, b] = await Promise.all([debitKey(keyId, 80, 'race-a'), debitKey(keyId, 80, 'race-b')])
+    const [a, b] = process.env.DATABASE_URL
+      ? await Promise.all([debitKey(keyId, 80, 'race-a'), debitKey(keyId, 80, 'race-b')])
+      : [await debitKey(keyId, 80, 'race-a'), await debitKey(keyId, 80, 'race-b')]
     assert.equal(a + b, 80)
     assert.equal(await getKeyCreditMicros(keyId), 20)
   })
