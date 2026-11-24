@@ -17,7 +17,7 @@ export type UsageEventInput = {
   rate_card_version?: string | null
   provider_request_id?: string | null
   /** provider = exact upstream counts; estimate/chars = inferred counts; unknown = legacy row. */
-  usage_source?: 'provider' | 'estimate' | 'chars' | 'none' | 'unknown'
+  usage_source?: 'provider' | 'mock' | 'estimate' | 'chars' | 'none' | 'unknown'
   estimated_prompt_tokens?: number
   estimated_completion_tokens?: number
 }
@@ -66,6 +66,7 @@ export async function getUserUsageSeries(userId: string, days: number = 14): Pro
        COUNT(*)::int AS requests,
        SUM(prompt_tokens + completion_tokens + estimated_prompt_tokens + estimated_completion_tokens)::bigint AS tokens,
        SUM(CASE WHEN usage_source = 'provider' THEN prompt_tokens + completion_tokens ELSE 0 END)::bigint AS provider_reported_tokens,
+       SUM(CASE WHEN usage_source = 'mock' THEN prompt_tokens + completion_tokens ELSE 0 END)::bigint AS mock_tokens,
        SUM(CASE WHEN usage_source IN ('estimate', 'chars') THEN estimated_prompt_tokens + estimated_completion_tokens ELSE 0 END)::bigint AS estimated_tokens,
        SUM(CASE WHEN usage_source = 'unknown' THEN prompt_tokens + completion_tokens ELSE 0 END)::bigint AS unclassified_tokens,
        SUM(cost_usd_micros)::bigint AS cost_usd_micros
@@ -76,12 +77,13 @@ export async function getUserUsageSeries(userId: string, days: number = 14): Pro
     [userId, days]
   )
 
-  const map = new Map<string, { requests: number; tokens: number; provider_reported_tokens: number; estimated_tokens: number; unclassified_tokens: number; cost_usd_micros: number }>()
+  const map = new Map<string, { requests: number; tokens: number; provider_reported_tokens: number; mock_tokens: number; estimated_tokens: number; unclassified_tokens: number; cost_usd_micros: number }>()
   for (const r of res.rows) {
     map.set(r.day, {
       requests: Number(r.requests ?? 0),
       tokens: Number(r.tokens ?? 0),
       provider_reported_tokens: Number(r.provider_reported_tokens ?? 0),
+      mock_tokens: Number(r.mock_tokens ?? 0),
       estimated_tokens: Number(r.estimated_tokens ?? 0),
       unclassified_tokens: Number(r.unclassified_tokens ?? 0),
       cost_usd_micros: Number(r.cost_usd_micros ?? 0),
@@ -98,7 +100,7 @@ export async function getUserUsageSeries(userId: string, days: number = 14): Pro
     if (existing) {
       series.push({ day: dayStr, ...existing })
     } else {
-      series.push({ day: dayStr, requests: 0, tokens: 0, provider_reported_tokens: 0, estimated_tokens: 0, unclassified_tokens: 0, cost_usd_micros: 0 })
+      series.push({ day: dayStr, requests: 0, tokens: 0, provider_reported_tokens: 0, mock_tokens: 0, estimated_tokens: 0, unclassified_tokens: 0, cost_usd_micros: 0 })
     }
   }
 
