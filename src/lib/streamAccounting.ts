@@ -5,7 +5,7 @@ import { chargeCall, creditKey, refundSplit } from './keycredit.js'
 import { chargeKeyBudget } from './keybudget.js'
 import type { ModelRow } from './pricing.js'
 import { computeCostMicrosDetailed } from './pricing.js'
-import { normalizeUsage } from './tokenUsage.js'
+import { hasProviderUsage, normalizeUsage } from './tokenUsage.js'
 import type { TokenUsage } from './tokenUsage.js'
 import { recordUsage } from './usage.js'
 
@@ -91,8 +91,10 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
     try {
       const parsed = JSON.parse(jsonStr)
       if (parsed.usage) {
-        if (typeof parsed.usage.prompt_tokens === 'number') promptTokens = parsed.usage.prompt_tokens
-        if (typeof parsed.usage.completion_tokens === 'number') completionTokens = parsed.usage.completion_tokens
+        const reportedPrompt = parsed.usage.prompt_tokens ?? parsed.usage.input_tokens
+        const reportedCompletion = parsed.usage.completion_tokens ?? parsed.usage.output_tokens
+        if (typeof reportedPrompt === 'number') promptTokens = reportedPrompt
+        if (typeof reportedCompletion === 'number') completionTokens = reportedCompletion
         // Keep the provider's own usage object so cache and reasoning tokens survive streaming.
         streamUsage = parsed.usage
       }
@@ -105,11 +107,7 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
   }
 
   const usageSource = (): StreamSettlement['usage_source'] => {
-    if (
-      streamUsage &&
-      typeof streamUsage.prompt_tokens === 'number' &&
-      typeof streamUsage.completion_tokens === 'number'
-    ) return 'provider'
+    if (hasProviderUsage(streamUsage)) return 'provider'
     return totalChars > 0 ? 'chars' : 'estimate'
   }
 
