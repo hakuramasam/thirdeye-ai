@@ -129,9 +129,14 @@ export function platformReceivers(): string[] {
   ].filter(Boolean)
 }
 
-/** Where users are told to send funds: the sponsored wallet when one is configured, else the vault. */
+/**
+ * Default deposit target. Prefer the Privy server wallet because it is the only receiver
+ * the conversion executor can sign for; a passkey-only vault or separate sponsor wallet
+ * cannot convert volatile-token deposits. Keep those other receivers verifiable for legacy
+ * transfers, but do not advertise them as the default while a signer wallet exists.
+ */
 export function depositAddress(): string {
-  return env.platformSponsorReceiver || env.platformReceiverAddress
+  return env.platformAgentReceiver || env.platformSponsorReceiver || env.platformReceiverAddress
 }
 
 export const newId = (): string => randomBytes(12).toString('hex')
