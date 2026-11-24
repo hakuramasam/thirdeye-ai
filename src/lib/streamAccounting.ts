@@ -51,7 +51,7 @@ export type StreamSettlement = {
   completion_tokens: number
   cost_usd_micros: number
   delta_micros: number
-  /** `provider` when the upstream reported usage, `chars` when we had to infer it. */
+  /** `provider` = external usage, `mock` = synthetic usage, `chars`/`estimate` = inferred usage. */
   usage_source: 'provider' | 'mock' | 'chars' | 'estimate'
   settled: boolean
 }
