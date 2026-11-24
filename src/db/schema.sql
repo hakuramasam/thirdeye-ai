@@ -438,6 +438,31 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS repo_access text NOT NULL DEFAULT 'n
 -- member by member instead of sharing one balance. Zero means the agent draws on the owner.
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS credit_usd_micros bigint NOT NULL DEFAULT 0;
 
+-- Agent inference-credit subledger. This records every pot funding, spend, refund and
+-- manual adjustment, independently of the owner's general-purpose credit ledger.
+CREATE TABLE IF NOT EXISTS agent_credit_ledger (
+  id                 bigserial PRIMARY KEY,
+  agent_id           text NOT NULL,
+  amount_usd_micros  bigint NOT NULL, -- signed: positive funding/refund, negative spend/adjustment
+  kind               text NOT NULL,   -- opening_balance | fund | usage | refund | adjust
+  ref                text,
+  actor              text NOT NULL DEFAULT 'system',
+  balance_after      bigint NOT NULL,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_credit_ledger_agent_time
+  ON agent_credit_ledger(agent_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_credit_ledger_ref
+  ON agent_credit_ledger(agent_id, ref) WHERE ref IS NOT NULL;
+
+-- Preserve existing pots as opening balances; this is a migration snapshot, not proof of
+-- the original funding source. It makes the current liability visible without inventing history.
+INSERT INTO agent_credit_ledger (agent_id, amount_usd_micros, kind, ref, actor, balance_after)
+SELECT id, credit_usd_micros, 'opening_balance', 'migration:agent-credit-ledger-v1', 'migration', credit_usd_micros
+  FROM agents
+ WHERE credit_usd_micros <> 0
+ON CONFLICT (agent_id, ref) WHERE ref IS NOT NULL DO NOTHING;
+
 -- Profit accounting (docs/profit-split.md). A period records what was measured, so a
 -- distribution can be recomputed and audited later instead of living in a spreadsheet.
 CREATE TABLE IF NOT EXISTS profit_periods (
