@@ -35,7 +35,7 @@ export function registerAdminRoutes(app: SessionApp) {
     const body = await c.req.json().catch(() => ({} as any))
     const amount = Number(body?.usd_micros)
     const mode = body?.mode === 'set' ? 'set' : 'add'
-    const reason = String(body?.reason || 'manual-agent-credit').replace(/[\\u0000-\\u001f\\u007f]/g, ' ').slice(0, 120)
+    const reason = String(body?.reason || 'manual-agent-credit').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 120)
     if (!Number.isFinite(amount) || amount < 0) {
       return c.json({ error: { message: 'usd_micros must be a non-negative integer', type: 'invalid_request', code: 400 } }, 400)
     }
