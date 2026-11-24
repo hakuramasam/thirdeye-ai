@@ -39,9 +39,10 @@ describe('per-agent inference credit', () => {
 
   it('a funded agent pays its own way, and the pot is deducted exactly once', async () => {
     const id = 'tdt_credit_probe'
+    await fundAgentCredit(id, 0, 'set').catch(() => null)
     await query(
       `INSERT INTO agents (id, user_id, name, system_prompt, model, credit_usd_micros)
-       VALUES ($1,$2,$3,$4,$5,0) ON CONFLICT (id) DO UPDATE SET credit_usd_micros = 0`,
+       VALUES ($1,$2,$3,$4,$5,0) ON CONFLICT (id) DO NOTHING`,
       [id, 'probe_owner', 'CREDIT PROBE', 'x', 'ministral-3b']
     )
     await fundAgentCredit(id, 50_000_000)
@@ -85,11 +86,13 @@ describe('per-agent inference credit', () => {
     const audit = await query(`SELECT kind, amount_usd_micros FROM agent_credit_ledger WHERE agent_id = $1 ORDER BY id`, [id])
     assert.deepEqual(audit.rows.map((x: any) => [x.kind, Number(x.amount_usd_micros)]), [['fund', 100], ['usage', -80], ['refund', 80]])
 
+    await fundAgentCredit(id, 0, 'set')
     await query(`DELETE FROM agents WHERE id = $1`, [id])
   })
 
   it('funding is add by default and set when asked', async () => {
     const id = 'tdt_credit_fund'
+    await fundAgentCredit(id, 0, 'set').catch(() => null)
     await query(
       `INSERT INTO agents (id, user_id, name, system_prompt, model) VALUES ($1,$2,$3,$4,$5)
        ON CONFLICT (id) DO NOTHING`,
@@ -99,6 +102,7 @@ describe('per-agent inference credit', () => {
     assert.equal(await fundAgentCredit(id, 1_000_000), 51_000_000)
     assert.equal(await fundAgentCredit(id, 2_000_000, 'set'), 2_000_000)
     assert.equal(await fundAgentCredit('tdt_no_such_agent', 1), null)
+    await fundAgentCredit(id, 0, 'set')
     await query(`DELETE FROM agents WHERE id = $1`, [id])
   })
 })
