@@ -117,7 +117,7 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
   }
 
   const usageWithFallback = (): TokenUsage => {
-    if (!streamUsage && completionTokens === 0 && totalChars > 0) {
+    if (!providerUsageSeen && completionTokens === 0 && totalChars > 0) {
       completionTokens = Math.ceil(totalChars / 4)
     }
     return normalizeUsage(streamUsage, { prompt: promptTokens, completion: completionTokens })

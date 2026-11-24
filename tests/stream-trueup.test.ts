@@ -155,6 +155,64 @@ test('streaming settles inside the response stream', async (t) => {
     assert.equal(before - (await getBalanceMicros(userId)), 0, 'a failed stream must not cost anything')
   })
 
+  await t.test('partial provider usage estimates missing completion tokens before charging', async () => {
+    const userId = 'user_stream_partial_' + newId()
+    const wallet = '0x' + newId().padEnd(40, '0')
+    await query('INSERT INTO users (id, wallet) VALUES ($1, $2)', [userId, wallet])
+    const { row: keyRow } = await createApiKey(userId, 'partial-usage', 60, 250000)
+    await adjustCredit(userId, 5_000_000, 'test-funding')
+    const before = await getBalanceMicros(userId)
+
+    const modelRow = {
+      model: 'partial-provider-stream',
+      provider: 'openai-compatible',
+      upstream_model: 'partial-provider-stream',
+      base_url: null,
+      price_in_1m_usd_micros: 10000000,
+      price_out_1m_usd_micros: 10000000,
+      enabled: true,
+    }
+    const accountant = createStreamAccountant({
+      userId,
+      wallet,
+      apiKey: { ...keyRow, budget_usd_micros: 250000 },
+      modelRow: modelRow as any,
+      requestedModel: 'partial-provider-stream',
+      provider: 'openai-compatible',
+      byok: false,
+      marginPct: 10,
+      estTokens: 4,
+      reservedMicros: 0,
+      reservedFromKey: 0,
+      startedAt: Date.now(),
+      rateCardVersion: 'test',
+    })
+
+    const output = new Response(accountant.transform.readable).text()
+    const writer = accountant.transform.writable.getWriter()
+    await writer.write(new TextEncoder().encode('data: {"usage":{"prompt_tokens":12}}\n\n'))
+    await writer.write(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"hello world, this is a partial usage stream."}}]}\n\n'))
+    await writer.close()
+    await output
+
+    const settlement = await accountant.done
+    assert.equal(settlement.usage_source, 'chars')
+    assert.equal(settlement.prompt_tokens, 12)
+    assert.ok(settlement.completion_tokens > 0, 'missing completion usage must use the character estimate')
+
+    const usage = await one(
+      'SELECT usage_source, prompt_tokens, completion_tokens, estimated_prompt_tokens, estimated_completion_tokens, cost_usd_micros FROM usage_events WHERE user_id = $1',
+      [userId],
+    )
+    assert.equal(usage.usage_source, 'chars')
+    assert.equal(Number(usage.prompt_tokens), 0)
+    assert.equal(Number(usage.completion_tokens), 0)
+    assert.equal(Number(usage.estimated_prompt_tokens), 12)
+    assert.ok(Number(usage.estimated_completion_tokens) > 0)
+    assert.ok(Number(usage.cost_usd_micros) > 0)
+    assert.equal(before - (await getBalanceMicros(userId)), Number(usage.cost_usd_micros))
+  })
+
   await t.test('a later partial usage frame does not downgrade earlier provider-reported counts', async () => {
     const userId = 'user_stream_sticky_' + newId()
     const wallet = '0x' + newId().padEnd(40, '0')
