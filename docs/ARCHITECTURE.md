@@ -95,8 +95,8 @@ OpenAI-compatible inference API.
   - `GET /api/credits/deposit-info` → `{ receiver_address, chains: CHAINS }` (receiver from `env.platformReceiverAddress`; if empty return it as empty string — UI shows a warning)
   - `POST /api/credits/deposit` `{ chain, tx_hash }` → verifyDeposit → `creditDeposit`. Errors: 400 with `type: 'billing'`, code from verify.
 - `src/routes/stats.ts` — `registerStatsRoutes(app)`:
-  - `GET /api/stats/me` (requireUser) → per-day series for the signed-in user over last 14 days: `[{day, requests, tokens, cost_usd_micros, deposits_usd_micros}]`
-  - `GET /api/stats/public` (no auth) → platform-wide anonymized aggregates (this is the future tokenized-stocks feed): `{ totals: { requests, tokens, inflow_usd_micros, outflow_usd_micros, users }, series: [{day, requests, tokens, inflow_usd_micros, outflow_usd_micros}] }` — inflow = sum(ledger deposits), outflow = sum(negative ledger), over last 30 days. Include zero days.
+  - `GET /api/stats/me` (requireUser) → per-day series for the signed-in user over last 14 days: `[{day, requests, tokens (provider-reported), estimated_tokens, unclassified_tokens, cost_usd_micros, deposits_usd_micros}]`
+  - `GET /api/stats/public` (no auth) → platform-wide anonymized aggregates (this is the future tokenized-stocks feed): `{ totals: { requests, tokens (provider-reported), estimated_tokens, unclassified_tokens, inflow_usd_micros, outflow_usd_micros, users }, series: [{day, requests, tokens, estimated_tokens, unclassified_tokens, inflow_usd_micros, outflow_usd_micros}] }` — inflow = sum(ledger deposits), outflow = sum(negative ledger), over last 30 days. Include zero days.
 - Tests `tests/payments.test.ts`: billing debit/credit lifecycle (balance math, idempotent deposit via same txHash, insufficient balance), deposit verify error paths using a fabricated `verifyDeposit` path where possible (unit test the log-parsing helper with a mock receipt — export `parseTransferLogs(receipt, chainConfig)` from verify.ts so it is unit-testable without a chain).
 
 ### C. Agents + MCP + x402 (`src/agents/`, `src/routes/agents.ts`) — owned by builder C
