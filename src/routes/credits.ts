@@ -75,12 +75,12 @@ async function recordPayment(args: {
   const id = 'pay_' + randomBytes(9).toString('hex')
   const inserted = (
     await query(
-      `INSERT INTO payments (id, intent_id, user_id, chain_id, token, tx_hash, received_by, sender,
+      `INSERT INTO payments (id, intent_id, user_id, chain_id, token, tx_hash, received_by, received_by_address, sender,
                              raw_amount, decimals, usd_value_micros, price_usd, pool, purpose, memo, status, refusal_code)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        ON CONFLICT (chain_id, tx_hash, token, received_by) DO NOTHING
        RETURNING id`,
-      [id, args.intent?.id ?? null, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt,
+      [id, args.intent?.id ?? null, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt, String(t.to).toLowerCase(),
        t.from, t.raw_amount, t.decimals, args.usdMicros, args.priceUsd ?? null, args.pool ?? null,
        args.intent?.purpose ?? null, args.intent?.memo ?? null, args.status, args.refusalCode]
     )
