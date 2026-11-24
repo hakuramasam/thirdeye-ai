@@ -1,4 +1,4 @@
-import { one } from '../db/index.js'
+import { one, tx } from '../db/index.js'
 import { debitForUsage } from './billing.js'
 
 /**
@@ -39,30 +39,50 @@ export async function getKeyCreditMicros(keyId: string): Promise<number> {
 }
 
 /** Add verified funds to a key. Returns the new key credit. */
-export async function creditKey(keyId: string, amountMicros: number): Promise<number> {
+export async function creditKey(
+  keyId: string,
+  amountMicros: number,
+  audit: { kind?: 'deposit' | 'refund' | 'adjust'; ref?: string; actor?: string } = {}
+): Promise<number> {
   const amt = Math.max(0, Math.floor(Number(amountMicros) || 0))
   if (amt <= 0) return getKeyCreditMicros(keyId)
-  const r = await one(
-    'UPDATE api_keys SET credit_usd_micros = credit_usd_micros + $1 WHERE id = $2 RETURNING credit_usd_micros',
-    [amt, keyId]
-  )
-  return Number(r?.credit_usd_micros ?? 0)
+  return tx(async (q) => {
+    const r = await q(
+      'UPDATE api_keys SET credit_usd_micros = credit_usd_micros + $1 WHERE id = $2 RETURNING credit_usd_micros',
+      [amt, keyId]
+    )
+    if (!r.rows.length) return 0
+    await q(
+      `INSERT INTO api_key_credit_ledger (api_key_id, amount_usd_micros, kind, ref, actor, balance_after)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [keyId, amt, audit.kind ?? 'deposit', audit.ref ?? null, audit.actor ?? 'payment-verifier', Number(r.rows[0].credit_usd_micros)]
+    )
+    return Number(r.rows[0].credit_usd_micros)
+  })
 }
 
 /**
- * Take up to amountMicros from the key. The conditional update means two concurrent
- * calls cannot both spend the same credit.
+ * Take up to amountMicros from the key. The conditional update and subledger insert
+ * commit together, so a concurrent call cannot spend the same credit twice.
  */
-export async function debitKey(keyId: string, amountMicros: number): Promise<number> {
+export async function debitKey(keyId: string, amountMicros: number, ref?: string): Promise<number> {
   const want = Math.max(0, Math.floor(Number(amountMicros) || 0))
   if (want <= 0) return 0
-  const r = await one(
-    `UPDATE api_keys SET credit_usd_micros = credit_usd_micros - $1
-      WHERE id = $2 AND credit_usd_micros >= $1
-      RETURNING credit_usd_micros`,
-    [want, keyId]
-  )
-  return r ? want : 0
+  return tx(async (q) => {
+    const r = await q(
+      `UPDATE api_keys SET credit_usd_micros = credit_usd_micros - $1
+        WHERE id = $2 AND credit_usd_micros >= $1
+        RETURNING credit_usd_micros`,
+      [want, keyId]
+    )
+    if (!r.rows.length) return 0
+    await q(
+      `INSERT INTO api_key_credit_ledger (api_key_id, amount_usd_micros, kind, ref, actor, balance_after)
+       VALUES ($1, $2, 'usage', $3, 'billing', $4)`,
+      [keyId, -want, ref ?? null, Number(r.rows[0].credit_usd_micros)]
+    )
+    return want
+  })
 }
 
 export type ChargeResult = { ok: boolean; spentFromKey: number; spentFromAccount: number; keyCredit: number; accountBalance: number }
@@ -77,12 +97,12 @@ export async function chargeCall(
 ): Promise<ChargeResult> {
   const available = await getKeyCreditMicros(keyId)
   const { fromKey, fromAccount } = splitKeyCredit(available, costMicros)
-  const spentFromKey = await debitKey(keyId, fromKey)
+  const spentFromKey = await debitKey(keyId, fromKey, ref)
   const accountCharge = costMicros - spentFromKey
   const debit = await debitForUsage(userId, accountCharge, ref, opts)
   if (!debit.ok) {
     // The account could not cover the rest, so return the key's share: no half-charges.
-    await creditKey(keyId, spentFromKey)
+    await creditKey(keyId, spentFromKey, { kind: 'refund', ref: `refund:${ref}`, actor: 'billing' })
     return { ok: false, spentFromKey: 0, spentFromAccount: 0, keyCredit: await getKeyCreditMicros(keyId), accountBalance: debit.balance }
   }
   return {
