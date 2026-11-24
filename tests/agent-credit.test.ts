@@ -57,6 +57,9 @@ describe('per-agent inference credit', () => {
     assert.equal(usageRows.rows.length, 1)
     assert.equal(Number(usageRows.rows[0].amount_usd_micros), -120)
     assert.equal(usageRows.rows[0].kind, 'usage')
+    const usageId = await query(`SELECT id FROM agent_credit_ledger WHERE agent_id = $1 AND ref = 'run-1'`, [id])
+    await assert.rejects(query(`UPDATE agent_credit_ledger SET amount_usd_micros = 0 WHERE id = $1`, [usageId.rows[0].id]), /append-only/)
+    await assert.rejects(query(`DELETE FROM agent_credit_ledger WHERE id = $1`, [usageId.rows[0].id]), /append-only/)
 
     // an empty pot falls through to the ledger, which refuses: the step fails whole
     await fundAgentCredit(id, 0, 'set')
