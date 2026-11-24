@@ -1,4 +1,5 @@
 process.env.PGLITE_DIR = 'memory://'
+delete process.env.DATABASE_URL
 // Needed so a non-BYOK upstream can be resolved and then fail during the stream itself.
 process.env.PROV_OPENAI_API_KEY = 'test-openai-key'
 
@@ -152,6 +153,59 @@ test('streaming settles inside the response stream', async (t) => {
     )
     assert.equal(refunded.rows.length, 1, 'the reserve must be refunded')
     assert.equal(before - (await getBalanceMicros(userId)), 0, 'a failed stream must not cost anything')
+  })
+
+  await t.test('a later partial usage frame does not downgrade earlier provider-reported counts', async () => {
+    const userId = 'user_stream_sticky_' + newId()
+    const wallet = '0x' + newId().padEnd(40, '0')
+    await query('INSERT INTO users (id, wallet) VALUES ($1, $2)', [userId, wallet])
+    const { row: keyRow } = await createApiKey(userId, 'sticky-usage', 60, 250000)
+    await adjustCredit(userId, 5_000_000, 'test-funding')
+
+    const modelRow = {
+      model: 'partial-provider-stream',
+      provider: 'openai-compatible',
+      upstream_model: 'partial-provider-stream',
+      base_url: null,
+      price_in_1m_usd_micros: 10000000,
+      price_out_1m_usd_micros: 10000000,
+      enabled: true,
+    }
+    const accountant = createStreamAccountant({
+      userId,
+      wallet,
+      apiKey: { ...keyRow, budget_usd_micros: 250000 },
+      modelRow: modelRow as any,
+      requestedModel: 'partial-provider-stream',
+      provider: 'openai-compatible',
+      byok: false,
+      marginPct: 10,
+      estTokens: 4,
+      reservedMicros: 0,
+      reservedFromKey: 0,
+      startedAt: Date.now(),
+      rateCardVersion: 'test',
+    })
+
+    const output = new Response(accountant.transform.readable).text()
+    const writer = accountant.transform.writable.getWriter()
+    await writer.write(new TextEncoder().encode('data: {"usage":{"prompt_tokens":12,"completion_tokens":5}}\n\n'))
+    await writer.write(new TextEncoder().encode('data: {"usage":{"prompt_tokens":12}}\n\n'))
+    await writer.write(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'))
+    await writer.close()
+    await output
+
+    const settlement = await accountant.done
+    assert.equal(settlement.usage_source, 'provider')
+    assert.equal(settlement.prompt_tokens, 12)
+    assert.equal(settlement.completion_tokens, 5)
+    const usage = await one(
+      'SELECT usage_source, prompt_tokens, completion_tokens FROM usage_events WHERE user_id = $1',
+      [userId],
+    )
+    assert.equal(usage.usage_source, 'provider')
+    assert.equal(Number(usage.prompt_tokens), 12)
+    assert.equal(Number(usage.completion_tokens), 5)
   })
 
   await t.test('a caller who hangs up settles what was actually streamed', async () => {
