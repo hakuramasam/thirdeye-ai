@@ -13,7 +13,7 @@ import { checkAndConsume, refundSlot } from '../lib/ratelimit.js'
 import type { AppEnv } from '../lib/types.js'
 import { recordUsage } from '../lib/usage.js'
 import { createStreamAccountant } from '../lib/streamAccounting.js'
-import { normalizeUsage } from '../lib/tokenUsage.js'
+import { hasProviderUsage, normalizeUsage } from '../lib/tokenUsage.js'
 import { computeCostMicrosDetailed } from '../lib/pricing.js'
 
 /** Bumped when catalogue prices change, so historical rows stay explainable. */
@@ -267,10 +267,7 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
       const ct = usage.completion_tokens
       const costMicros = computeCostMicrosDetailed(modelRow, usage, env.platformMarginPct, providerCall.byok)
       const usageSource: 'provider' | 'estimate' =
-        typeof (res.raw as any)?.usage?.prompt_tokens === 'number' &&
-        typeof (res.raw as any)?.usage?.completion_tokens === 'number'
-          ? 'provider'
-          : 'estimate'
+        hasProviderUsage((res.raw as any)?.usage) ? 'provider' : 'estimate'
       const chatId = 'chatcmpl-thirdeye-' + newId()
       const created = Math.floor(Date.now() / 1000)
 
