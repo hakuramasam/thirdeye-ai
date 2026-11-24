@@ -3,9 +3,9 @@ import { env } from '../lib/env.js'
 /**
  * Dual-driver database layer.
  *  - DATABASE_URL set  -> hosted Postgres (Neon/Supabase/RDS) via the `pg` driver
- *  - DATABASE_URL unset -> embedded Postgres (PGlite): file-backed locally,
- *    in-memory on serverless (demo mode, data resets on cold start).
- * Both speak the same dialect ($1 params), so all SQL is shared.
+ *  - DATABASE_URL unset -> fail closed unless PGLITE_MODE=1 explicitly opts into
+ *    an embedded local/test database. There is no implicit memory:// fallback.
+ * Both drivers speak the same dialect ($1 params), so all SQL is shared.
  */
 
 export type QueryResult = { rows: any[]; rowCount: number }
@@ -15,8 +15,9 @@ let pgPool: any = null
 
 async function getPglite(): Promise<any> {
   if (!pglite) {
+    if (!env.pgliteEnabled) throw new Error('Database is not configured: set DATABASE_URL or explicitly set PGLITE_MODE=1 for local/test use')
     const { PGlite } = await import('@electric-sql/pglite')
-    const location = env.databaseUrl ? null : (env.pgliteDir ?? 'memory://')
+    const location = env.pgliteDir
     pglite = new PGlite(location!)
   }
   return pglite
@@ -31,8 +32,9 @@ async function getPool(): Promise<any> {
   return pgPool
 }
 
-export function dbMode(): 'postgres' | 'pglite' {
-  return env.databaseUrl ? 'postgres' : 'pglite'
+export function dbMode(): 'postgres' | 'pglite' | 'unconfigured' {
+  if (env.databaseUrl) return 'postgres'
+  return env.pgliteEnabled ? 'pglite' : 'unconfigured'
 }
 
 export async function query(sql: string, params: any[] = []): Promise<QueryResult> {
