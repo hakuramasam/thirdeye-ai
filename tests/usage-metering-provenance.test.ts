@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 
 const { migrate, query } = await import('../src/db/index.js')
 const { recordUsage, getUserUsageSeries } = await import('../src/lib/usage.js')
+const { hasProviderUsage, normalizeUsage } = await import('../src/lib/tokenUsage.js')
 
 await migrate()
 
@@ -63,4 +64,15 @@ test('actual, estimated and legacy-unclassified tokens remain separate', async (
   assert.deepEqual(rows.rows.map((r: any) => r.usage_source), ['provider', 'estimate', 'unknown'])
   assert.equal(Number(rows.rows[1].prompt_tokens), 0)
   assert.equal(Number(rows.rows[1].estimated_prompt_tokens), 2000)
+})
+
+test('provider usage detection accepts OpenAI and Anthropic token field names', () => {
+  assert.equal(hasProviderUsage({ prompt_tokens: 12, completion_tokens: 8 }), true)
+  assert.equal(hasProviderUsage({ input_tokens: 12, output_tokens: 8 }), true)
+  assert.equal(hasProviderUsage({ prompt_tokens: 12 }), false)
+  assert.equal(hasProviderUsage(null), false)
+
+  const anthropic = normalizeUsage({ input_tokens: 12, output_tokens: 8 })
+  assert.equal(anthropic.prompt_tokens, 12)
+  assert.equal(anthropic.completion_tokens, 8)
 })
