@@ -176,7 +176,7 @@ test('outstanding prepaid credit includes active agent inference pots', async ()
     assert.equal(after.outstanding_credit_usd_micros - before.outstanding_credit_usd_micros, potMicros)
     assert.equal(after.agent_credit_ledger_drift_usd_micros, 0)
   } finally {
-    await query('DELETE FROM agent_credit_ledger WHERE agent_id = $1', [agentId])
+    await fundAgentCredit(agentId, 0, 'set')
     await query('DELETE FROM agents WHERE id = $1', [agentId])
     await query('DELETE FROM users WHERE id = $1', [userId])
   }
