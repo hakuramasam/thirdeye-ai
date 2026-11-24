@@ -165,6 +165,7 @@ export type GuardInput = {
   agent_credit_ledger_drift_usd_micros?: number
   api_key_credit_ledger_drift_usd_micros?: number
   unpayable_recipient_count?: number
+  operating_costs_verified?: boolean
   opex_usd_micros?: number
   existing_status?: string
 }
@@ -193,6 +194,13 @@ export function distributionGuards(input: GuardInput): Guard[] {
       code: 'backing_below_liability',
       blocks: true,
       detail: 'Vault stablecoin does not cover outstanding prepaid credit, so it holds customer money rather than profit.',
+    })
+  }
+  if (input.operating_costs_verified !== true) {
+    guards.push({
+      code: 'operating_costs_unverified',
+      blocks: true,
+      detail: 'Gas and infrastructure costs were not explicitly measured for this period; verify both before distributing profit.',
     })
   }
   if ((input.unpayable_recipient_count ?? 0) > 0) {
