@@ -398,6 +398,7 @@ ALTER TABLE models_catalog ADD COLUMN IF NOT EXISTS price_in_cache_write_1m_usd_
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS can_delegate boolean NOT NULL DEFAULT false;
 
 -- Realised value from a settled swap. Until this is set, a volatile-token deposit earns no credit.
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS received_by_address text;
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS realised_usd_micros bigint;
 ALTER TABLE payments ADD COLUMN IF NOT EXISTS settlement_swap_tx text;
 
