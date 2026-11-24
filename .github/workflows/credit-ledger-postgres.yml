@@ -62,4 +62,7 @@ jobs:
       - name: Install
         run: npm ci
       - name: Run credit ledger and liability tests on PostgreSQL
-        run: npx tsx --test tests/agent-credit.test.ts tests/key-credit-ledger.test.ts tests/profit-split.test.ts
+        run: |
+          npx tsx --test tests/agent-credit.test.ts
+          npx tsx --test tests/key-credit-ledger.test.ts
+          npx tsx --test tests/profit-split.test.ts
