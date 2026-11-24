@@ -63,6 +63,11 @@ export async function creditDeposit(
     if (opts.toKeyId) {
       const k = await q('UPDATE api_keys SET credit_usd_micros = credit_usd_micros + $1 WHERE id = $2 RETURNING credit_usd_micros', [amountMicros, opts.toKeyId])
       if (!k.rows[0]) throw new Error('api key not found for deposit credit')
+      await q(
+        `INSERT INTO api_key_credit_ledger (api_key_id, amount_usd_micros, kind, ref, actor, balance_after)
+         VALUES ($1, $2, 'deposit', $3, 'payment-settlement', $4)`,
+        [opts.toKeyId, amountMicros, `${ref.chain}:${ref.txHash}`, Number(k.rows[0].credit_usd_micros)]
+      )
       return { credited: true, balance: await balNow(), keyCredit: Number(k.rows[0].credit_usd_micros) }
     }
     await q('INSERT INTO ledger (user_id, amount_usd_micros, kind, ref) VALUES ($1, $2, $3, $4)', [
