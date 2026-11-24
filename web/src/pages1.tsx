@@ -111,7 +111,7 @@ function Overview({ user, refreshKey }: { user: User; refreshKey: number }) {
       <div className="grid cols-3">
         <div className="stat"><div className="label">Balance</div><div className="value">{credits ? fmtUsd(credits.balance_usd_micros) : '…'}</div><div className="sub">prepaid credits</div></div>
         <div className="stat"><div className="label">Requests (14d)</div><div className="value">{totReq.toLocaleString()}</div></div>
-        <div className="stat"><div className="label">Provider-reported tokens (14d)</div><div className="value">{totTok.toLocaleString()}</div><div className="sub">{totEstimatedTok.toLocaleString()} estimated · {totUnclassifiedTok.toLocaleString()} historical unclassified · {fmtUsd(totCost)} spent</div></div>
+        <div className="stat"><div className="label">Provider-reported tokens (14d)</div><div className="value">{totTok.toLocaleString()}</div><div className="sub">{totMockTok.toLocaleString()} mock · {totEstimatedTok.toLocaleString()} estimated · {totUnclassifiedTok.toLocaleString()} historical unclassified · {fmtUsd(totCost)} spent</div></div>
       </div>
       <div className="card">
         <h2>Last 14 days</h2>
