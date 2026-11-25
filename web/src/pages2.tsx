@@ -64,6 +64,8 @@ function Agents() {
   useEffect(load, [load])
 
   const create = async () => {
+    if (!form.name.trim()) { toast('Name the agent first', 'error'); return }
+    if (!form.model) { toast('Pick a model first', 'error'); return }
     setBusy(true)
     try {
       const mcp = form.mcp.filter((m) => m.name && m.url)
@@ -198,7 +200,10 @@ function Agents() {
           </label>
         </div>
         <div style={{ marginTop: 14 }}>
-          <button onClick={create} disabled={busy || !form.name || !form.model}>Create agent</button>
+          <button onClick={create} disabled={busy}>Create agent</button>
+          <span className="muted small" style={{ marginLeft: 10 }}>
+            {busy ? 'Creating…' : !form.name.trim() ? 'Name the agent first.' : !form.model ? 'Pick a model first.' : ''}
+          </span>
         </div>
       </div>
 

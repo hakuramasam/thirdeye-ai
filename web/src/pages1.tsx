@@ -175,6 +175,9 @@ function Keys({ onChanged }: { onChanged: () => void }) {
   const load = useCallback(() => { api('/api/keys').then((r) => setKeys(r.keys)).catch(() => {}) }, [])
   useEffect(load, [load])
   const create = async () => {
+    // Validate on click, not by disabling the control: a browser-autofilled field can look
+    // filled while React state is still empty, which left this button permanently greyed.
+    if (!name.trim()) { toast('Give the key a name first', 'error'); return }
     setBusy(true)
     try {
       const r = await api('/api/keys', { method: 'POST', body: JSON.stringify({ name, rpm: Number(rpm), tpm: Number(tpm) }) })
@@ -209,11 +212,16 @@ function Keys({ onChanged }: { onChanged: () => void }) {
       <div className="card">
         <h2>Create API key</h2>
         <div className="row">
-          <div><label>Name</label><input value={name} placeholder="production-app" onChange={(e) => setName(e.target.value)} /></div>
+          <div><label>Name</label><input value={name} placeholder="production-app" autoComplete="off" onChange={(e) => setName(e.target.value)} /></div>
           <div><label>RPM limit</label><input value={rpm} onChange={(e) => setRpm(e.target.value)} /></div>
           <div><label>TPM limit</label><input value={tpm} onChange={(e) => setTpm(e.target.value)} /></div>
         </div>
-        <div style={{ marginTop: 14 }}><button onClick={create} disabled={busy || !name}>Create key</button></div>
+        <div style={{ marginTop: 14 }}>
+          <button onClick={create} disabled={busy}>Create key</button>
+          <span className="muted small" style={{ marginLeft: 10 }}>
+            {busy ? 'Creating…' : name.trim() ? '' : 'Enter a name first.'}
+          </span>
+        </div>
         {secret && (
           <div className="secret-box">
             <strong>Copy your key now — it is shown only once.</strong>
@@ -269,6 +277,7 @@ function Byok({ onChanged }: { onChanged: () => void }) {
   const load = useCallback(() => { api('/api/keys/byok').then((r) => setRows(r.providers)).catch(() => {}) }, [])
   useEffect(load, [load])
   const save = async () => {
+    if (!apiKey.trim()) { toast('Paste a provider key first', 'error'); return }
     setBusy(true)
     try {
       await api('/api/keys/byok', { method: 'PUT', body: JSON.stringify({ provider, api_key: apiKey }) })
@@ -294,9 +303,12 @@ function Byok({ onChanged }: { onChanged: () => void }) {
               <option value="deepseek">DeepSeek</option>
             </select>
           </div>
-          <div style={{ flex: 2 }}><label>API key</label><input type="password" value={apiKey} placeholder="sk-… / sk-ant-…" onChange={(e) => setApiKey(e.target.value)} /></div>
+          <div style={{ flex: 2 }}><label>API key</label><input type="password" value={apiKey} placeholder="sk-… / sk-ant-…" autoComplete="off" onChange={(e) => setApiKey(e.target.value)} /></div>
         </div>
-        <div style={{ marginTop: 14 }}><button onClick={save} disabled={busy || !apiKey}>Save key</button></div>
+        <div style={{ marginTop: 14 }}>
+          <button onClick={save} disabled={busy}>Save key</button>
+          <span className="muted small" style={{ marginLeft: 10 }}>{busy ? 'Saving…' : apiKey.trim() ? '' : 'Paste a provider key first.'}</span>
+        </div>
       </div>
       <div className="card">
         <h2>Stored provider keys</h2>

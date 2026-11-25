@@ -1,9 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { api } from './wallet'
+import { api, type ModelRow } from './wallet'
 
 type Msg = { role: 'user' | 'assistant'; content: string; cost?: string }
-
-type ModelRow = { id: string; pricing?: { prompt?: string; completion?: string }; owned_by?: string }
 
 /** Chat with any catalogue model directly, using a session-scoped key. */
 export function Playground({ user, onChanged }: { user: any; onChanged: () => void }) {
@@ -19,10 +17,14 @@ export function Playground({ user, onChanged }: { user: any; onChanged: () => vo
 
   useEffect(() => {
     api('/api/models').then((r) => {
-      const list = (r.models || r.data || []) as ModelRow[]
+      const list = (r.models || []) as ModelRow[]
       setModels(list)
-      if (list.length && !list.some((m) => m.id === model)) setModel(list[0].id)
-    }).catch(() => {})
+      // Keep the current pick only if the catalogue actually offers it; otherwise fall back to the
+      // first real id. The previous code read `m.id`, a field this endpoint never returns, so every
+      // option was blank and the selected model was undefined, which sent no model at all.
+      if (list.length && !list.some((m) => m.model === model)) setModel(list[0].model)
+      if (!list.length) setErr('No models are available on this account yet.')
+    }).catch((e) => setErr(`Could not load the model list: ${String(e.message || e)}`))
     // One short-lived key for this page load; it is revoked on the next load.
     api('/api/playground/token', { method: 'POST' })
       .then((r) => { setToken(r.token); setBalance(r.balance_usd_micros ?? null) })
@@ -64,10 +66,11 @@ export function Playground({ user, onChanged }: { user: any; onChanged: () => vo
         <div className="row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <label style={{ flex: 1, minWidth: 220 }}>
             <span className="muted">Model</span>
-            <select value={model} onChange={(e) => setModel(e.target.value)} disabled={busy}>
+            <select value={model} onChange={(e) => setModel(e.target.value)} disabled={busy || models.length === 0}>
+              {models.length === 0 && <option value="">Loading models…</option>}
               {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.id}{m.pricing?.prompt ? ` · $${m.pricing.prompt}/M in` : ''}
+                <option key={m.model} value={m.model}>
+                  {m.model} · {m.provider} · ${(m.price_in_1m_usd_micros / 1e6).toFixed(2)}/M in
                 </option>
               ))}
             </select>
@@ -107,9 +110,15 @@ export function Playground({ user, onChanged }: { user: any; onChanged: () => vo
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
         />
-        <button onClick={send} disabled={!token || busy || !input.trim()}>
-          {busy ? 'Sending…' : 'Send'}
-        </button>
+        <div className="row" style={{ alignItems: 'center', gap: 12 }}>
+          <button onClick={send} disabled={!token || busy || !input.trim()}>
+            {busy ? 'Sending…' : 'Send'}
+          </button>
+          {/* A greyed button with no explanation is the complaint, so say what is missing. */}
+          <span className="muted small">
+            {!token ? 'Waiting for a playground key.' : busy ? 'In flight.' : !input.trim() ? 'Type a message to enable Send.' : ''}
+          </span>
+        </div>
       </div>
     </div>
   )
