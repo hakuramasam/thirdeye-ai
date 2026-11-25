@@ -301,7 +301,7 @@ test('the shared operating block is identical in every agent pack', () => {
   // These sentences are copied verbatim into all twelve packs. Nothing checked the copies, so
   // editing one pack drifted the rest silently while the text claimed the suite would catch it.
   const canonical = [
-    '- Every task carries one accountable owner, an acceptance condition and a stated output artifact. If one of the three is missing, the task is not ready and you say so instead of starting.',
+    '- Every task carries one accountable owner, an acceptance condition and a stated output artifact. If the owner or the acceptance condition is missing, the task is not ready and you say so instead of starting; a task with no output artifact cannot be closed. On the delegated path `src/agents/runner.ts` does not populate the artifact yet, so the machine envelope reports it as a warning rather than a refusal.',
     '- A specialist\'s report is a claim, not proof. Nobody closes a task on a child\'s success message alone.',
     '- Artifact ids travel between agents; summaries are the index, not the evidence. Use the artifact registry rather than pasting truncated text.',
     'risk policy may allow skipping',
