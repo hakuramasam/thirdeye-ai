@@ -198,6 +198,7 @@
       "supporting_agents",
       "input_artifacts",
       "acceptance_criteria",
+      "output_artifact",
       "out_of_scope",
       "dependencies",
       "permission_scopes",
@@ -213,7 +214,8 @@
       "accountable_agent": "owner",
       "current_status": "status",
       "execution_deadline": "deadline",
-      "input_artifacts": "input_refs"
+      "input_artifacts": "input_refs",
+      "output_artifact": "output_expectations"
     },
     "required": [
       "task_id",
@@ -231,9 +233,11 @@
       "risk_level",
       "permission_scopes",
       "budget_limit",
-      "out_of_scope"
+      "out_of_scope",
+      "dependencies",
+      "output_artifact"
     ],
-    "recommended_note": "Reported as warnings, not refusals. The delegation path in src/agents/runner.ts populates the required set today, and requiring the recommended set would refuse live delegations that are otherwise well formed."
+    "recommended_note": "Reported as warnings, not refusals. The delegation path in src/agents/runner.ts populates the required set today, and requiring the recommended set would refuse live delegations that are otherwise well formed. Every field the operating specification names as required for a task to be ready appears here as at least recommended: category, permission_scopes, budget_limit, dependencies and output_artifact, so the machine half cannot silently drop one of them."
   },
   "artifacts": {
     "kinds": [
@@ -325,7 +329,9 @@
       "build": "IN_PROGRESS",
       "verify": "QA_VERIFICATION",
       "security_review": "SECURITY_REVIEW",
+      "release_readiness": "RELEASE_READY",
       "release": "RELEASED",
+      "accept": "COMPLETED",
       "document": "DOCUMENTED",
       "intake": "TRIAGED",
       "diagnose": "PLANNED",

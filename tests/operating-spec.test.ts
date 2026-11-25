@@ -59,6 +59,8 @@ const validTask = () => ({
   permission_scopes: ['repo_write'],
   budget_limit: 12000,
   out_of_scope: ['Deploying anything'],
+  dependencies: [],
+  output_expectations: ['report'],
 })
 
 test('the machine contract and the document are the same specification', () => {
@@ -226,10 +228,12 @@ test('a task envelope is refused when a specified field is missing, and warned w
   delete (thin as any).correlation_id
   delete (thin as any).category
   delete (thin as any).permission_scopes
+  delete (thin as any).output_expectations
   const warned = validateOperatingTask(thin)
   assert.equal(warned.ok, true)
-  assert.ok(warned.ok && warned.warnings.length === 3, 'three recommended fields were dropped, three warnings expected')
+  assert.ok(warned.ok && warned.warnings.length === 4, 'four recommended fields were dropped, four warnings expected')
   assert.ok(warned.ok && warned.warnings.some((w) => w.includes('correlation_id')))
+  assert.ok(warned.ok && warned.warnings.some((w) => w.includes('output_artifact')), 'a missing output artifact must be reported')
 
   const malformed = validateOperatingTask({ ...validTask(), priority: 'urgent' })
   assert.equal(malformed.ok, false, 'the schema still refuses a priority outside its enum')
