@@ -123,30 +123,50 @@ export type TransitionCheck =
  * definition, and an exception state can be entered from anywhere and left for any stage.
  */
 export function checkTransition(from: string, to: string): TransitionCheck {
-  if (from === to) return { ok: true, rework: false, skippedGates: [] }
   const fromIdx = stageIndex(from)
   const toIdx = stageIndex(to)
   const fromIsException = isException(from)
   const toIsException = isException(to)
 
+  // Validate before the no-op shortcut: a misspelled stage "moved" to itself is still unknown.
   if (fromIdx === -1 && !fromIsException) return { ok: false, errors: [`unknown lifecycle stage: ${from}`] }
   if (toIdx === -1 && !toIsException) return { ok: false, errors: [`unknown lifecycle stage: ${to}`] }
+  if (from === to) return { ok: true, rework: false, skippedGates: [] }
 
   if (toIsException) return { ok: true, rework: to === 'REWORK', skippedGates: [] }
-  if (fromIsException) return { ok: true, rework: from === 'REWORK', skippedGates: [] }
+
+  if (fromIsException) {
+    // An exception state has no position in the chain, so the gates before the target are the only
+    // ones we can prove would be jumped. Returning ok while listing them let a blocked task re-enter
+    // past QA or security, which the specification forbids, so the exit is refused instead.
+    const ahead = GATES.filter((g) => stageIndex(g) < toIdx)
+    if (ahead.length) {
+      return { ok: false, errors: [`cannot re-enter at ${to} without re-running ${ahead.join(', ')}`] }
+    }
+    return { ok: true, rework: from === 'REWORK', skippedGates: [] }
+  }
+
   if (fromIdx < toIdx) {
     const skippedGates = GATES.filter((g) => {
       const gi = stageIndex(g)
       return gi > fromIdx && gi < toIdx
     })
-    return { ok: true, rework: false, skippedGates }
+    // Reporting a mandatory gate as skipped while still returning ok is what let a caller jump
+    // straight to release, so a move over one of these is a refusal and the gates are the reason.
+    if (skippedGates.length) {
+      return { ok: false, errors: [`cannot skip mandatory gate(s): ${skippedGates.join(', ')}`] }
+    }
+    return { ok: true, rework: false, skippedGates: [] }
   }
   return { ok: true, rework: true, skippedGates: [] }
 }
 
 /** The stored status is coarse; the lifecycle is fine. This is the honest projection between them. */
 export function stageForTaskStatus(status: string): string | undefined {
-  return SPEC.task_status_to_stage[status]
+  // Own-property check: a status like 'constructor' would otherwise resolve to Object.prototype.
+  return Object.prototype.hasOwnProperty.call(SPEC.task_status_to_stage, status)
+    ? SPEC.task_status_to_stage[status]
+    : undefined
 }
 
 /** P0 is the only priority whose stored equivalent is `critical`; the mapping is data, not a guess. */
@@ -159,7 +179,10 @@ export function blocksRelease(severities: string[]): boolean {
 }
 
 export function artifactKindAllowed(kind: string): boolean {
-  return SPEC.artifacts.kinds.includes(String(kind).toLowerCase())
+  // Ask the runtime registry, not the specification copy of it, and normalise the same way
+  // validateArtifact does so a padded or mixed-case kind cannot pass here and fail there.
+  const normalised = String(kind).trim().toLowerCase()
+  return ARTIFACT_KINDS.some((k) => String(k).trim().toLowerCase() === normalised)
 }
 
 /** The artifact registry is the runtime truth; the specification must not restate it differently. */
@@ -170,7 +193,9 @@ export function artifactKindsAgree(): boolean {
 }
 
 export function pipelineForCategory(category: string): string | undefined {
-  return SPEC.pipelines.by_category[category]
+  return Object.prototype.hasOwnProperty.call(SPEC.pipelines.by_category, category)
+    ? SPEC.pipelines.by_category[category]
+    : undefined
 }
 
 /** Lifecycle stage a pipeline stage corresponds to, so a run can be projected onto the chain. */

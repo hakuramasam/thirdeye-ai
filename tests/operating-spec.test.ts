@@ -165,10 +165,13 @@ test('transitions allow forward progress, flag skipped gates, and never hide a b
   assert.equal(forward.ok && forward.rework, false)
   assert.deepEqual(forward.ok && forward.skippedGates, [])
 
-  // Jumping straight from build to release skips QA and security: legal to express, visible in the result.
+  // Jumping straight from build to release skips QA, security and readiness. The specification calls
+  // those gates unskippable, so the move is refused and the gates are named as the reason.
   const leap = checkTransition('IN_PROGRESS', 'RELEASED')
-  assert.equal(leap.ok, true)
-  assert.deepEqual(leap.ok && leap.skippedGates, ['QA_VERIFICATION', 'SECURITY_REVIEW', 'RELEASE_READY'])
+  assert.equal(leap.ok, false)
+  assert.match(!leap.ok ? leap.errors.join(' ') : '', /QA_VERIFICATION/)
+  assert.match(!leap.ok ? leap.errors.join(' ') : '', /SECURITY_REVIEW/)
+  assert.match(!leap.ok ? leap.errors.join(' ') : '', /RELEASE_READY/)
 
   const backward = checkTransition('QA_VERIFICATION', 'IN_PROGRESS')
   assert.equal(backward.ok, true)
@@ -179,6 +182,28 @@ test('transitions allow forward progress, flag skipped gates, and never hide a b
   assert.equal(checkTransition('IN_PROGRESS', 'INVENTED').ok, false)
   assert.equal(checkTransition('INVENTED', 'IN_PROGRESS').ok, false)
   assert.deepEqual([...GATES], ['QA_VERIFICATION', 'SECURITY_REVIEW', 'RELEASE_READY'])
+})
+
+test('a mandatory gate cannot be jumped, and an exception cannot re-enter past one', () => {
+  // Every forward move that would cross a gate is refused, not merely annotated.
+  assert.equal(checkTransition('ASSIGNED', 'RELEASED').ok, false)
+  assert.equal(checkTransition('QA_VERIFICATION', 'RELEASED').ok, false)
+  // Exiting an exception into a stage beyond a gate is the same jump by another route.
+  assert.equal(checkTransition('BLOCKED', 'RELEASED').ok, false)
+  assert.equal(checkTransition('REWORK', 'COMPLETED').ok, false)
+  // Exiting an exception before the gates still works, because nothing is crossed.
+  assert.equal(checkTransition('BLOCKED', 'IN_PROGRESS').ok, true)
+  assert.equal(checkTransition('REWORK', 'PLANNED').ok, true)
+})
+
+test('unknown stages are rejected even when the move is to itself, and lookups cannot reach the prototype', () => {
+  assert.equal(checkTransition('INVENTED', 'INVENTED').ok, false)
+  assert.equal(stageForTaskStatus('constructor'), undefined)
+  assert.equal(stageForTaskStatus('toString'), undefined)
+  assert.equal(pipelineForCategory('constructor'), undefined)
+  assert.equal(artifactKindAllowed('  REPORT  '), true)
+  assert.equal(artifactKindAllowed('Report'), true)
+  assert.equal(artifactKindAllowed('invented'), false)
 })
 
 test('a task envelope is refused when a specified field is missing, and warned when an optional one is', () => {
