@@ -172,7 +172,7 @@
     "backward_move_is": "REWORK"
   },
   "task_status_to_stage": {
-    "queued": "QUEUED_INTAKE",
+    "queued": "RECEIVED",
     "assigned": "ASSIGNED",
     "in_progress": "IN_PROGRESS",
     "blocked": "BLOCKED",

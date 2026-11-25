@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync, readdirSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
+
+const PACKS_DIR = fileURLToPath(new URL('../team/agents', import.meta.url))
 import {
   SPEC,
   SPEC_VERSION,
@@ -153,7 +157,9 @@ test('the lifecycle is ordered, unambiguous and ends in exactly one terminal sta
   for (const status of statuses) {
     const stage = stageForTaskStatus(status)
     assert.ok(stage, `stored status ${status} projects onto nothing`)
-    assert.ok(STAGES.includes(stage) || EXCEPTIONS.includes(stage) || stage === 'QUEUED_INTAKE', `${status} projects onto unknown ${stage}`)
+    // Every projection must be a real lifecycle stage or a real exception: 'QUEUED_INTAKE' used to be
+    // exempted here, which is why a status that checkTransition rejects looked legal.
+    assert.ok(STAGES.includes(stage) || EXCEPTIONS.includes(stage), `${status} projects onto unknown ${stage}`)
   }
   assert.equal(stageForTaskStatus('completed'), TERMINAL)
   assert.equal(stageForTaskStatus('failed'), 'REWORK')
@@ -284,5 +290,27 @@ test('pipeline outputs the registry cannot store are recorded as gaps, not toler
     'a stage now produces something unstoreable, or a declared gap was fixed: update the specification either way')
   for (const gap of SPEC.pipelines.known_gaps ?? []) {
     assert.ok(String((gap as any).problem).length > 40, 'a known gap needs an explanation, not a label')
+  }
+})
+
+test('the shared operating block is identical in every agent pack', () => {
+  // These sentences are copied verbatim into all twelve packs. Nothing checked the copies, so
+  // editing one pack drifted the rest silently while the text claimed the suite would catch it.
+  const canonical = [
+    '- Every task carries one accountable owner, an acceptance condition and a stated output artifact. If one of the three is missing, the task is not ready and you say so instead of starting.',
+    '- A specialist\'s report is a claim, not proof. Nobody closes a task on a child\'s success message alone.',
+    '- Artifact ids travel between agents; summaries are the index, not the evidence. Use the artifact registry rather than pasting truncated text.',
+    'risk policy may allow skipping',
+    'not the lifecycle stages themselves',
+  ]
+  const packs = readdirSync(PACKS_DIR, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
+    .map((d) => d.name)
+  assert.ok(packs.length >= 12, `expected at least twelve packs, found ${packs.length}`)
+  for (const pack of packs) {
+    const text = readFileSync(join(PACKS_DIR, pack, 'SKILL.md'), 'utf8')
+    for (const line of canonical) {
+      assert.ok(text.includes(line), `${pack}/SKILL.md is missing the canonical text: ${line.slice(0, 60)}`)
+    }
   }
 })

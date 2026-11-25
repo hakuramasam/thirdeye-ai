@@ -5,8 +5,9 @@ Provenance
   source   : owner directive supplied 2026-11-15 by Hakurama Sam
   version  : 1.0
   body     : reproduced verbatim below, no edits
-  contract : the machine-readable half of this document is src/team/spec.json, enforced by
-             tests/operating-spec.test.ts
+  contract : the machine-readable half of this document is src/team/spec.json. tests/operating-spec.test.ts
+             binds the two halves where they can be checked mechanically (role ids, categories,
+             artifact kinds, gate order and selected phrases); it does not verify this prose in full
   extends  : team/pipelines/{feature,bugfix,incident}.pipeline.json, src/agents/runner.ts,
              src/agents/pipeline.ts, src/agents/audit-log.ts, src/agents/artifacts.ts,
              src/agents/monitor.ts, src/team/validate.ts, src/team/spec.ts
@@ -172,9 +173,8 @@ frontend implementation and test evidence.
 
 F. Wallet and Finance Specialist
 
-Role: tdt_wallet
-
-Create this role if it does not exist.
+Role: tdt_blockchain (owner of wallet and finance work on the live roster; there is no
+separate tdt_wallet agent, and creating one would duplicate an existing owner)
 
 Responsibilities:
 
@@ -200,9 +200,8 @@ financial design, implementation proposal, transaction evidence or reconciliatio
 
 G. Data Intelligence Specialist
 
-Role: tdt_data
-
-Create this role if it does not exist.
+Role: tdt_intelligence (owner of data work on the live roster; there is no separate
+ tdt_data agent, and creating one would duplicate an existing owner)
 
 Responsibilities:
 
@@ -314,7 +313,7 @@ Documentation must distinguish implemented, tested, deployed and planned functio
 
 Required output:
 
-documentation artifact.
+an artifact of kind `changelog_entry`, which is the kind the machine contract maps DOCS to.
 
 3. TASK INTAKE AND CLASSIFICATION
 

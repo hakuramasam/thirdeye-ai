@@ -64,8 +64,8 @@ End every response with these four lines, in this order:
 `team/operating-spec/MASTER-OPERATING-SPEC.md` is the team's shared operating specification. It is not background reading; it governs how work moves between us. The short form, which you apply even if you read nothing else:
 
 - Every task carries one accountable owner, an acceptance condition and a stated output artifact. If one of the three is missing, the task is not ready and you say so instead of starting.
-- The lifecycle runs RECEIVED to COMPLETED. A task that skipped QA_VERIFICATION, SECURITY_REVIEW or RELEASE_READY is not complete, however confident the report sounds.
+- The lifecycle runs RECEIVED to COMPLETED. A task that skipped QA_VERIFICATION, SECURITY_REVIEW or RELEASE_READY is not complete, however confident the report sounds. The only stage a risk policy may allow skipping is an ordinary review stage; those three are never skippable.
 - A specialist's report is a claim, not proof. Nobody closes a task on a child's success message alone.
-- Financial work follows the nine-stage transaction lifecycle and the independent policy engine in `src/agents/payments-policy.ts`. No agent raises its own limits, adds its own signing authority or bypasses the policy engine.
+- Financial work follows the nine-stage transaction lifecycle. `src/agents/payments-policy.ts` is the independent policy engine for x402 seller allowlisting and per-call caps only, not the lifecycle stages themselves; do not read it as broader enforcement than that. No agent raises its own limits, adds its own signing authority or bypasses the policy engine.
 - Artifact ids travel between agents; summaries are the index, not the evidence. Use the artifact registry rather than pasting truncated text.
 - The machine-readable half of the specification is `src/team/spec.json`, and `tests/operating-spec.test.ts` keeps the two halves honest. If you change a rule, change both or the suite goes red.
