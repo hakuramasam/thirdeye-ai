@@ -1,0 +1,314 @@
+{
+  "version": 1,
+  "knowledge": [
+    {
+      "id": "team_charter",
+      "path": "team/organization.json",
+      "purpose": "Canonical roster, mandate, owned paths, handoffs and deliverables."
+    },
+    {
+      "id": "authority_policy",
+      "path": "team/policies/authority.md",
+      "purpose": "Decision rights, write grants and owner approval boundaries."
+    },
+    {
+      "id": "architecture",
+      "path": "docs/ARCHITECTURE.md",
+      "purpose": "Current architecture and system boundaries."
+    },
+    {
+      "id": "system_architecture",
+      "path": "docs/system-architecture.md",
+      "purpose": "Recorded architecture decisions and integration contracts."
+    },
+    {
+      "id": "agent_pipeline_guide",
+      "path": "docs/agent-pipeline.md",
+      "purpose": "Agent pipeline execution guide."
+    }
+  ],
+  "skills": [
+    {
+      "id": "hermes",
+      "agent_id": "tdt_hermes",
+      "path": "team/agents/hermes/SKILL.md"
+    },
+    {
+      "id": "product",
+      "agent_id": "tdt_product",
+      "path": "team/agents/product/SKILL.md"
+    },
+    {
+      "id": "architect",
+      "agent_id": "tdt_architect",
+      "path": "team/agents/architect/SKILL.md"
+    },
+    {
+      "id": "backend",
+      "agent_id": "tdt_backend",
+      "path": "team/agents/backend/SKILL.md"
+    },
+    {
+      "id": "frontend",
+      "agent_id": "tdt_frontend",
+      "path": "team/agents/frontend/SKILL.md"
+    },
+    {
+      "id": "blockchain",
+      "agent_id": "tdt_blockchain",
+      "path": "team/agents/blockchain/SKILL.md"
+    },
+    {
+      "id": "intelligence",
+      "agent_id": "tdt_intelligence",
+      "path": "team/agents/intelligence/SKILL.md"
+    },
+    {
+      "id": "agent-engineer",
+      "agent_id": "tdt_agent-engineer",
+      "path": "team/agents/agent-engineer/SKILL.md"
+    },
+    {
+      "id": "qa",
+      "agent_id": "tdt_qa",
+      "path": "team/agents/qa/SKILL.md"
+    },
+    {
+      "id": "sentinel",
+      "agent_id": "tdt_sentinel",
+      "path": "team/agents/sentinel/SKILL.md"
+    },
+    {
+      "id": "devops",
+      "agent_id": "tdt_devops",
+      "path": "team/agents/devops/SKILL.md"
+    },
+    {
+      "id": "docs",
+      "agent_id": "tdt_docs",
+      "path": "team/agents/docs/SKILL.md"
+    }
+  ],
+  "workflows": [
+    {
+      "id": "feature",
+      "path": "team/pipelines/feature.pipeline.json"
+    },
+    {
+      "id": "bugfix",
+      "path": "team/pipelines/bugfix.pipeline.json"
+    },
+    {
+      "id": "incident",
+      "path": "team/pipelines/incident.pipeline.json"
+    },
+    {
+      "id": "job_resolution",
+      "path": "team/workflows/job-resolution.workflow.json"
+    },
+    {
+      "id": "website_build",
+      "path": "team/workflows/website-build.md"
+    }
+  ],
+  "schemas": [
+    {
+      "id": "task",
+      "path": "src/team/schemas/task.schema.json"
+    },
+    {
+      "id": "agent_message",
+      "path": "src/team/schemas/agent-message.schema.json"
+    },
+    {
+      "id": "agent_report",
+      "path": "src/team/schemas/agent-report.schema.json"
+    }
+  ],
+  "runtime_artifacts": {
+    "implementation": "src/agents/artifacts.ts",
+    "description": "Content-hashed, correlation-linked artifacts passed between run stages."
+  },
+  "platform_skills": [
+    {
+      "id": "hermes",
+      "path": ".agents/skills/hermes/SKILL.md",
+      "platforms": [
+        "codex",
+        "gemini_cli"
+      ]
+    },
+    {
+      "id": "product",
+      "path": ".agents/skills/product/SKILL.md",
+      "platforms": [
+        "codex",
+        "gemini_cli"
+      ]
+    },
+    {
+      "id": "architect",
+      "path": ".agents/skills/architect/SKILL.md",
+      "platforms": [
+        "codex",
+        "gemini_cli"
+      ]
+    },
+    {
+      "id": "backend",
+      "path": ".agents/skills/backend/SKILL.md",
+      "platforms": [
+        "codex",
+        "gemini_cli"
+      ]
+    },
+    {
+      "id": "frontend",
+      "path": ".agents/skills/frontend/SKILL.md",
+      "platforms": [
+        "codex",
+        "gemini_cli"
+      ]
+    },
+    {
+      "id": "blockchain",
+      "path": ".agents/skills/blockchain/SKILL.md",
+      "platforms": [
+        "codex",
+        "gemini_cli"
+      ]
+    },
+    {
+      "id": "intelligence",
+      "path": ".agents/skills/intelligence/SKILL.md",
+      "platforms": [
+        "codex",
+        "gemini_cli"
+      ]
+    },
+    {
+      "id": "agent-engineer",
+      "path": ".agents/skills/agent-engineer/SKILL.md",
+      "platforms": [
+        "codex",
+        "gemini_cli"
+      ]
+    },
+    {
+      "id": "qa",
+      "path": ".agents/skills/qa/SKILL.md",
+      "platforms": [
+        "codex",
+        "gemini_cli"
+      ]
+    },
+    {
+      "id": "sentinel",
+      "path": ".agents/skills/sentinel/SKILL.md",
+      "platforms": [
+        "codex",
+        "gemini_cli"
+      ]
+    },
+    {
+      "id": "devops",
+      "path": ".agents/skills/devops/SKILL.md",
+      "platforms": [
+        "codex",
+        "gemini_cli"
+      ]
+    },
+    {
+      "id": "docs",
+      "path": ".agents/skills/docs/SKILL.md",
+      "platforms": [
+        "codex",
+        "gemini_cli"
+      ]
+    },
+    {
+      "id": "hermes",
+      "path": ".claude/skills/hermes/SKILL.md",
+      "platforms": [
+        "claude_code"
+      ]
+    },
+    {
+      "id": "product",
+      "path": ".claude/skills/product/SKILL.md",
+      "platforms": [
+        "claude_code"
+      ]
+    },
+    {
+      "id": "architect",
+      "path": ".claude/skills/architect/SKILL.md",
+      "platforms": [
+        "claude_code"
+      ]
+    },
+    {
+      "id": "backend",
+      "path": ".claude/skills/backend/SKILL.md",
+      "platforms": [
+        "claude_code"
+      ]
+    },
+    {
+      "id": "frontend",
+      "path": ".claude/skills/frontend/SKILL.md",
+      "platforms": [
+        "claude_code"
+      ]
+    },
+    {
+      "id": "blockchain",
+      "path": ".claude/skills/blockchain/SKILL.md",
+      "platforms": [
+        "claude_code"
+      ]
+    },
+    {
+      "id": "intelligence",
+      "path": ".claude/skills/intelligence/SKILL.md",
+      "platforms": [
+        "claude_code"
+      ]
+    },
+    {
+      "id": "agent-engineer",
+      "path": ".claude/skills/agent-engineer/SKILL.md",
+      "platforms": [
+        "claude_code"
+      ]
+    },
+    {
+      "id": "qa",
+      "path": ".claude/skills/qa/SKILL.md",
+      "platforms": [
+        "claude_code"
+      ]
+    },
+    {
+      "id": "sentinel",
+      "path": ".claude/skills/sentinel/SKILL.md",
+      "platforms": [
+        "claude_code"
+      ]
+    },
+    {
+      "id": "devops",
+      "path": ".claude/skills/devops/SKILL.md",
+      "platforms": [
+        "claude_code"
+      ]
+    },
+    {
+      "id": "docs",
+      "path": ".claude/skills/docs/SKILL.md",
+      "platforms": [
+        "claude_code"
+      ]
+    }
+  ]
+}

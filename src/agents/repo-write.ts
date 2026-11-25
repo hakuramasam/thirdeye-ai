@@ -32,6 +32,32 @@ const MONEY_PATHS = [
   /^src\/db\/schema\.sql$/,
 ]
 
+/**
+ * Agent/platform governance is owner-managed. A repo_write grant must not let an agent
+ * rewrite the instructions, tool profiles, CI workflows or authority contracts that
+ * govern its own execution. These paths remain readable and can be changed through an
+ * owner-managed, ordinary reviewable PR.
+ */
+const CONTROL_PLANE_PATHS = [
+  /^AGENTS\.md$/i,
+  /^CLAUDE\.md$/i,
+  /^GEMINI\.md$/i,
+  /^\.agents\//i,
+  /^\.claude\//i,
+  /^\.codex\//i,
+  /^\.cursor\//i,
+  /^\.gemini\//i,
+  /^\.github\/(agents|instructions|workflows|ISSUE_TEMPLATE)\//i,
+  /^\.github\/(copilot-instructions\.md|dependabot\.yml|PULL_REQUEST_TEMPLATE\.md)$/i,
+  /^team\/(organization\.json|platforms\.json|tools\.json|resources\.json)$/i,
+  /^team\/(agents|policies|pipelines|workflows)\//i,
+  /^scripts\/validate-agent-platforms\.mjs$/i,
+  /^team\/ORGANIZATION\.md$/i,
+  /^src\/agents\/(repo-write|repo-tools|runner|mcp|payments-policy|x402|audit-log|pipeline)\.ts$/i,
+  /^src\/lib\/(ssrf|security|session)\.ts$/i,
+  /^src\/team\/(validate\.ts|schemas\/)/i,
+]
+
 const DENIED = [
   /(^|\/)\.env(\..*)?$/i,
   /(^|\/)\.git(\/|$)/i,
@@ -47,6 +73,9 @@ export function validateWritePath(raw: unknown): string {
   if (p.includes('..')) throw new Error('Path traversal is not allowed')
   if (p.includes('\0') || p.length > 300) throw new Error('Invalid path')
   if (DENIED.some((re) => re.test(p))) throw new Error(`Refusing to write ${p}: credentials and internals are off limits`)
+  if (CONTROL_PLANE_PATHS.some((re) => re.test(p))) {
+    throw new Error(`Refusing to write ${p}: agent/platform governance configuration requires an owner-managed change`)
+  }
   if (!ALLOWED_PREFIXES.some((pre) => p.startsWith(pre))) {
     throw new Error(`Refusing to write ${p}: only ${ALLOWED_PREFIXES.join(', ')} are writable`)
   }
@@ -103,7 +132,7 @@ export const REPO_WRITE_TOOL = {
   function: {
     name: 'repo_write',
     description:
-      'Propose a change to this project by opening a pull request. You cannot commit to main and cannot merge: the tool creates an agent/<branch>, commits your files, and opens a PR. Writable: src/, web/, tests/, docs/, team/, .github/. Refused: money and billing paths, keys, schema.sql, env files. Include the verification you expect CI to prove in the PR body.',
+      'Propose a change to this project by opening a pull request. You cannot commit to main and cannot merge: the tool creates an agent/<branch>, commits your files, and opens a PR. Writable: src/, web/, tests/, docs/, team/, .github/ subject to explicit control-plane and sensitive-path refusals. Refused: money and billing paths, keys, schema.sql, agent/platform instructions and profiles, CI/CD workflows, authority/pipeline contracts, core tool/SSRF/audit enforcement paths, and env files. Include the verification you expect CI to prove in the PR body.',
     parameters: {
       type: 'object',
       properties: {
