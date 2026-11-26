@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { api, fmtUsd, fmtDate, toast } from './wallet'
 
 type AgentRow = {
@@ -47,6 +47,7 @@ function Agents() {
   const [agents, setAgents] = useState<AgentRow[]>([])
   const [models, setModels] = useState<ModelRow[]>([])
   const [form, setForm] = useState(emptyForm)
+  const nameRef = useRef<HTMLInputElement | null>(null)
   const [busy, setBusy] = useState(false)
   const [runsFor, setRunsFor] = useState<string | null>(null)
   const [runs, setRuns] = useState<RunRow[]>([])
@@ -64,13 +65,17 @@ function Agents() {
   useEffect(load, [load])
 
   const create = async () => {
+    // An autofilled field looks filled while React state is still empty, so read the DOM value too.
+    const name = (nameRef.current?.value ?? form.name).trim()
+    if (!name) { toast('Name the agent first', 'error'); return }
+    if (!form.model) { toast('Pick a model first', 'error'); return }
     setBusy(true)
     try {
       const mcp = form.mcp.filter((m) => m.name && m.url)
       await api('/api/agents', {
         method: 'POST',
         body: JSON.stringify({
-          name: form.name,
+          name,
           system_prompt: form.system_prompt || 'You are a helpful assistant.',
           model: form.model,
           mcp_servers: mcp,
@@ -162,7 +167,7 @@ function Agents() {
       <div className="card">
         <h2>Create agent</h2>
         <div className="row">
-          <div><label>Name</label><input value={form.name} placeholder="market-watcher" onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+          <div><label>Name</label><input ref={nameRef} value={form.name} placeholder="market-watcher" onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
           <div>
             <label>Model</label>
             <select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })}>
@@ -198,7 +203,10 @@ function Agents() {
           </label>
         </div>
         <div style={{ marginTop: 14 }}>
-          <button onClick={create} disabled={busy || !form.name || !form.model}>Create agent</button>
+          <button onClick={create} disabled={busy}>Create agent</button>
+          <span className="muted small" style={{ marginLeft: 10 }}>
+            {busy ? 'Creating…' : !form.name.trim() ? 'Name the agent first.' : !form.model ? 'Pick a model first.' : ''}
+          </span>
         </div>
       </div>
 

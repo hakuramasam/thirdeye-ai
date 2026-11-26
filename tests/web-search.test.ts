@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { runWebSearch, isWebSearchEnabled, WebSearchError, WEB_SEARCH_TOOL } from '../src/agents/web-search.js'
+import { runWebSearch, isWebSearchEnabled, WebSearchError, WEB_SEARCH_TOOL, WEB_SEARCH_FUNCTION_TOOL } from '../src/agents/web-search.js'
 
 const KEY = 'stub_search_key_never_returned'
 
@@ -131,4 +131,11 @@ test('a request carries an abort signal even when the caller supplies no timeout
   const { fetchImpl, calls } = stub(200, { results: [] })
   await runWebSearch({ query: 'x' }, { fetchImpl, apiKey: KEY, provider: 'tavily', enabled: true })
   assert.ok(calls[0].init.signal, 'a finite default timeout must produce a signal')
+})
+
+test('the exported tool can be registered without reshaping it', () => {
+  // The runner builds { type: 'function', function: {...} }; this must match that shape exactly.
+  assert.equal(WEB_SEARCH_FUNCTION_TOOL.type, 'function')
+  assert.equal(WEB_SEARCH_FUNCTION_TOOL.function.name, 'web_search')
+  assert.equal(WEB_SEARCH_FUNCTION_TOOL.function.parameters.additionalProperties, false)
 })

@@ -39,6 +39,12 @@ export const WEB_SEARCH_TOOL = {
   },
 } as const
 
+/**
+ * The runner builds every tool entry as `{ type: 'function', function: {...} }`. Exporting the
+ * wrapped form means registering this tool cannot produce an entry the provider rejects.
+ */
+export const WEB_SEARCH_FUNCTION_TOOL = { type: 'function' as const, function: WEB_SEARCH_TOOL }
+
 const ALLOWED_ARGS = new Set(['query', 'count'])
 
 /** Ceiling on one provider request, so a hung search cannot consume the invocation. */
