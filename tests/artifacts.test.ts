@@ -70,6 +70,49 @@ describe('PH2-003 addressable artifacts', () => {
     assert.equal((read as any).truncated, false)
   })
 
+  it('dispatches read_artifact to the built-in owner-scoped reader without an MCP server', async () => {
+    const stored = await storeArtifact({
+      userId: user.id,
+      kind: 'diagnosis',
+      content: 'full handoff report: artifact reads are owner scoped',
+      correlationId: `read_tool_${randomUUID()}`,
+      createdBy: 'QA',
+    })
+    const reader = (await one(
+      `INSERT INTO agents (id, user_id, name, system_prompt, model, mcp_servers, x402_enabled, budget_usd_micros, max_steps, repo_access)
+       VALUES ($1,$2,'artifact-reader','read teammate handoffs','stub-model','[]',false,100000,4,'none') RETURNING *`,
+      [`tdt_reader_${randomUUID().slice(0, 8)}`, user.id]
+    )) as AgentRow
+    const calls: any[] = []
+    const llm = {
+      async call(params: any) {
+        calls.push(params)
+        if (calls.length === 1) {
+          return {
+            content: '',
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            tool_calls: [toolCall('read_artifact', { id: stored.id, offset: 0, limit: 1000 })],
+          }
+        }
+        return { content: 'artifact read verified', prompt_tokens: 1, completion_tokens: 1 }
+      },
+    }
+
+    const result = await runAgent(reader, 'Read the QA handoff.', user, { llm })
+    assert.equal(result.status, 'success')
+    const toolMessage = calls[1].messages.find((message: any) => message.role === 'tool')
+    assert.ok(toolMessage)
+    assert.match(toolMessage.content, /full handoff report: artifact reads are owner scoped/)
+    assert.doesNotMatch(toolMessage.content, /Unknown tool: read_artifact/)
+    const event = await one(
+      `SELECT ok, result_excerpt FROM agent_run_events WHERE run_id = $1 AND tool = 'read_artifact' ORDER BY seq DESC LIMIT 1`,
+      [result.runId]
+    )
+    assert.equal(event.ok, true)
+    assert.match(event.result_excerpt, /full handoff report/)
+  })
+
   it('does not grow a version when the same bytes are handed on twice', async () => {
     const first = await storeArtifact({ userId: user.id, kind: 'review', content: 'no findings', correlationId: 'cor_2', stageId: 'security_review' })
     const again = await storeArtifact({ userId: user.id, kind: 'review', content: 'no findings', correlationId: 'cor_2', stageId: 'security_review' })
