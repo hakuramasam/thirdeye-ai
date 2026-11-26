@@ -13,7 +13,7 @@ import { checkAndConsume, refundSlot } from '../lib/ratelimit.js'
 import type { AppEnv } from '../lib/types.js'
 import { recordUsage } from '../lib/usage.js'
 import { createStreamAccountant } from '../lib/streamAccounting.js'
-import { normalizeUsage } from '../lib/tokenUsage.js'
+import { hasProviderUsage, normalizeUsage } from '../lib/tokenUsage.js'
 import { computeCostMicrosDetailed } from '../lib/pricing.js'
 
 /** Bumped when catalogue prices change, so historical rows stay explainable. */
@@ -113,8 +113,12 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
       model: requestedModel,
       provider: modelRow.provider,
       byok: false,
-      prompt_tokens: estTokens,
+      prompt_tokens: 0,
       completion_tokens: 0,
+      estimated_prompt_tokens: estTokens,
+      estimated_completion_tokens: 0,
+      usage_source: 'estimate',
+      rate_card_version: RATE_CARD_VERSION,
       cost_usd_micros: 0,
       status: String(status),
       latency_ms: Date.now() - startTime,
@@ -242,8 +246,12 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
         model: requestedModel,
         provider: modelRow.provider,
         byok: providerCall.byok,
-        prompt_tokens: estTokens,
+        prompt_tokens: 0,
         completion_tokens: 0,
+        estimated_prompt_tokens: estTokens,
+        estimated_completion_tokens: 0,
+        usage_source: 'estimate',
+        rate_card_version: RATE_CARD_VERSION,
         cost_usd_micros: 0,
         status: String(status),
         latency_ms: Date.now() - startTime,
@@ -258,6 +266,10 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
       const pt = usage.prompt_tokens
       const ct = usage.completion_tokens
       const costMicros = computeCostMicrosDetailed(modelRow, usage, env.platformMarginPct, providerCall.byok)
+      const usageSource: 'provider' | 'mock' | 'estimate' =
+        modelRow.provider === 'mock'
+          ? 'mock'
+          : hasProviderUsage((res.raw as any)?.usage) ? 'provider' : 'estimate'
       const chatId = 'chatcmpl-thirdeye-' + newId()
       const created = Math.floor(Date.now() / 1000)
 
@@ -287,11 +299,14 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
         model: requestedModel,
         provider: modelRow.provider,
         byok: providerCall.byok,
-        prompt_tokens: pt,
-        completion_tokens: ct,
-        input_cached_read: usage.input_cached_read,
-        input_cache_write: usage.input_cache_write,
-        reasoning_tokens: usage.reasoning_tokens,
+        prompt_tokens: usageSource === 'provider' || usageSource === 'mock' ? pt : 0,
+        completion_tokens: usageSource === 'provider' || usageSource === 'mock' ? ct : 0,
+        estimated_prompt_tokens: usageSource === 'provider' || usageSource === 'mock' ? 0 : pt,
+        estimated_completion_tokens: usageSource === 'provider' || usageSource === 'mock' ? 0 : ct,
+        usage_source: usageSource,
+        input_cached_read: usageSource === 'provider' ? usage.input_cached_read : 0,
+        input_cache_write: usageSource === 'provider' ? usage.input_cache_write : 0,
+        reasoning_tokens: usageSource === 'provider' ? usage.reasoning_tokens : 0,
         rate_card_version: RATE_CARD_VERSION,
         provider_request_id: (res.raw as any)?.id ?? null,
         cost_usd_micros: costMicros,
@@ -331,6 +346,7 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
           input_cache_write: usage.input_cache_write,
           reasoning_tokens: usage.reasoning_tokens,
           rate_card_version: RATE_CARD_VERSION,
+          usage_source: usageSource,
           provider_request_id: (res.raw as any)?.id ?? null,
           total_tokens: pt + ct,
         },
@@ -348,8 +364,12 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
         model: requestedModel,
         provider: modelRow.provider,
         byok: providerCall.byok,
-        prompt_tokens: estTokens,
+        prompt_tokens: 0,
         completion_tokens: 0,
+        estimated_prompt_tokens: estTokens,
+        estimated_completion_tokens: 0,
+        usage_source: 'estimate',
+        rate_card_version: RATE_CARD_VERSION,
         cost_usd_micros: 0,
         status: String(status),
         latency_ms: Date.now() - startTime,

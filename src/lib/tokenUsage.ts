@@ -23,6 +23,14 @@ const n = (v: unknown): number => {
   return Number.isFinite(x) && x > 0 ? Math.floor(x) : 0
 }
 
+/** True only when the upstream supplied both input and output token counts. */
+export function hasProviderUsage(raw: any): boolean {
+  if (!raw || typeof raw !== 'object') return false
+  const prompt = n(raw.prompt_tokens ?? raw.input_tokens)
+  const completion = n(raw.completion_tokens ?? raw.output_tokens)
+  return prompt > 0 && completion > 0
+}
+
 export function normalizeUsage(raw: any, fallback?: { prompt?: number; completion?: number }): TokenUsage {
   const u = raw ?? {}
   const prompt_tokens = n(u.prompt_tokens ?? u.input_tokens) || n(fallback?.prompt)

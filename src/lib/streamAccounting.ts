@@ -5,7 +5,7 @@ import { chargeCall, creditKey, refundSplit } from './keycredit.js'
 import { chargeKeyBudget } from './keybudget.js'
 import type { ModelRow } from './pricing.js'
 import { computeCostMicrosDetailed } from './pricing.js'
-import { normalizeUsage } from './tokenUsage.js'
+import { hasProviderUsage, normalizeUsage } from './tokenUsage.js'
 import type { TokenUsage } from './tokenUsage.js'
 import { recordUsage } from './usage.js'
 
@@ -51,8 +51,8 @@ export type StreamSettlement = {
   completion_tokens: number
   cost_usd_micros: number
   delta_micros: number
-  /** `provider` when the upstream reported usage, `chars` when we had to infer it. */
-  usage_source: 'provider' | 'chars' | 'estimate'
+  /** `provider` = external usage, `mock` = synthetic usage, `chars`/`estimate` = inferred usage. */
+  usage_source: 'provider' | 'mock' | 'chars' | 'estimate'
   settled: boolean
 }
 
@@ -68,6 +68,7 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
   let completionTokens = 0
   let totalChars = 0
   let streamUsage: any = null
+  let providerUsageSeen = false
   let buffer = ''
   let settled = false
 
@@ -91,10 +92,15 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
     try {
       const parsed = JSON.parse(jsonStr)
       if (parsed.usage) {
-        if (typeof parsed.usage.prompt_tokens === 'number') promptTokens = parsed.usage.prompt_tokens
-        if (typeof parsed.usage.completion_tokens === 'number') completionTokens = parsed.usage.completion_tokens
-        // Keep the provider's own usage object so cache and reasoning tokens survive streaming.
+        const parsedUsage = normalizeUsage(parsed.usage)
+        if (parsedUsage.prompt_tokens > 0) promptTokens = parsedUsage.prompt_tokens
+        if (parsedUsage.completion_tokens > 0) completionTokens = parsedUsage.completion_tokens
+        // Keep the last provider usage object for cache/reasoning metadata. Token counters
+        // are also retained separately so a later partial frame cannot erase earlier counts.
         streamUsage = parsed.usage
+        // Once both provider counters have been observed, later partial frames must not
+        // downgrade the provenance of the already measured stream.
+        providerUsageSeen = providerUsageSeen || hasProviderUsage(parsed.usage)
       }
       if (parsed.choices?.[0]?.delta?.content) {
         totalChars += String(parsed.choices[0].delta.content).length
@@ -105,7 +111,8 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
   }
 
   const usageSource = (): StreamSettlement['usage_source'] => {
-    if (streamUsage) return 'provider'
+    if (opts.provider === 'mock') return 'mock'
+    if (providerUsageSeen) return 'provider'
     return totalChars > 0 ? 'chars' : 'estimate'
   }
 
@@ -158,11 +165,14 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
         model: opts.requestedModel,
         provider: opts.provider,
         byok: opts.byok,
-        prompt_tokens: usage.prompt_tokens,
-        completion_tokens: usage.completion_tokens,
-        input_cached_read: usage.input_cached_read,
-        input_cache_write: usage.input_cache_write,
-        reasoning_tokens: usage.reasoning_tokens,
+        prompt_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? usage.prompt_tokens : 0,
+        completion_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? usage.completion_tokens : 0,
+        estimated_prompt_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? 0 : usage.prompt_tokens,
+        estimated_completion_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? 0 : usage.completion_tokens,
+        usage_source: result.usage_source,
+        input_cached_read: result.usage_source === 'provider' ? usage.input_cached_read : 0,
+        input_cache_write: result.usage_source === 'provider' ? usage.input_cache_write : 0,
+        reasoning_tokens: result.usage_source === 'provider' ? usage.reasoning_tokens : 0,
         rate_card_version: opts.rateCardVersion,
         cost_usd_micros: costMicros,
         status: 'stream',
@@ -189,8 +199,11 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
           model: opts.requestedModel,
           provider: opts.provider,
           byok: opts.byok,
-          prompt_tokens: usage.prompt_tokens,
-          completion_tokens: usage.completion_tokens,
+          prompt_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? usage.prompt_tokens : 0,
+          completion_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? usage.completion_tokens : 0,
+          estimated_prompt_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? 0 : usage.prompt_tokens,
+          estimated_completion_tokens: result.usage_source === 'provider' || result.usage_source === 'mock' ? 0 : usage.completion_tokens,
+          usage_source: result.usage_source,
           rate_card_version: opts.rateCardVersion,
           cost_usd_micros: opts.reservedMicros,
           status: 'stream_settle_error',
