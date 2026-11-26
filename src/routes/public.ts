@@ -27,7 +27,7 @@ const SITE = 'https://thirdeyeai.fs.kg'
  * address the project claims, on the project's own site, next to the contract and the creator
  * address it belongs to. Keep this value in sync with any listing submission.
  */
-export const PROJECT_EMAIL = 'thirdeye-ai@agentmail.to'
+export const PROJECT_EMAIL = 'team@thirdeyeai.fs.kg'
 const OG_DESCRIPTION = 'Pay per call, not per seat. OpenAI-compatible inference, wallet-native accounts, USDC credits.'
 
 /**
