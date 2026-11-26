@@ -5,7 +5,17 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { assertPublicUrl } from '../lib/ssrf.js'
 import { env } from '../lib/env.js'
 
-export type McpServerConfig = { name: string; url: string; headers?: Record<string, string> }
+export type McpAuthProvider = 'agentmail' | 'cloudflare'
+export type McpServerConfig = {
+  name: string
+  url: string
+  /** Non-secret headers only. Prefer auth references for supported platform MCP servers. */
+  headers?: Record<string, string>
+  /** Resolves a platform credential from runtime environment; never store its value in the DB. */
+  auth?: { provider: McpAuthProvider }
+  /** Exact remote tool names to expose. Omitted means all discovered tools. */
+  allowedTools?: string[]
+}
 
 export type OpenAiTool = {
   type: 'function'
@@ -27,6 +37,40 @@ export type McpTools = {
  */
 function mcpPolicy(allowHosts?: string[]) {
   return { allowHosts: allowHosts ?? env.mcpAllowedHosts }
+}
+
+/**
+ * Resolve a supported platform credential without persisting it in agent configuration.
+ * Credentials are bound to the vendor's official hostname and authentication header so a
+ * database-controlled URL cannot exfiltrate a runtime secret to an arbitrary MCP server.
+ */
+export function resolveMcpHeaders(
+  srv: McpServerConfig,
+  environment: Record<string, string | undefined> = process.env
+): Record<string, string> | undefined {
+  const headers: Record<string, string> = { ...(srv.headers ?? {}) }
+  if (!srv.auth) return Object.keys(headers).length ? headers : undefined
+
+  const policy = srv.auth.provider === 'agentmail'
+    ? { host: 'mcp.agentmail.to', envName: 'AGENTMAIL_API_KEY', header: 'x-api-key', format: (value: string) => value }
+    : { host: 'mcp.cloudflare.com', envName: 'CLOUDFLARE_API_TOKEN', header: 'Authorization', format: (value: string) => `Bearer ${value}` }
+
+  let url: URL
+  try {
+    url = new URL(srv.url)
+  } catch {
+    throw new Error(`MCP auth for '${srv.name}' requires a valid HTTPS URL`)
+  }
+  if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== policy.host) {
+    throw new Error(`MCP auth provider '${srv.auth.provider}' is restricted to https://${policy.host}/`)
+  }
+  if (Object.keys(headers).some((name) => name.toLowerCase() === policy.header.toLowerCase())) {
+    throw new Error(`MCP auth header '${policy.header}' must come from the runtime secret reference, not agent configuration`)
+  }
+  const secret = String(environment[policy.envName] ?? '').trim()
+  if (!secret) throw new Error(`MCP server '${srv.name}' requires runtime secret ${policy.envName}`)
+  headers[policy.header] = policy.format(secret)
+  return headers
 }
 
 function contentToText(content: any[]): string {
@@ -57,12 +101,20 @@ export async function createMcpTools(
         // http(s) host before a socket is ever opened. Without this an agent owner could
         // point a server at cloud metadata or an internal service.
         await assertPublicUrl(srv.url, mcpPolicy(opts.allowHosts))
+        const headers = resolveMcpHeaders(srv)
+        if (srv.allowedTools !== undefined) {
+          if (!Array.isArray(srv.allowedTools) || srv.allowedTools.some((name) => typeof name !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(name))) {
+            throw new Error('allowedTools must contain exact tool names using letters, numbers, underscores or hyphens')
+          }
+        }
+        const allowedTools = srv.allowedTools === undefined ? null : new Set(srv.allowedTools)
         const transport = new StreamableHTTPClientTransport(new URL(srv.url), {
-          requestInit: srv.headers ? { headers: srv.headers } : undefined,
+          requestInit: headers ? { headers } : undefined,
         })
         await client.connect(transport)
         const res = await client.listTools()
         for (const t of res.tools || []) {
+          if (allowedTools && !allowedTools.has(t.name)) continue
           const fullName = `mcp_${safeName}_${t.name}`
           tools.push({
             type: 'function',
