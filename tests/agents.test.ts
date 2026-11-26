@@ -97,6 +97,21 @@ describe('Agents Module C Tests', () => {
       ),
       /must come from the runtime secret reference/
     )
+
+    assert.throws(
+      () => resolveMcpHeaders(
+        { name: 'agentmail', url: 'https://mcp.agentmail.to/other', auth: { provider: 'agentmail' } },
+        { AGENTMAIL_API_KEY: 'test-agentmail-key' }
+      ),
+      /restricted to https:\/\/mcp\.agentmail\.to\/mcp/
+    )
+    assert.throws(
+      () => resolveMcpHeaders(
+        { name: 'unknown', url: 'https://mcp.agentmail.to/mcp', auth: { provider: 'unknown' } as any },
+        { AGENTMAIL_API_KEY: 'test-agentmail-key' }
+      ),
+      /Unsupported MCP auth provider/
+    )
   })
 
   it('(a) cron unit tests', () => {
