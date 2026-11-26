@@ -74,7 +74,7 @@ function Landing({ onSignedIn }: { onSignedIn: (u: User, mode: string) => void }
         </div>
         <div className="feature-grid">
           <div className="card feature"><h3>OpenAI-compatible API</h3><p>Point any OpenAI SDK at /api/v1/chat/completions. Streaming, tools, and a growing model catalog.</p></div>
-          <div className="card feature"><h3>BYOK</h3><p>Bring your own OpenAI, Anthropic, Groq or DeepSeek keys — we route them transparently and charge metering only.</p></div>
+          <div className="card feature"><h3>BYOK</h3><p>Bring your own OpenAI, Anthropic, Groq, DeepSeek or RouterLink keys — we route them transparently and charge metering only.</p></div>
           <div className="card feature"><h3>USDC prepaid credits</h3><p>Top up with USDC on Base or USDG on Robinhood Chain. Pay per token, deducted from your balance.</p></div>
           <div className="card feature"><h3>Autonomous agents</h3><p>Agents that call MCP servers, pay x402-gated APIs per call, and run on cron schedules with budgets.</p></div>
           <div className="card feature"><h3>Wallet-native accounts</h3><p>Sign in with Ethereum — MetaMask, Rainbow, OKX, Bitget. No passwords, no email.</p></div>
@@ -307,6 +307,7 @@ function Byok({ onChanged }: { onChanged: () => void }) {
               <option value="anthropic">Anthropic</option>
               <option value="groq">Groq</option>
               <option value="deepseek">DeepSeek</option>
+              <option value="routerlink">RouterLink</option>
             </select>
           </div>
           <div style={{ flex: 2 }}><label>API key</label><input ref={apiKeyRef} type="password" value={apiKey} placeholder="sk-… / sk-ant-…" autoComplete="off" onChange={(e) => setApiKey(e.target.value)} /></div>
