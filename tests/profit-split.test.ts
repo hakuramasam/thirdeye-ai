@@ -1,6 +1,12 @@
+if (!process.env.DATABASE_URL) {
+  process.env.PGLITE_MODE = '1'
+  process.env.PGLITE_DIR = 'memory://'
+}
+
 import test from 'node:test'
+import { randomUUID } from 'node:crypto'
 import assert from 'node:assert/strict'
-import {
+const {
   bpsOf,
   blockedBy,
   distributionGuards,
@@ -8,7 +14,8 @@ import {
   splitProfit,
   usdToMicros,
   microsToUsd,
-} from '../src/lib/profit.js'
+  measurePeriod,
+} = await import('../src/lib/profit.js')
 
 test('bpsOf floors and ignores non-positive input', () => {
   assert.equal(bpsOf(usdToMicros(1000), 200), usdToMicros(20))
@@ -96,6 +103,39 @@ test('guards block a distribution with no profit, thin reserves or unbacked cred
   })
   assert.ok(unbacked.some((g) => g.code === 'backing_below_liability'))
   assert.ok(blockedBy(unbacked))
+
+  const drift = distributionGuards({
+    profit_usd_micros: usdToMicros(2_000),
+    vault_stable_usd_micros: usdToMicros(10_000),
+    outstanding_credit_usd_micros: 0,
+    agent_credit_ledger_drift_usd_micros: 1,
+  })
+  assert.ok(drift.some((g) => g.code === 'agent_credit_ledger_drift'))
+  const keyDrift = distributionGuards({
+    profit_usd_micros: usdToMicros(2_000),
+    vault_stable_usd_micros: usdToMicros(10_000),
+    outstanding_credit_usd_micros: 0,
+    api_key_credit_ledger_drift_usd_micros: 1,
+  })
+  assert.ok(keyDrift.some((g) => g.code === 'api_key_credit_ledger_drift'))
+  assert.ok(blockedBy(drift))
+  assert.ok(blockedBy(keyDrift))
+  const missingWallets = distributionGuards({
+    profit_usd_micros: usdToMicros(2_000),
+    vault_stable_usd_micros: usdToMicros(10_000),
+    outstanding_credit_usd_micros: 0,
+    unpayable_recipient_count: 1,
+  })
+  assert.ok(missingWallets.some((g) => g.code === 'recipient_wallets_unconfigured'))
+  assert.ok(blockedBy(missingWallets))
+  const unverifiedCosts = distributionGuards({
+    profit_usd_micros: usdToMicros(2_000),
+    vault_stable_usd_micros: usdToMicros(10_000),
+    outstanding_credit_usd_micros: 0,
+    operating_costs_verified: false,
+  })
+  assert.ok(unverifiedCosts.some((g) => g.code === 'operating_costs_unverified'))
+  assert.ok(blockedBy(unverifiedCosts))
 })
 
 test('a healthy period clears every guard', () => {
@@ -103,7 +143,41 @@ test('a healthy period clears every guard', () => {
     profit_usd_micros: usdToMicros(2_000),
     vault_stable_usd_micros: usdToMicros(10_000),
     outstanding_credit_usd_micros: usdToMicros(500),
+    operating_costs_verified: true,
     opex_usd_micros: usdToMicros(100),
   })
   assert.equal(blockedBy(guards), false, JSON.stringify(guards))
+})
+
+
+test('outstanding prepaid credit includes active agent inference pots', async () => {
+  const { migrate, query } = await import('../src/db/index.js')
+  const { fundAgentCredit } = await import('../src/agents/credit.js')
+  await migrate()
+  const suffix = randomUUID().replace(/-/g, '')
+  const userId = `profit_agent_liability_${suffix}`
+  const agentId = `tdt_profit_liability_${suffix}`
+  const potMicros = 12_345_678
+  await query('INSERT INTO users (id, wallet, role) VALUES ($1, $2, $3)', [
+    userId,
+    `0x${suffix.slice(0, 40).padEnd(40, '0')}`,
+    'user',
+  ])
+  try {
+    const before = await measurePeriod('2099-01-01T00:00:00.000Z', '2099-01-02T00:00:00.000Z')
+    await query(
+      `INSERT INTO agents (id, user_id, name, system_prompt, model, credit_usd_micros)
+       VALUES ($1, $2, 'liability probe', 'test', 'thirdeye-mock', 0)`,
+      [agentId, userId]
+    )
+    await fundAgentCredit(agentId, potMicros)
+    const after = await measurePeriod('2099-01-01T00:00:00.000Z', '2099-01-02T00:00:00.000Z')
+    assert.equal(after.agent_credit_usd_micros - before.agent_credit_usd_micros, potMicros)
+    assert.equal(after.outstanding_credit_usd_micros - before.outstanding_credit_usd_micros, potMicros)
+    assert.equal(after.agent_credit_ledger_drift_usd_micros, 0)
+  } finally {
+    await fundAgentCredit(agentId, 0, 'set')
+    await query('DELETE FROM agents WHERE id = $1', [agentId])
+    await query('DELETE FROM users WHERE id = $1', [userId])
+  }
 })

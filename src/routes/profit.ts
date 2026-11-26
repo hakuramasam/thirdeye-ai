@@ -28,9 +28,9 @@ import {
 } from '../lib/profit.js'
 
 const RECIPIENTS = {
-  founder: process.env.FOUNDER_WALLET || '0x1cecdfbb8507800e34e07dd4723abdf8ea07c747',
-  platform_agent: process.env.PLATFORM_AGENT_KEY_WALLET || '0x9e506B32A1e7616AecA2924cd7E83f170f7d1b7a',
-  vault: process.env.PLATFORM_RECEIVER_ADDRESS || '0x73fAf95B2Baa23bde4CE8547b64C55159022Cf0d',
+  founder: process.env.FOUNDER_WALLET || '',
+  platform_agent: process.env.PLATFORM_AGENT_KEY_WALLET || '',
+  vault: process.env.PLATFORM_RECEIVER_ADDRESS || '',
 }
 
 function defaultWindow(): { from: string; to: string } {
@@ -55,11 +55,12 @@ async function buildReport(from: string, to: string, opts: { gasUsd?: number; in
     teamAgentIds: agents.length ? agents.map((a) => a.id) : undefined,
   })
 
-  const walletFor = (kind: string, ref: string | null): string | null => {
-    if (kind === 'founder') return RECIPIENTS.founder
-    if (kind === 'platform_agent') return RECIPIENTS.platform_agent
-    if (kind === 'vault') return RECIPIENTS.vault
-    return null // team agents have no wallets yet, so their line is not payable
+  const walletFor = (kind: string, _ref: string | null): string | null => {
+    const candidate =
+      kind === 'founder' ? RECIPIENTS.founder :
+      kind === 'platform_agent' ? RECIPIENTS.platform_agent :
+      kind === 'vault' ? RECIPIENTS.vault : ''
+    return /^0x[0-9a-fA-F]{40}$/.test(candidate) ? candidate : null
   }
 
   const lines = split.lines.map((line) => ({
@@ -76,6 +77,10 @@ async function buildReport(from: string, to: string, opts: { gasUsd?: number; in
     profit_usd_micros: measured.profit_usd_micros,
     vault_stable_usd_micros: opts.vaultUsdMicros ?? 0,
     outstanding_credit_usd_micros: measured.outstanding_credit_usd_micros,
+    agent_credit_ledger_drift_usd_micros: measured.agent_credit_ledger_drift_usd_micros,
+    api_key_credit_ledger_drift_usd_micros: measured.api_key_credit_ledger_drift_usd_micros,
+    unpayable_recipient_count: lines.filter((line) => !line.payable).length,
+    operating_costs_verified: opts.gasUsd != null && opts.infraUsd != null,
   })
   if (opts.vaultUsdMicros == null) {
     guards.push({
@@ -96,6 +101,12 @@ async function buildReport(from: string, to: string, opts: { gasUsd?: number; in
       cost_usd: microsToUsd(measured.cost_usd_micros),
       profit_usd: microsToUsd(measured.profit_usd_micros),
       outstanding_credit_usd: microsToUsd(measured.outstanding_credit_usd_micros),
+      agent_credit_usd: microsToUsd(measured.agent_credit_usd_micros),
+      agent_credit_ledger_usd: microsToUsd(measured.agent_credit_ledger_usd_micros),
+      agent_credit_ledger_drift_usd: microsToUsd(measured.agent_credit_ledger_drift_usd_micros),
+      api_key_credit_usd: microsToUsd(measured.api_key_credit_usd_micros),
+      api_key_credit_ledger_usd: microsToUsd(measured.api_key_credit_ledger_usd_micros),
+      api_key_credit_ledger_drift_usd: microsToUsd(measured.api_key_credit_ledger_drift_usd_micros),
     },
     level: {
       applied: level.level,
@@ -120,7 +131,9 @@ async function buildReport(from: string, to: string, opts: { gasUsd?: number; in
     notes: [
       'Revenue is billed consumption only. Deposits are liabilities and are reported separately as outstanding credit.',
       'Provider cost is derived as billed / (1 + PLATFORM_MARGIN_PCT). If the margin changed mid-period the figure drifts.',
-      'Gas and infra are zero unless passed explicitly, because neither is recorded per transaction yet.',
+      'Gas and infra must be explicitly supplied or recorded per transaction; otherwise the distribution guard blocks payout.',
+      'Agent and API-key credit balances must reconcile to their subledgers before a distribution can be marked distributable.',
+      'Every payout recipient must have an explicitly configured wallet; fallback addresses are not used.',
       'Team agent lines show payable:false until those wallets exist.',
     ],
   }

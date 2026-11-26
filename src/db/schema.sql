@@ -438,6 +438,56 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS repo_access text NOT NULL DEFAULT 'n
 -- member by member instead of sharing one balance. Zero means the agent draws on the owner.
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS credit_usd_micros bigint NOT NULL DEFAULT 0;
 
+-- Agent inference-credit subledger. This records every pot funding, spend, refund and
+-- manual adjustment, independently of the owner's general-purpose credit ledger.
+CREATE TABLE IF NOT EXISTS agent_credit_ledger (
+  id                 bigserial PRIMARY KEY,
+  agent_id           text NOT NULL,
+  amount_usd_micros  bigint NOT NULL, -- signed: positive funding/refund, negative spend/adjustment
+  kind               text NOT NULL,   -- opening_balance | fund | usage | refund | adjust
+  ref                text,
+  actor              text NOT NULL DEFAULT 'system',
+  balance_after      bigint NOT NULL,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_credit_ledger_agent_time
+  ON agent_credit_ledger(agent_id, created_at DESC);
+
+-- API-key credit subledger mirrors agent pots: key deposits, usage, refunds and adjustments
+-- must reconcile to the spendable balance on each key.
+CREATE TABLE IF NOT EXISTS api_key_credit_ledger (
+  id                 bigserial PRIMARY KEY,
+  api_key_id         text NOT NULL,
+  amount_usd_micros  bigint NOT NULL,
+  kind               text NOT NULL, -- opening_balance | deposit | usage | refund | adjust
+  ref                text,
+  actor              text NOT NULL DEFAULT 'system',
+  balance_after      bigint NOT NULL,
+  created_at         timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_api_key_credit_ledger_key_time
+  ON api_key_credit_ledger(api_key_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_key_credit_ledger_opening
+  ON api_key_credit_ledger(api_key_id) WHERE ref = 'migration:api-key-credit-ledger-v1';
+
+INSERT INTO api_key_credit_ledger (api_key_id, amount_usd_micros, kind, ref, actor, balance_after)
+SELECT id, credit_usd_micros, 'opening_balance', 'migration:api-key-credit-ledger-v1', 'migration', credit_usd_micros
+  FROM api_keys k
+ WHERE k.credit_usd_micros <> 0
+   AND NOT EXISTS (SELECT 1 FROM api_key_credit_ledger l WHERE l.api_key_id = k.id)
+ON CONFLICT (api_key_id) WHERE ref = 'migration:api-key-credit-ledger-v1' DO NOTHING;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_credit_ledger_opening
+  ON agent_credit_ledger(agent_id) WHERE ref = 'migration:agent-credit-ledger-v1';
+
+-- Preserve existing pots as opening balances; this is a migration snapshot, not proof of
+-- the original funding source. It makes the current liability visible without inventing history.
+INSERT INTO agent_credit_ledger (agent_id, amount_usd_micros, kind, ref, actor, balance_after)
+SELECT id, credit_usd_micros, 'opening_balance', 'migration:agent-credit-ledger-v1', 'migration', credit_usd_micros
+  FROM agents a
+ WHERE a.credit_usd_micros <> 0
+   AND NOT EXISTS (SELECT 1 FROM agent_credit_ledger l WHERE l.agent_id = a.id)
+ON CONFLICT (agent_id) WHERE ref = 'migration:agent-credit-ledger-v1' DO NOTHING;
+
 -- Profit accounting (docs/profit-split.md). A period records what was measured, so a
 -- distribution can be recomputed and audited later instead of living in a spreadsheet.
 CREATE TABLE IF NOT EXISTS profit_periods (
@@ -584,11 +634,31 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_sha_unique
 
 ALTER TABLE agent_audit_events ADD COLUMN IF NOT EXISTS insert_seq bigserial;
 
-CREATE OR REPLACE FUNCTION agent_audit_events_append_only() RETURNS trigger AS $$
-BEGIN
-  RAISE EXCEPTION 'agent_audit_events is append-only (%; write a new event instead)', TG_OP;
-END;
-$$ LANGUAGE plpgsql;
+-- Financial ledgers are append-only. Corrections are compensating entries, never rewrites.
+CREATE OR REPLACE FUNCTION credit_ledger_append_only() RETURNS trigger AS 'BEGIN
+  RAISE EXCEPTION ''% is append-only (%; write a compensating entry instead)'', TG_TABLE_NAME, TG_OP;
+  RETURN OLD;
+END;' LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS ledger_no_rewrite ON ledger;
+CREATE TRIGGER ledger_no_rewrite
+  BEFORE UPDATE OR DELETE ON ledger
+  FOR EACH ROW EXECUTE FUNCTION credit_ledger_append_only();
+
+DROP TRIGGER IF EXISTS agent_credit_ledger_no_rewrite ON agent_credit_ledger;
+CREATE TRIGGER agent_credit_ledger_no_rewrite
+  BEFORE UPDATE OR DELETE ON agent_credit_ledger
+  FOR EACH ROW EXECUTE FUNCTION credit_ledger_append_only();
+
+DROP TRIGGER IF EXISTS api_key_credit_ledger_no_rewrite ON api_key_credit_ledger;
+CREATE TRIGGER api_key_credit_ledger_no_rewrite
+  BEFORE UPDATE OR DELETE ON api_key_credit_ledger
+  FOR EACH ROW EXECUTE FUNCTION credit_ledger_append_only();
+
+CREATE OR REPLACE FUNCTION agent_audit_events_append_only() RETURNS trigger AS 'BEGIN
+  RAISE EXCEPTION ''agent_audit_events is append-only (%; write a new event instead)'', TG_OP;
+  RETURN OLD;
+END;' LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS agent_audit_events_no_rewrite ON agent_audit_events;
 CREATE TRIGGER agent_audit_events_no_rewrite

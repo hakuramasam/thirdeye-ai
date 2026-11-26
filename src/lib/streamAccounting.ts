@@ -148,7 +148,7 @@ export function createStreamAccountant(opts: StreamAccountingOptions): StreamAcc
         // Refund along the same split the reserve used, or the key stays overcharged while
         // the account is credited money it never spent.
         const refund = refundSplit(-deltaMicros, opts.reservedFromKey)
-        if (refund.toKey > 0) await creditKey(opts.apiKey.id, refund.toKey)
+        if (refund.toKey > 0) await creditKey(opts.apiKey.id, refund.toKey, { kind: 'refund', ref: 'stream-trueup-refund', actor: 'stream-accounting' })
         if (refund.toAccount > 0) await adjustCredit(opts.userId, refund.toAccount, 'stream-trueup-refund')
       }
       if (costMicros > 0) await chargeKeyBudget(opts.apiKey, costMicros)

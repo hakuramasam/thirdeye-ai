@@ -23,7 +23,25 @@ export function registerAdminRoutes(app: SessionApp) {
       `SELECT id, name, status, credit_usd_micros, budget_usd_micros FROM agents ORDER BY id`
     )
     const total = r.rows.reduce((n: number, x: any) => n + Number(x.credit_usd_micros ?? 0), 0)
-    return c.json({ agents: r.rows, total_usd_micros: total })
+    const ledger = await query(
+      `SELECT agent_id, amount_usd_micros, kind, ref, actor, balance_after, created_at
+         FROM agent_credit_ledger ORDER BY created_at DESC, id DESC LIMIT 200`
+    )
+    return c.json({ agents: r.rows, total_usd_micros: total, ledger: ledger.rows })
+  })
+
+  /** GET /api/admin/credits/ledger — unified key and agent credit audit trail. */
+  app.get('/api/admin/credits/ledger', async (c) => {
+    if (c.req.header('x-master-key') !== env.masterKey) return c.json({ error: { message: 'Forbidden', type: 'auth', code: 403 } }, 403)
+    const rows = await query(
+      `SELECT 'agent' AS account_type, agent_id AS account_id, amount_usd_micros, kind, ref, actor, balance_after, created_at
+         FROM agent_credit_ledger
+       UNION ALL
+       SELECT 'api_key' AS account_type, api_key_id AS account_id, amount_usd_micros, kind, ref, actor, balance_after, created_at
+         FROM api_key_credit_ledger
+       ORDER BY created_at DESC LIMIT 500`
+    )
+    return c.json({ entries: rows.rows })
   })
 
   /**
@@ -35,10 +53,11 @@ export function registerAdminRoutes(app: SessionApp) {
     const body = await c.req.json().catch(() => ({} as any))
     const amount = Number(body?.usd_micros)
     const mode = body?.mode === 'set' ? 'set' : 'add'
+    const reason = String(body?.reason || 'manual-agent-credit').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 120)
     if (!Number.isFinite(amount) || amount < 0) {
       return c.json({ error: { message: 'usd_micros must be a non-negative integer', type: 'invalid_request', code: 400 } }, 400)
     }
-    const after = await fundAgentCredit(c.req.param('id'), Math.trunc(amount), mode)
+    const after = await fundAgentCredit(c.req.param('id'), Math.trunc(amount), mode, { ref: reason, actor: 'master-key-api' })
     if (after == null) return c.json({ error: { message: 'Agent not found', type: 'not_found', code: 404 } }, 404)
     return c.json({ ok: true, id: c.req.param('id'), mode, credit_usd_micros: after })
   })

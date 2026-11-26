@@ -1,4 +1,7 @@
-process.env.PGLITE_DIR = 'memory://'
+if (!process.env.DATABASE_URL) {
+  process.env.PGLITE_MODE = '1'
+  process.env.PGLITE_DIR = 'memory://'
+}
 
 import { describe, it, before } from 'node:test'
 import assert from 'node:assert/strict'
@@ -36,18 +39,27 @@ describe('per-agent inference credit', () => {
 
   it('a funded agent pays its own way, and the pot is deducted exactly once', async () => {
     const id = 'tdt_credit_probe'
+    await fundAgentCredit(id, 0, 'set').catch(() => null)
     await query(
       `INSERT INTO agents (id, user_id, name, system_prompt, model, credit_usd_micros)
-       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO UPDATE SET credit_usd_micros = $6`,
-      [id, 'probe_owner', 'CREDIT PROBE', 'x', 'ministral-3b', 50_000_000]
+       VALUES ($1,$2,$3,$4,$5,0) ON CONFLICT (id) DO NOTHING`,
+      [id, 'probe_owner', 'CREDIT PROBE', 'x', 'ministral-3b']
     )
+    await fundAgentCredit(id, 50_000_000)
     assert.equal(await getAgentCredit(id), 50_000_000)
 
     // 120 micros, an owner wallet with no allowance: everything must come from the pot,
-    // so no ledger row is written at all.
+    // so no owner-ledger row is written; the agent subledger still records the pot spend.
     const paid = await payForStep({ agentId: id, userId: 'probe_owner', wallet: '0xprobe', runId: 'run-1', costMicros: 120 })
     assert.deepEqual(paid, { ok: true, fromPot: 120, fromLedger: 0 })
     assert.equal(await getAgentCredit(id), 50_000_000 - 120)
+    const usageRows = await query(`SELECT amount_usd_micros, kind, ref, balance_after FROM agent_credit_ledger WHERE agent_id = $1 AND ref = 'run-1'`, [id])
+    assert.equal(usageRows.rows.length, 1)
+    assert.equal(Number(usageRows.rows[0].amount_usd_micros), -120)
+    assert.equal(usageRows.rows[0].kind, 'usage')
+    const usageId = await query(`SELECT id FROM agent_credit_ledger WHERE agent_id = $1 AND ref = 'run-1'`, [id])
+    await assert.rejects(query(`UPDATE agent_credit_ledger SET amount_usd_micros = 0 WHERE id = $1`, [usageId.rows[0].id]), /append-only/)
+    await assert.rejects(query(`DELETE FROM agent_credit_ledger WHERE id = $1`, [usageId.rows[0].id]), /append-only/)
 
     // an empty pot falls through to the ledger, which refuses: the step fails whole
     await fundAgentCredit(id, 0, 'set')
@@ -64,21 +76,28 @@ describe('per-agent inference credit', () => {
     await fundAgentCredit(id, 0, 'set').catch(() => null)
     await query(
       `INSERT INTO agents (id, user_id, name, system_prompt, model, credit_usd_micros)
-       VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO UPDATE SET credit_usd_micros = $6`,
-      [id, 'probe_owner', 'RACE PROBE', 'x', 'ministral-3b', 100]
+       VALUES ($1,$2,$3,$4,$5,0) ON CONFLICT (id) DO UPDATE SET credit_usd_micros = 0`,
+      [id, 'probe_owner', 'RACE PROBE', 'x', 'ministral-3b']
     )
-    const [a, b] = await Promise.all([takeAgentCredit(id, 80), takeAgentCredit(id, 80)])
+    await fundAgentCredit(id, 100, 'add', { ref: 'race-fund' })
+    const [a, b] = process.env.DATABASE_URL
+      ? await Promise.all([takeAgentCredit(id, 80, 'race-run'), takeAgentCredit(id, 80, 'race-run')])
+      : [await takeAgentCredit(id, 80, 'race-run'), await takeAgentCredit(id, 80, 'race-run')]
     assert.equal(a + b, 80, 'only one of the two spends can win the same micros')
     assert.equal(await getAgentCredit(id), 20)
 
-    await refundAgentCredit(id, 80)
+    await refundAgentCredit(id, 80, 'race-refund')
     assert.equal(await getAgentCredit(id), 100, 'a refund restores exactly what was taken')
+    const audit = await query(`SELECT kind, amount_usd_micros FROM agent_credit_ledger WHERE agent_id = $1 AND ref IN ('race-fund', 'race-run', 'race-refund') ORDER BY id`, [id])
+    assert.deepEqual(audit.rows.map((x: any) => [x.kind, Number(x.amount_usd_micros)]), [['fund', 100], ['usage', -80], ['refund', 80]])
 
+    await fundAgentCredit(id, 0, 'set')
     await query(`DELETE FROM agents WHERE id = $1`, [id])
   })
 
   it('funding is add by default and set when asked', async () => {
     const id = 'tdt_credit_fund'
+    await fundAgentCredit(id, 0, 'set').catch(() => null)
     await query(
       `INSERT INTO agents (id, user_id, name, system_prompt, model) VALUES ($1,$2,$3,$4,$5)
        ON CONFLICT (id) DO NOTHING`,
@@ -88,6 +107,7 @@ describe('per-agent inference credit', () => {
     assert.equal(await fundAgentCredit(id, 1_000_000), 51_000_000)
     assert.equal(await fundAgentCredit(id, 2_000_000, 'set'), 2_000_000)
     assert.equal(await fundAgentCredit('tdt_no_such_agent', 1), null)
+    await fundAgentCredit(id, 0, 'set')
     await query(`DELETE FROM agents WHERE id = $1`, [id])
   })
 })

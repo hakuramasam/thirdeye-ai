@@ -228,7 +228,7 @@ export async function chatCompletionsHandler(c: Context<AppEnv>) {
       // that never happened.
       if (reservedMicros > 0) {
         const refund = refundSplit(reservedMicros, reservedFromKey)
-        if (refund.toKey > 0) await creditKey(apiKey.id, refund.toKey)
+        if (refund.toKey > 0) await creditKey(apiKey.id, refund.toKey, { kind: 'refund', ref: 'stream-reserve-refund', actor: 'stream-accounting' })
         if (refund.toAccount > 0) await adjustCredit(user.id, refund.toAccount, 'stream-reserve-refund')
       }
       const status = err instanceof UpstreamError ? err.status : 500

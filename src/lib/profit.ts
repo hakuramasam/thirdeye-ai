@@ -162,6 +162,10 @@ export type GuardInput = {
   profit_usd_micros: number
   vault_stable_usd_micros: number
   outstanding_credit_usd_micros: number
+  agent_credit_ledger_drift_usd_micros?: number
+  api_key_credit_ledger_drift_usd_micros?: number
+  unpayable_recipient_count?: number
+  operating_costs_verified?: boolean
   opex_usd_micros?: number
   existing_status?: string
 }
@@ -192,6 +196,34 @@ export function distributionGuards(input: GuardInput): Guard[] {
       detail: 'Vault stablecoin does not cover outstanding prepaid credit, so it holds customer money rather than profit.',
     })
   }
+  if (input.operating_costs_verified !== true) {
+    guards.push({
+      code: 'operating_costs_unverified',
+      blocks: true,
+      detail: 'Gas and infrastructure costs were not explicitly measured for this period; verify both before distributing profit.',
+    })
+  }
+  if ((input.unpayable_recipient_count ?? 0) > 0) {
+    guards.push({
+      code: 'recipient_wallets_unconfigured',
+      blocks: true,
+      detail: `${input.unpayable_recipient_count} planned profit recipient(s) do not have a verified payout wallet.`,
+    })
+  }
+  if ((input.api_key_credit_ledger_drift_usd_micros ?? 0) !== 0) {
+    guards.push({
+      code: 'api_key_credit_ledger_drift',
+      blocks: true,
+      detail: 'API-key credit balances do not reconcile to their subledger; resolve the difference before distributing profit.',
+    })
+  }
+  if ((input.agent_credit_ledger_drift_usd_micros ?? 0) !== 0) {
+    guards.push({
+      code: 'agent_credit_ledger_drift',
+      blocks: true,
+      detail: 'Agent inference-credit balances do not reconcile to their subledger; resolve the difference before distributing profit.',
+    })
+  }
   if (input.existing_status === 'distributed') {
     guards.push({ code: 'already_distributed', blocks: true, detail: 'This period is already marked distributed.' })
   }
@@ -214,6 +246,12 @@ export type PeriodMeasurement = {
   cost_usd_micros: number
   profit_usd_micros: number
   outstanding_credit_usd_micros: number
+  agent_credit_usd_micros: number
+  agent_credit_ledger_usd_micros: number
+  agent_credit_ledger_drift_usd_micros: number
+  api_key_credit_usd_micros: number
+  api_key_credit_ledger_usd_micros: number
+  api_key_credit_ledger_drift_usd_micros: number
 }
 
 /**
@@ -251,7 +289,36 @@ export async function measurePeriod(
        FROM (SELECT sum(amount_usd_micros) AS bal FROM ledger GROUP BY user_id) t
       WHERE bal > 0`
   )
-  const keyCredit = await one(`SELECT coalesce(sum(credit_usd_micros), 0)::bigint AS credit FROM api_keys`)
+  // Key and agent balances are checked per owner: one negative pot must never net away
+  // another key or agent's positive prepaid liability.
+  const keyCredit = await one(`
+    WITH balances AS (SELECT id, credit_usd_micros AS balance FROM api_keys),
+    entries AS (SELECT api_key_id, sum(amount_usd_micros) AS balance FROM api_key_credit_ledger GROUP BY api_key_id),
+    joined AS (
+      SELECT coalesce(b.id, e.api_key_id) AS id,
+             coalesce(b.balance, 0)::bigint AS current_balance,
+             coalesce(e.balance, 0)::bigint AS ledger_balance
+        FROM balances b FULL JOIN entries e ON e.api_key_id = b.id
+    )
+    SELECT coalesce(sum(greatest(current_balance, 0)), 0)::bigint AS credit,
+           coalesce(sum(ledger_balance), 0)::bigint AS ledger_credit,
+           coalesce(sum(abs(current_balance - ledger_balance)), 0)::bigint AS drift
+      FROM joined`)
+  // Agent pots are also prepaid inference liabilities. Omitting them would let the
+  // distribution guard treat already-promised inference credit as distributable profit.
+  const agentCredit = await one(`
+    WITH balances AS (SELECT id, credit_usd_micros AS balance FROM agents),
+    entries AS (SELECT agent_id, sum(amount_usd_micros) AS balance FROM agent_credit_ledger GROUP BY agent_id),
+    joined AS (
+      SELECT coalesce(b.id, e.agent_id) AS id,
+             coalesce(b.balance, 0)::bigint AS current_balance,
+             coalesce(e.balance, 0)::bigint AS ledger_balance
+        FROM balances b FULL JOIN entries e ON e.agent_id = b.id
+    )
+    SELECT coalesce(sum(greatest(current_balance, 0)), 0)::bigint AS credit,
+           coalesce(sum(ledger_balance), 0)::bigint AS ledger_credit,
+           coalesce(sum(abs(current_balance - ledger_balance)), 0)::bigint AS drift
+      FROM joined`)
 
   const chatRevenue = Number(chat?.billed ?? 0)
   const runRevenue = Number(runs?.billed ?? 0)
@@ -260,7 +327,14 @@ export async function measurePeriod(
   const gas = Math.max(0, Math.round(opts.gasCostUsdMicros ?? 0))
   const infra = Math.max(0, Math.round(opts.infraCostUsdMicros ?? 0))
   const cost = providerCost + gas + infra
-  const outstandingCredit = Math.max(0, Number(liability?.credit ?? 0)) + Math.max(0, Number(keyCredit?.credit ?? 0))
+  const ledgerCredit = Math.max(0, Number(liability?.credit ?? 0))
+  const keyCreditMicros = Math.max(0, Number(keyCredit?.credit ?? 0))
+  const agentCreditMicros = Math.max(0, Number(agentCredit?.credit ?? 0))
+  const agentCreditLedgerMicros = Number(agentCredit?.ledger_credit ?? 0)
+  const agentCreditLedgerDriftMicros = Number(agentCredit?.drift ?? 0)
+  const apiKeyCreditLedgerMicros = Number(keyCredit?.ledger_credit ?? 0)
+  const apiKeyCreditLedgerDriftMicros = Number(keyCredit?.drift ?? 0)
+  const outstandingCredit = ledgerCredit + keyCreditMicros + agentCreditMicros
 
   return {
     period_start: from,
@@ -274,6 +348,12 @@ export async function measurePeriod(
     cost_usd_micros: cost,
     profit_usd_micros: revenue - cost,
     outstanding_credit_usd_micros: outstandingCredit,
+    agent_credit_usd_micros: agentCreditMicros,
+    agent_credit_ledger_usd_micros: agentCreditLedgerMicros,
+    agent_credit_ledger_drift_usd_micros: agentCreditLedgerDriftMicros,
+    api_key_credit_usd_micros: keyCreditMicros,
+    api_key_credit_ledger_usd_micros: apiKeyCreditLedgerMicros,
+    api_key_credit_ledger_drift_usd_micros: apiKeyCreditLedgerDriftMicros,
   }
 }
 

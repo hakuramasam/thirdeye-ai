@@ -37,7 +37,7 @@ async function creditVerified(
   if (intentId) {
     const it = await one('SELECT api_key_id FROM payment_intents WHERE id = $1 AND user_id = $2', [intentId, userId])
     if (it?.api_key_id) {
-      const keyCredit = await creditKey(it.api_key_id, usdMicros)
+      const keyCredit = await creditKey(it.api_key_id, usdMicros, { kind: 'deposit', ref: `${args.chain}:${args.txHash}`, actor: 'payment-verifier' })
       return { credited: true, to: 'key' as const, api_key_id: it.api_key_id, key_credit_usd_micros: keyCredit }
     }
   }
