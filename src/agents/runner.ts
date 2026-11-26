@@ -795,8 +795,8 @@ async function runAgentInner(
               if (!read.ok) {
                 result = `Tool error: artifact read ${read.code}: ${read.message}`
               } else {
-                result = `Artifact ${read.artifact.id} (${read.artifact.kind}, ${read.artifact.bytes} bytes)\\n${read.content}` +
-                  (read.truncated ? `\\n[more content available; next_offset=${read.next_offset}]` : '')
+                result = `Artifact ${read.artifact.id} (${read.artifact.kind}, ${read.artifact.bytes} bytes)\n${read.content}` +
+                  (read.truncated ? `\n[more content available; next_offset=${read.next_offset}]` : '')
               }
             } else if (mcpTools) {
               result = (await mcpTools.call(tc.function.name, args)).slice(0, MAX_TOOL_RESULT_CHARS)
