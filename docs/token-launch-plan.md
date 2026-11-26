@@ -1,13 +1,23 @@
 # Platform token (THIRDEYE): launch pipeline
 
-Status: pipeline wired, token not deployed. Nothing below spends funds or touches a chain until the
-parameters are signed off.
+Status: **superseded by the live launch, 2026-11-12.** THIRDEYE deployed on Base through Doppler with a
+fixed **1,000,000,000** supply, not the shape planned below.
+
+The figures in this document were never deployed and must not be read as current: a
+**50,000,000** pool, a **250,000,000** day-one airdrop, a **700,000,000** vault, and the 100B
+venue-fixed supply the earlier Clanker design implied. What actually exists, verified onchain:
+**200,000,000** THIRDEYE in the Uniswap v4 pool and **800,000,000** premint held by the token contract
+across immutable cliffed schedules, the earliest release being the 110,000,000 bucket on 2026-12-12.
+
+This document is kept as the design record. Sale eligibility is decided by
+[the sale policy](token-sale-policy.md) and by the chain, and by nothing in this file.
 
 ## Why the token exists
 
 One purpose only: let the people who actually consume Thirdeye settle in the platform's own unit, and
 give the usage metrics a public, verifiable surface. It is not a fundraising instrument. There is no
-pre-sale in this plan, and nothing here should be read as an investment offer.
+pre-sale in this plan, and nothing here should be read as an investment offer. Terms for any later sale of treasury
+holdings live in [the sale policy](token-sale-policy.md), not here.
 
 ## Decisions required before deploy
 
@@ -104,7 +114,8 @@ pricing source.
 ## Risks to state out loud
 
 - **Regulatory**: a token with a bonus for usage can look like an incentive or a security depending on
-  jurisdiction. Get real advice before any public sale or yield framing. This plan contains no sale.
+  jurisdiction. Get real advice before any public sale or yield framing. This plan contains no sale;
+  the standing terms for one live in [the sale policy](token-sale-policy.md).
 - **Thin-market loop**: if THIRDEYE deposits are credited at pool price, someone with pool control can
   inflate credits. The deposit cap and liquidity floor blunt it; they do not eliminate it.
 - **Accounting**: token revenue is not USD revenue. Ledger stays in USD micros; the token is an asset
@@ -313,7 +324,7 @@ is claim by hand, then sweep by script.
 
 ## Partner hub (live 2026-11-07, commit e108706)
 
-Private integration surface at `https://thirdeye-ai-alpha.vercel.app/partner`, gated
+Private integration surface at `https://thirdeyeai.fs.kg/partner`, gated
 server-side. No client-side gate exists anywhere.
 
 Access:

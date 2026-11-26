@@ -185,6 +185,7 @@ export function isDelivered(state: StageState | undefined): boolean {
 
 export type StageRefusalCode =
   | 'pipeline_unknown'
+  | 'recovery_unavailable'
   | 'pipeline_invalid'
   | 'pipeline_complete'
   | 'stage_in_flight'
@@ -193,10 +194,23 @@ export type StageRefusalCode =
   | 'dependency_unmet'
 
 export type StagePlan =
-  | { ok: true; stage: PipelineStage; index: number; attempt: number }
+  | { ok: true; stage: PipelineStage; index: number; attempt: number; rewoundFrom?: string }
   | { ok: false; code: StageRefusalCode; message: string }
 
 export const MAX_STAGE_ATTEMPTS = 2
+
+/**
+ * `on_failure` declarations that send work BACKWARDS, mapped to the stage they return to.
+ *
+ * These used to be labels the planner never honoured: a failed stage was simply re-attempted until
+ * its attempts ran out, so a pipeline declaring `back_to_build` behaved like a pipeline declaring
+ * nothing. The planner now performs the rewind, once per failure, to a strictly earlier stage.
+ */
+export const REWIND_TARGETS: Partial<Record<StageOnFailure, string>> = {
+  back_to_build: 'build',
+  back_to_patch: 'patch',
+  back_to_scope: 'scope',
+}
 
 /**
  * The single next move, or a refusal. Read top to bottom:
@@ -242,6 +256,35 @@ export function planNextStage(
         ok: false,
         code: 'stage_exhausted',
         message: `stage "${stage.id}" has failed ${failed} times, its limit; escalate instead of retrying`,
+      }
+    }
+    // Declared recovery: a stage that failed once and says `back_to_*` sends the work to the stage
+    // it names, so the fix happens where the defect is instead of the same step being re-attempted.
+    if (failed === 1) {
+      const targetId = stage.on_failure ? (REWIND_TARGETS[stage.on_failure] ?? null) : null
+      if (targetId !== null) {
+        const dest = doc.stages.find((s) => s.id === targetId)
+        if (!dest || doc.stages.indexOf(dest) >= index) {
+          return {
+            ok: false,
+            code: 'recovery_unavailable',
+            message: `stage "${stage.id}" declares ${stage.on_failure}, but "${targetId}" is not an earlier stage of this pipeline`,
+          }
+        }
+        const destState = ledger[dest.id]
+        const destStarted = destState?.started ?? 0
+        const destInFlight = destStarted - (destState?.completed ?? 0) - (destState?.failed ?? 0)
+        if (destInFlight > 0) {
+          return { ok: false, code: 'stage_in_flight', message: `stage "${dest.id}" is already running; wait for that report` }
+        }
+        if ((destState?.failed ?? 0) >= maxAttempts) {
+          return {
+            ok: false,
+            code: 'stage_exhausted',
+            message: `stage "${stage.id}" sent work back to "${dest.id}", which has already exhausted its attempts; escalate`,
+          }
+        }
+        return { ok: true, stage: dest, index: doc.stages.indexOf(dest), attempt: destStarted + 1, rewoundFrom: stage.id }
       }
     }
     if (failed > 0 && stage.on_failure === 'stop') {

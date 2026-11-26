@@ -14,6 +14,7 @@
  * and train everyone to ignore the channel.
  */
 
+import { createHash } from 'node:crypto'
 import { query, one } from '../db/index.js'
 import { newId } from '../lib/env.js'
 
@@ -241,7 +242,37 @@ export interface AuditResult {
   events: number
   findings: number
   created: number
+  /**
+   * Run ids that were handed to HERMES and actually answered, in dispatch order. A run that
+   * exists but failed is not a dispatch: it appears in `dispatch_attempt_run_id` instead.
+   */
   dispatched: string[]
+  /** Why nothing was handed to HERMES at all, when a dispatch was asked for. */
+  dispatch_skipped?: 'no_high_findings' | 'hermes_not_found' | 'owner_not_found'
+  /**
+   * Set when a run was attempted and did not succeed. `runner_failed` means it never started
+   * (the call threw); `runner_error` means it ran and came back unsuccessful, which the runner
+   * reports as a resolved result rather than a throw.
+   */
+  dispatch_error?: 'runner_failed' | 'runner_error'
+  /** The run id of a failed attempt, so its record can still be inspected. */
+  dispatch_attempt_run_id?: string
+  /** True when this call issued nothing because that run id had already been executed. */
+  dispatch_replayed?: boolean
+  /** Alert rows whose linking UPDATE failed. The run itself is unaffected and still reported. */
+  alert_link_error?: boolean
+}
+
+/**
+ * The run id for one dispatch, derived from the findings it carries.
+ *
+ * Same brief, same id, which is what makes a repeated audit harmless: `runAgent` inserts the run
+ * id or replays the recorded one, so a second call returns the first run instead of paying for
+ * another. Shaped like a uuid because every other run id is one and downstream readers assume it.
+ */
+export function dispatchRunId(keys: string[]): string {
+  const h = createHash('sha256').update([...keys].sort().join('|')).digest('hex')
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`
 }
 
 /**
@@ -304,29 +335,102 @@ export async function auditAgents(opts: {
   }
 
   const dispatched: string[] = []
-  if (opts.dispatch && opts.hermesId && opts.ownerUserId) {
+  let dispatchSkipped: AuditResult['dispatch_skipped']
+  let dispatchError: AuditResult['dispatch_error']
+  let dispatchAttemptRunId: string | undefined
+  let dispatchReplayed: boolean | undefined
+  let alertLinkError: boolean | undefined
+
+  if (opts.dispatch) {
     const cap = Math.min(opts.maxDispatch ?? 3, 3)
     const worst = fresh.filter((f) => f.severity === 'high').slice(0, cap)
-    if (worst.length > 0) {
-      const { runAgent } = await import('./runner.js')
-      const hermes = await one(`SELECT * FROM agents WHERE id = $1`, [opts.hermesId])
-      const owner = await one(`SELECT * FROM users WHERE id = $1`, [opts.ownerUserId ?? (hermes as any).user_id])
-      if (hermes && owner) {
-        const brief = [
-          'Monitoring raised findings against your team. Decide what to fix and which agent owns it.',
-          'You hold no authority to merge or deploy: your output is a decision plus a task, or a pull request.',
-          '',
-          ...worst.map((f, i) => `${i + 1}. [${f.code}] ${f.agent_id ?? 'team'}: ${f.summary}`),
-          '',
-          'For each: state whether it is a real defect or noise, what the fix is, and who does it. Keep it short.',
-        ].join('\n')
-        const res: any = await runAgent(hermes as any, brief, owner as any, { idempotencyKey: `monitor:${Date.now()}` } as any)
-        dispatched.push(String(res?.runId ?? 'dispatched'))
+    if (worst.length === 0) {
+      dispatchSkipped = 'no_high_findings'
+    } else {
+      // HERMES owns the team, so its owner is the user this brief belongs to. Requiring the caller
+      // to name that user made a real dispatch look like an empty one: the admin route passes only
+      // the orchestrator id, so `dispatch: true` answered `dispatched: []` while alerts were being
+      // created, and no finding ever reached HERMES. Fail closed if either row is missing, rather
+      // than inventing an owner.
+      const hermesId = opts.hermesId ?? 'tdt_hermes'
+      const hermes: any = await one(`SELECT * FROM agents WHERE id = $1`, [hermesId])
+      if (!hermes) {
+        dispatchSkipped = 'hermes_not_found'
+      } else {
+        const ownerId = opts.ownerUserId ?? hermes.user_id ?? null
+        const owner: any = ownerId ? await one(`SELECT * FROM users WHERE id = $1`, [ownerId]) : null
+        if (!owner) {
+          dispatchSkipped = 'owner_not_found'
+        } else {
+          const keys = worst.map(dedupeKey)
+          const runId = dispatchRunId(keys)
+          const brief = [
+            'Monitoring raised findings against your team. Decide what to fix and which agent owns it.',
+            'You hold no authority to merge or deploy: your output is a decision plus a task, or a pull request.',
+            '',
+            ...worst.map((f, i) => `${i + 1}. [${f.code}] ${f.agent_id ?? 'team'}: ${f.summary}`),
+            '',
+            'For each: state whether it is a real defect or noise, what the fix is, and who does it. Keep it short.',
+          ].join('\n')
+          // Only the orchestrator call is guarded here. Alert linking used to sit inside the same
+          // try, so a failed bookkeeping UPDATE reported a successful run as a runner failure and
+          // dropped its run id entirely.
+          let res: any = null
+          try {
+            const { runAgent } = await import('./runner.js')
+            res = await runAgent(hermes, brief, owner, { runId })
+          } catch {
+            // The audit still returns its findings; only the handoff is reported as failed.
+            dispatchError = 'runner_failed'
+            dispatchAttemptRunId = runId
+          }
+
+          if (res) {
+            dispatchReplayed = Boolean(res.replayed) || undefined
+            // runAgent resolves { status: 'error' } instead of throwing, so the old code pushed a
+            // failed run into `dispatched` and the audit said the findings had reached HERMES when
+            // nothing had answered. The run row exists either way, so measure it rather than
+            // trusting the call to have thrown.
+            if (isSuccess(res.status)) {
+              dispatched.push(runId)
+            } else {
+              dispatchError = 'runner_error'
+              // Only a non-success run is an *attempt*: it names the run that failed to answer, so
+              // reporting it on a successful handoff made consumers read a delivered dispatch as a
+              // failed one.
+              dispatchAttemptRunId = runId
+            }
+          }
+
+          // Record which run attempted which alert, so the trail goes both ways whatever the
+          // outcome. Kept out of the runner guard: a bookkeeping failure must not change what we
+          // report about the run.
+          // Each link is attempted independently: one failed UPDATE used to abort the loop and
+          // leave every later alert unlinked, which hid the run from exactly the alerts it answered.
+          for (const key of keys) {
+            try {
+              await query(`UPDATE agent_alerts SET dispatch_run_id = $1 WHERE dedupe_key = $2`, [runId, key])
+            } catch {
+              alertLinkError = true
+            }
+          }
+        }
       }
     }
   }
 
-  return { runs: runs.length, events: events.length, findings: findings.length, created, dispatched }
+  return {
+    runs: runs.length,
+    events: events.length,
+    findings: findings.length,
+    created,
+    dispatched,
+    ...(dispatchSkipped ? { dispatch_skipped: dispatchSkipped } : {}),
+    ...(dispatchError ? { dispatch_error: dispatchError } : {}),
+    ...(dispatchAttemptRunId ? { dispatch_attempt_run_id: dispatchAttemptRunId } : {}),
+    ...(dispatchReplayed ? { dispatch_replayed: true } : {}),
+    ...(alertLinkError ? { alert_link_error: true } : {}),
+  }
 }
 
 /** Record one tool call. Never throws: logging must not break a run the owner already paid for. */

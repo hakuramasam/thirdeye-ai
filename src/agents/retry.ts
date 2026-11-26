@@ -25,8 +25,16 @@ export type RetryOptions = {
   attempts?: number
   /** Ceiling on time spent waiting across all attempts, so the run still returns. */
   totalWaitMs?: number
+  /**
+   * Absolute epoch ms a wait may not end after: the caller's remaining function lifetime.
+   * A budget alone is not enough when a run makes several calls, because each call would spend
+   * the whole budget again and the last one would return after the platform had already killed it.
+   * The caller owns the headroom: it is the caller that knows the ceiling.
+   */
+  deadlineMs?: number
   sleep?: (ms: number) => Promise<void>
 }
+
 
 /** Call `fn`, waiting out a rate limit the provider told us about, up to a fixed budget. */
 export async function callWithRateLimitRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}): Promise<T> {
@@ -42,9 +50,15 @@ export async function callWithRateLimitRetry<T>(fn: () => Promise<T>, opts: Retr
       const message = String(e?.message ?? e)
       if (!isRateLimitError(message) || attempt >= attempts) throw e
       const wait = retryDelayMs(message) ?? 5_000
-      if (waited + wait > totalWaitMs) throw e
+      const budgetLeft = totalWaitMs - waited
+      const deadlineLeft = opts.deadlineMs == null ? Infinity : opts.deadlineMs - Date.now()
+      // Written as "not provably inside" rather than "outside" so a NaN budget or deadline
+      // refuses the wait instead of disabling both caps silently.
+      if (!(wait <= Math.min(budgetLeft, deadlineLeft))) throw e
       waited += wait
       await sleep(wait)
+      // A sleep can resolve late. Never issue another provider call on a deadline already spent.
+      if (!(Date.now() < (opts.deadlineMs ?? Infinity))) throw e
     }
   }
 }

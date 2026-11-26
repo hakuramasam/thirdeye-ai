@@ -1,0 +1,165 @@
+{
+  "id": "job-resolution",
+  "version": 1,
+  "summary": "How a FEATURE job is resolved: intake, success definition, design, parallel build, independent test, adversarial review, release readiness, production release, acceptance. The wallet-dashboard job is the worked example. Defects and incidents follow their own pipelines (bugfix adds patch/diagnose; incident adds containment BEFORE diagnosis), so this sequence is not claimed to cover them.",
+  "example_job": {
+    "requested_by": "founder",
+    "text": "Build a wallet management dashboard for Thirdeye, with EVM and Solana support.",
+    "classified_as": "feature",
+    "pipeline": "team/pipelines/feature.pipeline.json"
+  },
+  "steps": [
+    {
+      "n": 1,
+      "id": "intake",
+      "owner": "tdt_hermes",
+      "title": "Intake and decomposition",
+      "does": "Identify the domain, classify the job (feature, bugfix or incident), set the priority, and create one subtask per owning unit.",
+      "consumes": [],
+      "produces": "task_plan",
+      "gate": "Every subtask names exactly one owner and one dependency; the job names the pipeline it follows.",
+      "example": "Domain is wallet management, class is feature, priority set; subtasks created for product, architect, wallet, backend, frontend, qa, sentinel, devops.",
+      "parallel_with": []
+    },
+    {
+      "n": 2,
+      "id": "define_success",
+      "owner": "tdt_product",
+      "title": "Define what success means",
+      "does": "Write the acceptance criteria as observations a tester can check, and state what is out of scope.",
+      "consumes": [
+        "task_plan"
+      ],
+      "produces": "acceptance_criteria",
+      "gate": "Each criterion is an observable outcome and at least one out-of-scope line exists.",
+      "example": "Supported wallet types, connection flows, balances, transaction history and account-linking requirements.",
+      "parallel_with": []
+    },
+    {
+      "n": 3,
+      "id": "design",
+      "owner": "tdt_architect",
+      "title": "Design the implementation",
+      "does": "Decide the adapters, API contract, data model, ownership verification and security boundaries before code exists.",
+      "consumes": [
+        "acceptance_criteria"
+      ],
+      "produces": "design",
+      "gate": "An API contract the frontend can build against, a data model, and the failure modes the design accepts.",
+      "example": "Wallet adapters for EVM and Solana, APIs, data models, ownership verification and security boundaries.",
+      "parallel_with": []
+    },
+    {
+      "n": 4,
+      "id": "build",
+      "owner": "tdt_backend",
+      "title": "Build in parallel where dependencies permit",
+      "does": "Wallet domain rules, the service and the dashboard are built against the agreed API contract at the same time, each behind a pull request.",
+      "consumes": [
+        "design",
+        "acceptance_criteria"
+      ],
+      "produces": "pull_request",
+      "gate": "Each pull request touches only its unit's owned paths and none touches main.",
+      "example": "Wallet specialist handles the financial-domain rules, backend builds the service, frontend builds the dashboard.",
+      "parallel_with": [
+        "tdt_blockchain",
+        "tdt_frontend"
+      ],
+      "contributors": [
+        "tdt_blockchain",
+        "tdt_backend",
+        "tdt_frontend"
+      ],
+      "money_boundary": "tdt_blockchain may specify and review money paths but any transaction or signer change needs the owner."
+    },
+    {
+      "n": 5,
+      "id": "test",
+      "owner": "tdt_qa",
+      "title": "Test the entire feature",
+      "does": "Verify against the acceptance criteria, not only the diff, marking each met or unmet with its evidence.",
+      "consumes": [
+        "pull_request",
+        "acceptance_criteria"
+      ],
+      "produces": "test_report",
+      "gate": "Wallet linking, authentication, chain switching, wrong-network handling, unauthorized access and UI behaviour each have a result and the suite count is attached.",
+      "example": "Linking, authentication, chain switching, incorrect network handling, unauthorized access and UI behaviour.",
+      "parallel_with": []
+    },
+    {
+      "n": 6,
+      "id": "challenge",
+      "owner": "tdt_sentinel",
+      "title": "Challenge the implementation",
+      "does": "Attack the design and the diff: ownership proofs, signatures, secret handling, transaction authorization and data isolation.",
+      "consumes": [
+        "design",
+        "pull_request"
+      ],
+      "produces": "review",
+      "gate": "Named findings with severity and an exploit path, or an explicit statement that there are none, plus a negative test that proves each refusal.",
+      "example": "Wallet ownership, signatures, secret handling, transaction authorization and data isolation.",
+      "parallel_with": []
+    },
+    {
+      "n": 7,
+      "id": "release_readiness",
+      "owner": "tdt_devops",
+      "title": "Release readiness",
+      "does": "Verify integration, CI, a preview deployment, rollback readiness and release authorization.",
+      "consumes": [
+        "test_report",
+        "review"
+      ],
+      "produces": "release_plan",
+      "gate": "CI green on the exact head, a preview that serves the change, a rollback step written down, and the owner's approval recorded before production.",
+      "example": "Verify integration, CI, preview deployment, rollback readiness and release authorization.",
+      "contributors": [
+        "tdt_architect",
+        "tdt_devops"
+      ],
+      "parallel_with": []
+    },
+    {
+      "n": 8,
+      "id": "release",
+      "owner": "tdt_architect",
+      "title": "Release to production",
+      "does": "Promote the verified change and prove it is live: merge, deployment id, sha matching HEAD, health check green.",
+      "consumes": [
+        "release_plan"
+      ],
+      "produces": "release",
+      "gate": "Deployment id and sha matching HEAD, plus a health check on the deployed path. Needs the owner's approval.",
+      "example": "Merge to main, Vercel production deployment READY, sha matching HEAD, healthz 200.",
+      "parallel_with": []
+    },
+    {
+      "n": 9,
+      "id": "accept_close",
+      "owner": "tdt_hermes",
+      "title": "Accept and close",
+      "does": "Confirm every acceptance criterion has evidence, confirm the production release actually happened, update the task, and schedule any follow-up work that remains.",
+      "consumes": [
+        "acceptance_criteria",
+        "test_report",
+        "review",
+        "release"
+      ],
+      "produces": "closure",
+      "gate": "Every acceptance criterion points at the evidence that decided it, including the deployment id and sha that prove the production release; unmet criteria become named follow-up tasks.",
+      "example": "All acceptance criteria have evidence, the task is updated and remaining follow-up work is scheduled.",
+      "parallel_with": []
+    }
+  ],
+  "rules": {
+    "single_owner": "Each step has one accountable owner; contributors help but do not share accountability.",
+    "no_self_acceptance": "The unit that builds never performs steps 5, 6 or 8 on its own work.",
+    "failure_returns": "A failed gate returns the job to the producing step with the failure attached; it is never skipped or silently passed.",
+    "escalation": "Money, merge, deploy, deletion, public claims and membership changes stop at the owner.",
+    "evidence_over_report": "HERMES closes on artifacts and run evidence, not on a unit's statement that it is done.",
+    "scope": "Feature jobs only. A defect or an incident is routed to its own pipeline by HERMES at intake."
+  }
+}
