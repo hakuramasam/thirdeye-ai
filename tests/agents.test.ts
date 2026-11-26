@@ -9,7 +9,7 @@ import { z } from 'zod'
 const { migrate, query, one } = await import('../src/db/index.js')
 const { createSessionToken } = await import('../src/lib/session.js')
 const { isCronDue, parseCron } = await import('../src/agents/cron.js')
-const { createMcpTools } = await import('../src/agents/mcp.js')
+const { createMcpTools, resolveMcpHeaders } = await import('../src/agents/mcp.js')
 const { runAgent } = await import('../src/agents/runner.js')
 const { registerAgentsRoutes, registerCronRoute } = await import('../src/routes/agents.js')
 import type { AppEnv } from '../src/lib/types.js'
@@ -36,6 +36,11 @@ describe('Agents Module C Tests', () => {
         { description: 'Get the current weather for a city', inputSchema: { city: z.string().describe('City name') } },
         async ({ city }) => ({ content: [{ type: 'text', text: JSON.stringify({ city, temp_c: 30, condition: 'sunny' }) }] })
       )
+      mcp.registerTool(
+        'forecast',
+        { description: 'Get a forecast for a city', inputSchema: { city: z.string().describe('City name') } },
+        async ({ city }) => ({ content: [{ type: 'text', text: JSON.stringify({ city, forecast: 'clear' }) }] })
+      )
       return mcp
     }
     // Stateless: a fresh transport per request (SDK requirement in stateless mode)
@@ -56,6 +61,42 @@ describe('Agents Module C Tests', () => {
       testUser.id, testUser.wallet, testUser.role,
     ])
     token = await createSessionToken(testUser)
+  })
+
+  it('(a0) platform MCP auth resolves runtime secrets only for the official host', () => {
+    const agentMail = resolveMcpHeaders(
+      { name: 'agentmail', url: 'https://mcp.agentmail.to/mcp', auth: { provider: 'agentmail' } },
+      { AGENTMAIL_API_KEY: 'test-agentmail-key' }
+    )
+    assert.deepEqual(agentMail, { 'x-api-key': 'test-agentmail-key' })
+
+    const cloudflare = resolveMcpHeaders(
+      { name: 'cloudflare', url: 'https://mcp.cloudflare.com/mcp', auth: { provider: 'cloudflare' } },
+      { CLOUDFLARE_API_TOKEN: 'test-cloudflare-token' }
+    )
+    assert.deepEqual(cloudflare, { Authorization: 'Bearer test-cloudflare-token' })
+
+    assert.throws(
+      () => resolveMcpHeaders(
+        { name: 'agentmail', url: 'https://attacker.example/mcp', auth: { provider: 'agentmail' } },
+        { AGENTMAIL_API_KEY: 'test-agentmail-key' }
+      ),
+      /restricted to https:\/\/mcp\.agentmail\.to/
+    )
+    assert.throws(
+      () => resolveMcpHeaders(
+        { name: 'agentmail', url: 'https://mcp.agentmail.to/mcp', auth: { provider: 'agentmail' } },
+        {}
+      ),
+      /requires runtime secret AGENTMAIL_API_KEY/
+    )
+    assert.throws(
+      () => resolveMcpHeaders(
+        { name: 'agentmail', url: 'https://mcp.agentmail.to/mcp', headers: { 'x-api-key': 'literal-secret' }, auth: { provider: 'agentmail' } },
+        { AGENTMAIL_API_KEY: 'test-agentmail-key' }
+      ),
+      /must come from the runtime secret reference/
+    )
   })
 
   it('(a) cron unit tests', () => {
@@ -79,10 +120,11 @@ describe('Agents Module C Tests', () => {
   it('(b) runAgent with real MCP server + injected fake llm', async () => {
     // The SSRF guard refuses loopback by default (that is the point of it), so the test
     // server has to be allowlisted explicitly rather than the guard being relaxed.
-    const mcpTools = await createMcpTools([{ name: 'test', url: mcpUrl }], { allowHosts: ['127.0.0.1'] })
+    const mcpTools = await createMcpTools([{ name: 'test', url: mcpUrl, allowedTools: ['weather'] }], { allowHosts: ['127.0.0.1'] })
     assert.equal(mcpTools.errors.length, 0)
     const weatherTool = mcpTools.tools.find((t) => t.function.name === 'mcp_test_weather')
     assert.ok(weatherTool, 'weather tool listed with namespace')
+    assert.equal(mcpTools.tools.some((t) => t.function.name === 'mcp_test_forecast'), false, 'unapproved MCP tools are not exposed')
 
     const calls: any[] = []
     let n = 0
