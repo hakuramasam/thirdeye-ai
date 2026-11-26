@@ -5,6 +5,7 @@
 // the strict EIP-4361 parser could not read (CRLF endings, a browser that re-serialises the text),
 // and a domain in the message that did not match the host the request arrived on (a proxy browser
 // or a wallet in-app browser presenting a different location than the request it just made).
+process.env.PGLITE_MODE = '1'
 process.env.PGLITE_DIR = 'memory://'
 delete process.env.DATABASE_URL
 delete process.env.DATABASE_URL_UNPOOLED
@@ -35,6 +36,7 @@ function buildSiwe(opts: {
   eol?: string
   /** Drop the fields a strict parser requires, to force the tolerant path. */
   minimal?: boolean
+  chainId?: number | null
 }): string {
   const lines = [
     `${opts.domain ?? HOST} wants you to sign in with your Ethereum account:`,
@@ -44,8 +46,9 @@ function buildSiwe(opts: {
     '',
   ]
   if (!opts.minimal) {
-    lines.push('URI: https://' + (opts.domain ?? HOST), 'Version: 1', 'Chain ID: 8453')
+    lines.push('URI: https://' + (opts.domain ?? HOST), 'Version: 1')
   }
+  if (opts.chainId !== null) lines.push(`Chain ID: ${opts.chainId ?? 8453}`)
   lines.push(`Nonce: ${opts.nonce}`, `Issued At: ${new Date().toISOString()}`)
   return lines.join(opts.eol ?? '\n')
 }
@@ -164,7 +167,7 @@ test('a signature over the normalised text is accepted too, since some wallets r
   assert.equal(r.status, 200, JSON.stringify(r.body))
 })
 
-test('a message missing EIP-4361 fields signs in, and the tolerant path is recorded', async () => {
+test('a message missing optional EIP-4361 fields signs in only when chain ID is still present', async () => {
   const app = makeApp()
   const { nonce, domain } = await issueNonce(app, '203.0.113.14')
   const message = buildSiwe({ nonce, domain: domain ?? HOST, minimal: true })
@@ -175,6 +178,26 @@ test('a message missing EIP-4361 fields signs in, and the tolerant path is recor
   assert.equal(row.outcome, 'accepted')
   assert.equal(row.reason, 'lenient_accepted')
   assert.equal(row.lenient, true)
+})
+
+test('a signed SIWE message with an unsupported chain ID is rejected', async () => {
+  const app = makeApp()
+  const { nonce } = await issueNonce(app, '203.0.113.40')
+  const message = buildSiwe({ nonce, chainId: 1 })
+  const signature = await account.signMessage({ message })
+  const r = await verify(app, '203.0.113.40', message, signature)
+  assert.equal(r.status, 400)
+  assert.match(r.body.error.message, /supported chain ID/)
+})
+
+test('a lenient SIWE message without a chain ID is rejected', async () => {
+  const app = makeApp()
+  const { nonce } = await issueNonce(app, '203.0.113.41')
+  const message = buildSiwe({ nonce, minimal: true, chainId: null })
+  const signature = await account.signMessage({ message })
+  const r = await verify(app, '203.0.113.41', message, signature)
+  assert.equal(r.status, 400)
+  assert.match(r.body.error.message, /supported chain ID/)
 })
 
 test('a message naming another site is refused, with the reason, and recorded', async () => {

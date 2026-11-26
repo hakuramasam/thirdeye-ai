@@ -109,9 +109,14 @@ test('a serverless boot with no connection string is refused, not silently run i
 
 test('a production boot without a connection string is refused even off serverless', () => {
   assert.equal(validateDatabase({ databaseUrl: '', nodeEnv: 'production' }).length, 1)
+  assert.equal(validateDatabase({ databaseUrl: '', nodeEnv: 'production', pgliteEnabled: true }).length, 1, 'PGlite opt-in never makes production safe without Postgres')
   // Local work and the test suite run the file-backed database on purpose.
-  assert.deepEqual(validateDatabase({ databaseUrl: '', nodeEnv: 'development' }), [])
-  assert.deepEqual(validateDatabase({ databaseUrl: '', isServerless: false }), [])
+  assert.deepEqual(validateDatabase({ databaseUrl: '', nodeEnv: 'development', pgliteEnabled: true }), [])
+  assert.deepEqual(validateDatabase({ databaseUrl: '', isServerless: false, pgliteEnabled: true }), [])
+  const implicit = validateDatabase({ databaseUrl: '', nodeEnv: 'development' })
+  assert.equal(implicit.length, 1)
+  assert.equal(implicit[0].name, 'PGLITE_MODE')
+  assert.match(implicit[0].problem, /PGLITE_MODE=1/)
 })
 
 test('a real connection string passes, and a wrong scheme does not', () => {
@@ -249,7 +254,7 @@ test('the probe answers against a live database and is bounded when there is non
        })`,
     ],
     {
-      env: { ...process.env, DATABASE_URL: '', PREVIEW_DATABASE_URL: '', PGLITE_DIR: 'memory://' },
+      env: { ...process.env, DATABASE_URL: '', PREVIEW_DATABASE_URL: '', PGLITE_MODE: '1', PGLITE_DIR: 'memory://' },
       encoding: 'utf8',
       timeout: 60_000,
     }
@@ -276,6 +281,7 @@ test('the probe answers against a live database and is bounded when there is non
         ...process.env,
         DATABASE_URL: 'postgres://probeuser:probesecret@127.0.0.1:1/probedb',
         PREVIEW_DATABASE_URL: '',
+        PGLITE_MODE: '1',
         PGLITE_DIR: 'memory://',
       },
       encoding: 'utf8',
@@ -328,4 +334,44 @@ test('a deployment whose database refuses connections reports not-ready, without
 
   // A request that needs the database still fails loudly rather than serving an empty one.
   assert.notEqual(out['/api/v1/models'].status, 200)
+})
+
+
+test('database access fails closed when neither Postgres nor explicit PGlite mode is configured', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '-e',
+      `import('./src/db/index.ts').then(async (m) => {
+         const mode = m.dbMode()
+         try {
+           await m.query('SELECT 1')
+           console.log(JSON.stringify({ mode, query: 'unexpected_success' }))
+         } catch (e) {
+           console.log(JSON.stringify({ mode, error: String(e?.message ?? e) }))
+         }
+       })`,
+    ],
+    {
+      env: {
+        ...process.env,
+        DATABASE_URL: '',
+        PREVIEW_DATABASE_URL: '',
+        PGLITE_MODE: '',
+        NODE_ENV: 'development',
+        VERCEL: '',
+      },
+      encoding: 'utf8',
+      timeout: 60_000,
+    }
+  )
+  assert.equal(result.status, 0, result.stderr)
+  const line = String(result.stdout || '').trim().split('\\n').filter(Boolean).pop() || '{}'
+  const out = JSON.parse(line) as { mode: string; error?: string; query?: string }
+  assert.equal(out.mode, 'unconfigured')
+  assert.match(out.error ?? '', /PGLITE_MODE=1/)
+  assert.notEqual(out.query, 'unexpected_success')
 })

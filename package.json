@@ -12,8 +12,8 @@
     "build:web": "vite build",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts",
-    "test:file": "tsx --test",
+    "test": "node scripts/test-with-pglite.mjs",
+    "test:file": "node scripts/test-with-pglite.mjs",
     "agent:platforms:check": "node scripts/validate-agent-platforms.mjs"
   },
   "dependencies": {

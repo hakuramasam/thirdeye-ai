@@ -123,7 +123,10 @@ export async function signInWith(provider: Eip1193Provider): Promise<{ user: Use
   const address = accounts?.[0]
   if (!address) throw new Error('No account returned by wallet')
   const chainIdHex = (await provider.request({ method: 'eth_chainId' })) as string
-  const chainId = parseInt(chainIdHex, 16) || 8453
+  const chainId = Number.parseInt(chainIdHex, 16)
+  if (!Number.isSafeInteger(chainId) || !chainById(chainId)) {
+    throw new Error('Switch your wallet to Base or Robinhood Chain before signing in')
+  }
   // The server returns the domain it sees THIS request on. Use it in preference to
   // window.location: a mobile wallet browser or a data-saving proxy can present a different
   // location than the very request it just made, and a message naming the wrong site is refused.

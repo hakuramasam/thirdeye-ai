@@ -37,7 +37,9 @@ export const env = {
   databaseUrl: process.env.PREVIEW_DATABASE_URL || process.env.DATABASE_URL || '',
   /** Which name supplied databaseUrl, so a refusal tells the operator what to change. */
   databaseUrlVar: process.env.PREVIEW_DATABASE_URL ? 'PREVIEW_DATABASE_URL' : 'DATABASE_URL',
-  pgliteDir: process.env.PGLITE_DIR ?? (process.env.VERCEL ? 'memory://' : '.data/thirdeye'),
+  /** Embedded database is only available when explicitly selected for local/test work. */
+  pgliteEnabled: process.env.PGLITE_MODE === '1',
+  pgliteDir: process.env.PGLITE_DIR ?? '.data/thirdeye',
 
   sessionSecret: process.env.SESSION_SECRET || 'thirdeye-dev-session-secret',
   masterKey: process.env.MASTER_KEY || 'thirdeye-dev-master-key',
@@ -250,6 +252,7 @@ export const configProblems: SecretProblem[] = [
     databaseUrlVar: env.databaseUrlVar,
     isServerless: env.isServerless,
     nodeEnv: env.nodeEnv,
+    pgliteEnabled: env.pgliteEnabled,
   }),
 ]
 
