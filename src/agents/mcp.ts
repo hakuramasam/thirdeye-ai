@@ -53,7 +53,10 @@ export function resolveMcpHeaders(
 
   const policy = srv.auth.provider === 'agentmail'
     ? { host: 'mcp.agentmail.to', envName: 'AGENTMAIL_API_KEY', header: 'x-api-key', format: (value: string) => value }
-    : { host: 'mcp.cloudflare.com', envName: 'CLOUDFLARE_API_TOKEN', header: 'Authorization', format: (value: string) => `Bearer ${value}` }
+    : srv.auth.provider === 'cloudflare'
+      ? { host: 'mcp.cloudflare.com', envName: 'CLOUDFLARE_API_TOKEN', header: 'Authorization', format: (value: string) => `Bearer ${value}` }
+      : null
+  if (!policy) throw new Error(`Unsupported MCP auth provider for '${srv.name}'`)
 
   let url: URL
   try {
@@ -61,8 +64,8 @@ export function resolveMcpHeaders(
   } catch {
     throw new Error(`MCP auth for '${srv.name}' requires a valid HTTPS URL`)
   }
-  if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== policy.host) {
-    throw new Error(`MCP auth provider '${srv.auth.provider}' is restricted to https://${policy.host}/`)
+  if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== policy.host || url.pathname !== '/mcp' || url.search || url.hash) {
+    throw new Error(`MCP auth provider '${srv.auth.provider}' is restricted to https://${policy.host}/mcp`)
   }
   if (Object.keys(headers).some((name) => name.toLowerCase() === policy.header.toLowerCase())) {
     throw new Error(`MCP auth header '${policy.header}' must come from the runtime secret reference, not agent configuration`)
@@ -109,7 +112,8 @@ export async function createMcpTools(
         }
         const allowedTools = srv.allowedTools === undefined ? null : new Set(srv.allowedTools)
         const transport = new StreamableHTTPClientTransport(new URL(srv.url), {
-          requestInit: headers ? { headers } : undefined,
+          // Authenticated platform MCP calls must never forward credentials through a redirect.
+          requestInit: headers ? { headers, redirect: 'error' } : undefined,
         })
         await client.connect(transport)
         const res = await client.listTools()
