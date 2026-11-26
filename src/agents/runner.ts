@@ -18,6 +18,7 @@ import { emitAgentRunSpan, traceIdFrom, spanIdFrom } from '../telemetry/langfuse
 import { paidFetch } from './x402.js'
 import { REPO_TOOL, runRepoTool, hasRepoAccess } from './repo-tools.js'
 import { REPO_WRITE_TOOL, runRepoWrite } from './repo-write.js'
+import { ROLE_TOOLS, isRoleToolName, runRoleTool } from './role-tools.js'
 import { logRunEvent } from './monitor.js'
 import {
   newCorrelationId,
@@ -477,6 +478,18 @@ async function runAgentInner(
   const canWrite = deps.allowWrite ?? ((agent as any).repo_access === 'write')
   if (hasRepoAccess((agent as any).repo_access)) tools.push(REPO_TOOL)
   if (canWrite) tools.push(REPO_WRITE_TOOL)
+  // The four verbs every capability pack assumes: run the suite, read CI, open the pull request,
+  // check the deploy. Opening a pull request creates something, so it needs the same write
+  // authority as repo_write; the three reads ride on repo read access.
+  if (hasRepoAccess((agent as any).repo_access)) {
+    for (const roleTool of ROLE_TOOLS) {
+      if (roleTool.requiresWrite && !canWrite) continue
+      tools.push({
+        type: 'function' as const,
+        function: { name: roleTool.name, description: roleTool.description, parameters: roleTool.parameters },
+      })
+    }
+  }
 
   try {
     const messages: any[] = [
@@ -567,6 +580,14 @@ async function runAgentInner(
               result = await runRepoWrite(args)
             } else if (tc.function.name === 'repo_read' && hasRepoAccess((agent as any).repo_access)) {
               result = await runRepoTool(args)
+            } else if (
+              isRoleToolName(tc.function.name) &&
+              hasRepoAccess((agent as any).repo_access) &&
+              // open_pull_request is only offered when canWrite, so a call here without that
+              // grant falls through to the refusal below instead of creating a pull request.
+              (tc.function.name !== 'open_pull_request' || canWrite)
+            ) {
+              result = JSON.stringify(await runRoleTool(tc.function.name, args)).slice(0, MAX_TOOL_RESULT_CHARS)
             } else if (tc.function.name === 'http_fetch' && agent.x402_enabled) {
               const sellers = typeof agent.x402_allowed_sellers === 'string'
                 ? JSON.parse(agent.x402_allowed_sellers || '[]')
@@ -785,6 +806,14 @@ async function runAgentInner(
             } else if (tc.function.name === 'http_fetch') {
               denied = 'http_fetch requires x402 to be enabled'
               result = `Refused: http_fetch is disabled for this agent.`
+            } else if (isRoleToolName(tc.function.name)) {
+              const writes = tc.function.name === 'open_pull_request'
+              denied = writes
+                ? 'open_pull_request requires write authority, which this run does not hold'
+                : `${tc.function.name} requires repo access on this agent`
+              result = writes
+                ? 'Refused: open_pull_request needs write authority for this run. Put the proposed change in your report instead.'
+                : `Refused: ${tc.function.name} needs repo access on this agent.`
             } else if (mcpTools) {
               result = (await mcpTools.call(tc.function.name, args)).slice(0, MAX_TOOL_RESULT_CHARS)
             } else {
