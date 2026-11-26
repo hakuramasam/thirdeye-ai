@@ -21,13 +21,13 @@ const SITE = 'https://thirdeyeai.fs.kg'
 /**
  * The project's official contact address, published here on purpose.
  *
- * Token listings ask for an address on the project's own domain. The project domain is a
- * served host, and mail is handled on AgentMail's public domain by choice rather than because the
- * domain cannot receive mail: a mailbox there would need MX records and ongoing maintenance. Publishing it on this page is what makes it verifiable: a reviewer can see the
- * address the project claims, on the project's own site, next to the contract and the creator
- * address it belongs to. Keep this value in sync with any listing submission.
+ * Token listings ask for an address on the project's own domain. This mailbox uses that
+ * domain; do not represent it as operational until AgentMail domain ownership, inbound routing,
+ * outbound delivery, MX, SPF, DKIM and DMARC have all been verified. Publishing the address here
+ * identifies the intended contact but is not evidence that mail delivery is configured. Keep this
+ * value in sync with any listing submission.
  */
-export const PROJECT_EMAIL = 'thirdeye-ai@agentmail.to'
+export const PROJECT_EMAIL = 'team@thirdeyeai.fs.kg'
 const OG_DESCRIPTION = 'Pay per call, not per seat. OpenAI-compatible inference, wallet-native accounts, USDC credits.'
 
 /**
@@ -531,8 +531,8 @@ const CONTACT = `
   <div class="card"><h3>Security and abuse</h3><p>Vulnerability reports, key exposure, and reports of the platform being used to attack something else.</p></div>
   <div class="card"><h3>Partnerships</h3><p>First contact for barter and integration enquiries. Terms already published at <a href="/partnerships">Partnerships</a>.</p></div>
 </div>
-<h2>Why the address is not on this domain</h2>
-<p>The project site is served from <code>thirdeyeai.fs.kg</code>, and project mail is handled by AgentMail by choice rather than because mail on this domain is impossible: a mailbox there would need MX records and a maintained inbox, so the address lives on a public mail domain in the same sense as Gmail. Publishing it here, on the project's own site, is what makes it verifiable: the address is published on the project's own site, next to the contract and the creator address it belongs to, so a reviewer can confirm that the project is the party claiming it rather than relying on the address alone.</p>
+<h2>Mail delivery verification</h2>
+<p>The intended support address uses <code>thirdeyeai.fs.kg</code>. Publishing it here identifies the project's intended contact; it does not by itself prove that the mailbox can send or receive mail. Before relying on it, verify AgentMail domain ownership, inbound routing, outbound delivery, and the authoritative MX, SPF, DKIM and DMARC records. Until those checks pass, treat delivery as unverified and use an independently confirmed support route.</p>
 <h2>Verifying that this is the project</h2>
 <p>Every anchor below is onchain or on a public host, so none of them depend on this page being truthful.</p>
 <table><thead><tr><th>Anchor</th><th>Value</th></tr></thead><tbody>
@@ -546,7 +546,7 @@ const CONTACT = `
 </tbody></table>
 <h2>What this address will never ask for</h2>
 <p>No one writing from this address will ask for a seed phrase, a private key, a signed transaction you did not initiate, or a payment to anywhere other than the deposit path documented in <a href="/docs/api">the API guide</a>. A message from a lookalike domain is not from us: the address on this page is the only one the project uses.</p>
-<p class="muted">Response is not instant. The mailbox is read by the project operator, and an autonomous agent triages it first; anything involving money, credentials or a contract change is escalated to the operator rather than answered by the agent.</p>
+<p class="muted">Mailbox delivery and agent triage are not yet verified. Once inbound delivery, outbound delivery and the security checks above pass, support messages are intended to be triaged by an autonomous agent, with anything involving money, credentials or a contract change escalated to the project operator rather than answered autonomously.</p>
 `
 
 export function registerPublicRoutes(app: SessionApp): void {
