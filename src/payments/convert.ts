@@ -151,17 +151,24 @@ export async function convertOne(paymentId: string, deps: ConvertDeps = {}): Pro
   }
   const signer = (signerRes as any).signer as Signer
 
-  // The token must already be in the wallet we can sign for; the treasury vault is passkey-only.
-  const receivedBy: string = String(p.received_by ?? '')
-  if (receivedBy && p.token && receivedBy.toLowerCase() !== signer.address.toLowerCase()) {
-    const isAgentWallet = receivedBy.toLowerCase() === String(process.env.PLATFORM_AGENT_RECEIVER ?? '').toLowerCase()
-    if (!isAgentWallet) {
-      return {
-        paymentId,
-        status: 'blocked',
-        reason: 'not_in_signing_wallet',
-        detail: `The deposit sits in ${receivedBy}, which this server cannot sign for. It must land in ${signer.address} to be converted.`,
-      }
+  // `received_by` is a UI label (for example, `treasury_vault`), not an EVM address.
+  // Conversion authorization must compare the persisted on-chain recipient address to
+  // the exact signer address. Legacy rows without that address fail closed.
+  const receivedByAddress = String(p.received_by_address ?? '').toLowerCase()
+  if (!receivedByAddress) {
+    return {
+      paymentId,
+      status: 'blocked',
+      reason: 'missing_receiver_address',
+      detail: 'This payment record has no verified receiving address. It cannot be safely converted.',
+    }
+  }
+  if (receivedByAddress !== signer.address.toLowerCase()) {
+    return {
+      paymentId,
+      status: 'blocked',
+      reason: 'not_in_signing_wallet',
+      detail: `The deposit sits in ${receivedByAddress}, which this server cannot sign for. It must land in ${signer.address} to be converted.`,
     }
   }
 

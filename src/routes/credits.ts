@@ -75,12 +75,12 @@ async function recordPayment(args: {
   const id = 'pay_' + randomBytes(9).toString('hex')
   const inserted = (
     await query(
-      `INSERT INTO payments (id, intent_id, user_id, chain_id, token, tx_hash, received_by, sender,
+      `INSERT INTO payments (id, intent_id, user_id, chain_id, token, tx_hash, received_by, received_by_address, sender,
                              raw_amount, decimals, usd_value_micros, price_usd, pool, purpose, memo, status, refusal_code)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
-       ON CONFLICT (chain_id, tx_hash, token, received_by) DO NOTHING
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       ON CONFLICT (chain_id, tx_hash, token, received_by_address) DO NOTHING
        RETURNING id`,
-      [id, args.intent?.id ?? null, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt,
+      [id, args.intent?.id ?? null, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt, String(t.to).toLowerCase(),
        t.from, t.raw_amount, t.decimals, args.usdMicros, args.priceUsd ?? null, args.pool ?? null,
        args.intent?.purpose ?? null, args.intent?.memo ?? null, args.status, args.refusalCode]
     )
@@ -203,7 +203,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
   app.get('/api/payments', requireUser, async (c) => {
     const user = c.get('user')!
     const rows = (await query(
-      `SELECT p.id, p.intent_id, p.chain_id, p.token, p.tx_hash, p.received_by, p.sender,
+      `SELECT p.id, p.intent_id, p.chain_id, p.token, p.tx_hash, p.received_by, p.received_by_address, p.sender,
               p.raw_amount, p.decimals, p.usd_value_micros, p.price_usd, p.purpose, p.memo,
               p.status, p.refusal_code, p.created_at
        FROM payments p WHERE p.user_id = $1 ORDER BY p.created_at DESC LIMIT 100`,
@@ -217,6 +217,7 @@ export function registerCreditsRoutes(app: SessionApp): void {
         token: r.token,
         tx_hash: r.tx_hash,
         received_by: r.received_by,
+        received_by_address: r.received_by_address,
         sender: r.sender,
         amount: Number(r.raw_amount) / 10 ** Number(r.decimals),
         usd_value: Number(r.usd_value_micros) / 1_000_000,
