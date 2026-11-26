@@ -1,7 +1,7 @@
 name: Controlled Vercel Preview
 
-# Run this workflow from the default branch only. It deploys an explicitly selected
-# branch + immutable commit SHA after GitHub reports all checks green.
+# Run from main only. Validate an exact feature-branch SHA, then build in GitHub
+# Actions and upload the prebuilt output as a Preview deployment.
 on:
   workflow_dispatch:
     inputs:
@@ -20,13 +20,13 @@ permissions:
 
 concurrency:
   group: controlled-vercel-preview
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy-preview:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Validate requested ref and commit
         id: target
@@ -79,63 +79,82 @@ jobs:
           console.log(`All ${runs.length} check run(s) completed successfully.`);
           NODE
 
-      - name: Create Vercel preview for the exact SHA
-        id: deploy
-        shell: bash
+      - name: Check out the exact approved commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.target.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Pull Preview project settings
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_TEAM_ID: team_VXg8PosP0At3mMO3KY6ScI4s
+          VERCEL_ORG_ID: team_VXg8PosP0At3mMO3KY6ScI4s
           VERCEL_PROJECT_ID: prj_0t1NvQMOdZe4bL0q7lPBPIhA04bO
-          TARGET_REF: ${{ steps.target.outputs.ref }}
-          TARGET_SHA: ${{ steps.target.outputs.sha }}
         run: |
           set -euo pipefail
           if [[ -z "${VERCEL_TOKEN:-}" ]]; then
             echo "::error::Repository secret VERCEL_TOKEN is not configured."
             exit 1
           fi
-          payload="$(node -e 'process.stdout.write(JSON.stringify({
-            name: "thirdeye-ai",
-            project: process.env.VERCEL_PROJECT_ID,
-            gitSource: {
-              type: "github",
-              org: "hakuramasam",
-              repo: "thirdeye-ai",
-              ref: process.env.TARGET_REF,
-              sha: process.env.TARGET_SHA
-            },
-            meta: {
-              githubWorkflow: "controlled-vercel-preview",
-              githubSha: process.env.TARGET_SHA
-            }
-          }))')"
-          response="$(curl --fail-with-body --silent --show-error \
-            -X POST "https://api.vercel.com/v13/deployments?teamId=$VERCEL_TEAM_ID" \
-            -H "Authorization: Bearer $VERCEL_TOKEN" \
-            -H "Content-Type: application/json" \
-            --data "$payload")"
-          echo "$response" > /tmp/vercel-deployment.json
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs';
-          const d = JSON.parse(fs.readFileSync('/tmp/vercel-deployment.json', 'utf8'));
-          if (!d.url || !d.id) {
-            console.error(JSON.stringify(d, null, 2));
-            process.exit(1);
-          }
-          const url = d.url.startsWith('http') ? d.url : `https://${d.url}`;
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `url=${url}\nid=${d.id}\n`);
-          console.log(`Preview deployment created: ${url}`);
-          console.log(`Deployment ID: ${d.id}`);
-          NODE
+          vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+
+      - name: Remove server-only secrets from build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_file=".vercel/.env.preview.local"
+          if [[ -f "$env_file" ]]; then
+            filtered="$(mktemp)"
+            awk '/^VITE_[A-Za-z0-9_]*=/ { print }' "$env_file" > "$filtered"
+            mv "$filtered" "$env_file"
+          fi
+
+      - name: Build Preview artifacts in GitHub Actions
+        env:
+          VERCEL_ORG_ID: team_VXg8PosP0At3mMO3KY6ScI4s
+          VERCEL_PROJECT_ID: prj_0t1NvQMOdZe4bL0q7lPBPIhA04bO
+        run: |
+          set -euo pipefail
+          vercel build --yes
+
+      - name: Upload prebuilt artifacts as Preview only
+        id: deploy
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: team_VXg8PosP0At3mMO3KY6ScI4s
+          VERCEL_PROJECT_ID: prj_0t1NvQMOdZe4bL0q7lPBPIhA04bO
+        run: |
+          set -euo pipefail
+          deployment_url="$(vercel deploy --prebuilt --target=preview --yes --token="$VERCEL_TOKEN")"
+          if [[ -z "$deployment_url" ]]; then
+            echo "::error::Vercel did not return a deployment URL."
+            exit 1
+          fi
+          echo "url=$deployment_url" >> "$GITHUB_OUTPUT"
+          echo "Preview deployment created: $deployment_url"
 
       - name: Publish preview details
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+          TARGET_REF: ${{ steps.target.outputs.ref }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
         run: |
           {
             echo "## ThirdEye AI Preview"
             echo ""
-            echo "- **URL:** ${{ steps.deploy.outputs.url }}"
-            echo "- **Branch:** ${{ steps.target.outputs.ref }}"
-            echo "- **Commit:** ${{ steps.target.outputs.sha }}"
-            echo "- **Deployment ID:** ${{ steps.deploy.outputs.id }}"
+            echo "- **URL:** $DEPLOYMENT_URL"
+            echo "- **Branch:** $TARGET_REF"
+            echo "- **Commit:** $TARGET_SHA"
             echo "- **Environment:** Preview only; no production promotion."
+            echo "- **Build:** Generated in GitHub Actions and uploaded with `vercel deploy --prebuilt`."
           } >> "$GITHUB_STEP_SUMMARY"
