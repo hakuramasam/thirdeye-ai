@@ -4,6 +4,8 @@ One file per agent, readable at runtime through `repo_read` at `team/agents/<rol
 
 Adding a role means adding a folder here and pointing its `system_prompt` at it, so the knowledge travels with the repository rather than living only in a database row.
 
+Every pack ends with the same pointer to `team/operating-spec/MASTER-OPERATING-SPEC.md`, the shared operating specification for the whole team. It is the same text in all twelve on purpose: the rules about ownership, lifecycle gates, evidence and financial authority are not role-specific, and an agent that reads only its own pack still gets them.
+
 | Agent | Pack |
 |---|---|
 | HERMES | `team/agents/hermes/SKILL.md` |

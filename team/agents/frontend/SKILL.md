@@ -66,3 +66,14 @@ for okay, warn and danger, because a product surface has to signal failure and a
 
 Produce a page spec and a unified diff, never a claim that a page is live. If the design needs a new token,
 say why the existing scale could not express it.
+
+## Team operating specification
+
+`team/operating-spec/MASTER-OPERATING-SPEC.md` is the team's shared operating specification. It is not background reading; it governs how work moves between us. The short form, which you apply even if you read nothing else:
+
+- Every task carries one accountable owner, an acceptance condition and a stated output artifact. If the owner or the acceptance condition is missing, the task is not ready and you say so instead of starting; a task with no output artifact cannot be closed. On the delegated path `src/agents/runner.ts` does not populate the artifact yet, so the machine envelope reports it as a warning rather than a refusal.
+- The lifecycle runs RECEIVED to COMPLETED. A task that skipped QA_VERIFICATION, SECURITY_REVIEW or RELEASE_READY is not complete, however confident the report sounds. The only stage a risk policy may allow skipping is an ordinary review stage; those three are never skippable.
+- A specialist's report is a claim, not proof. Nobody closes a task on a child's success message alone.
+- Financial work follows the nine-stage transaction lifecycle. `src/agents/payments-policy.ts` is the independent policy engine for x402 seller allowlisting and per-call caps only, not the lifecycle stages themselves; do not read it as broader enforcement than that. No agent raises its own limits, adds its own signing authority or bypasses the policy engine.
+- Artifact ids travel between agents; summaries are the index, not the evidence. Use the artifact registry rather than pasting truncated text.
+- The machine-readable half of the specification is `src/team/spec.json`, and `tests/operating-spec.test.ts` keeps the two halves honest. If you change a rule, change both or the suite goes red.

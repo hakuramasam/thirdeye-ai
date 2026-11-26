@@ -1,0 +1,376 @@
+{
+  "$comment": "Machine-readable half of team/operating-spec/MASTER-OPERATING-SPEC.md (v1.0, adopted 2026-11-15). tests/operating-spec.test.ts asserts this file and that document agree, and that both agree with the live roster, the pipelines and the artifact registry. Change either side and the suite goes red on purpose.",
+  "version": "1.0",
+  "adopted": "2026-11-15",
+  "document": "team/operating-spec/MASTER-OPERATING-SPEC.md",
+  "central_orchestrator": "tdt_hermes",
+  "roles": [
+    {
+      "role": "hermes",
+      "agent": "tdt_hermes",
+      "pack": "team/agents/hermes/SKILL.md",
+      "produces": "report",
+      "creates_if_missing": false,
+      "owns_lifecycle": true
+    },
+    {
+      "role": "product",
+      "agent": "tdt_product",
+      "pack": "team/agents/product/SKILL.md",
+      "produces": "acceptance_criteria",
+      "creates_if_missing": false
+    },
+    {
+      "role": "architect",
+      "agent": "tdt_architect",
+      "pack": "team/agents/architect/SKILL.md",
+      "produces": "design",
+      "creates_if_missing": false
+    },
+    {
+      "role": "backend",
+      "agent": "tdt_backend",
+      "pack": "team/agents/backend/SKILL.md",
+      "produces": "pull_request",
+      "creates_if_missing": false
+    },
+    {
+      "role": "frontend",
+      "agent": "tdt_frontend",
+      "pack": "team/agents/frontend/SKILL.md",
+      "produces": "report",
+      "creates_if_missing": false
+    },
+    {
+      "role": "wallet",
+      "agent": "tdt_blockchain",
+      "pack": "team/agents/blockchain/SKILL.md",
+      "produces": "report",
+      "creates_if_missing": true,
+      "mapped_not_created": "The specification names a wallet and finance specialist. tdt_blockchain is the registered identity that already holds wallet, EVM, settlement and transaction-policy responsibility, so the role maps onto it instead of creating a competing agent."
+    },
+    {
+      "role": "data",
+      "agent": "tdt_intelligence",
+      "pack": "team/agents/intelligence/SKILL.md",
+      "produces": "report",
+      "creates_if_missing": true,
+      "mapped_not_created": "The specification names a data intelligence specialist. tdt_intelligence already owns provider research, market data, provenance and validation, so the role maps onto it."
+    },
+    {
+      "role": "qa",
+      "agent": "tdt_qa",
+      "pack": "team/agents/qa/SKILL.md",
+      "produces": "test_report",
+      "creates_if_missing": false
+    },
+    {
+      "role": "sentinel",
+      "agent": "tdt_sentinel",
+      "pack": "team/agents/sentinel/SKILL.md",
+      "produces": "review",
+      "creates_if_missing": false
+    },
+    {
+      "role": "devops",
+      "agent": "tdt_devops",
+      "pack": "team/agents/devops/SKILL.md",
+      "produces": "release",
+      "creates_if_missing": false
+    },
+    {
+      "role": "docs",
+      "agent": "tdt_docs",
+      "pack": "team/agents/docs/SKILL.md",
+      "produces": "changelog_entry",
+      "creates_if_missing": false
+    }
+  ],
+  "unmapped_roster": [
+    {
+      "agent": "tdt_agent-engineer",
+      "reason": "Registered and active, with no counterpart in the specification. Kept rather than folded into another role: it owns the runner, delegation and tooling itself, which no specified role covers."
+    }
+  ],
+  "categories": [
+    "feature",
+    "bugfix",
+    "security",
+    "incident",
+    "research",
+    "architecture",
+    "infrastructure",
+    "wallet_operation",
+    "financial_reconciliation",
+    "data_intelligence",
+    "commercial",
+    "documentation",
+    "maintenance"
+  ],
+  "priorities": [
+    {
+      "id": "P0",
+      "db_priority": "critical",
+      "meaning": "Critical production failure, active financial or security incident, severe data integrity problem."
+    },
+    {
+      "id": "P1",
+      "db_priority": "high",
+      "meaning": "Critical functionality, major security defect, payment integrity issue, major blocker."
+    },
+    {
+      "id": "P2",
+      "db_priority": "normal",
+      "meaning": "Important feature, reliability improvement, significant defect."
+    },
+    {
+      "id": "P3",
+      "db_priority": "low",
+      "meaning": "Enhancement, documentation, optimisation, low-risk maintenance."
+    }
+  ],
+  "lifecycle": {
+    "stages": [
+      "RECEIVED",
+      "VALIDATED",
+      "TRIAGED",
+      "PLANNED",
+      "ASSIGNED",
+      "ACCEPTED",
+      "IN_PROGRESS",
+      "REVIEW_READY",
+      "QA_VERIFICATION",
+      "SECURITY_REVIEW",
+      "RELEASE_READY",
+      "RELEASED",
+      "POST_RELEASE_VERIFICATION",
+      "DOCUMENTED",
+      "COMPLETED"
+    ],
+    "exceptions": [
+      "BLOCKED",
+      "REWORK",
+      "REJECTED",
+      "CANCELLED",
+      "ROLLED_BACK",
+      "RECONCILIATION_REQUIRED"
+    ],
+    "terminal": "COMPLETED",
+    "unsatisfied_terminals": [
+      "BLOCKED",
+      "REWORK",
+      "REJECTED",
+      "CANCELLED",
+      "ROLLED_BACK",
+      "RECONCILIATION_REQUIRED"
+    ],
+    "gates_never_skipped": [
+      "QA_VERIFICATION",
+      "SECURITY_REVIEW",
+      "RELEASE_READY"
+    ],
+    "backward_move_is": "REWORK"
+  },
+  "task_status_to_stage": {
+    "queued": "RECEIVED",
+    "assigned": "ASSIGNED",
+    "in_progress": "IN_PROGRESS",
+    "blocked": "BLOCKED",
+    "review": "REVIEW_READY",
+    "completed": "COMPLETED",
+    "failed": "REWORK",
+    "cancelled": "CANCELLED"
+  },
+  "status_map_note": "The stored agent task schema keeps its eight coarse statuses. `queued` projects onto RECEIVED, the first lifecycle stage, because the database does not yet distinguish RECEIVED..PLANNED; the lifecycle refinement is tracked in code, not faked in the status column.",
+  "envelope": {
+    "fields": [
+      "task_id",
+      "correlation_id",
+      "parent_task_id",
+      "requester",
+      "source_reference",
+      "title",
+      "objective",
+      "category",
+      "priority",
+      "affected_capability",
+      "accountable_agent",
+      "supporting_agents",
+      "input_artifacts",
+      "acceptance_criteria",
+      "output_artifact",
+      "out_of_scope",
+      "dependencies",
+      "permission_scopes",
+      "risk_level",
+      "budget_limit",
+      "execution_deadline",
+      "idempotency_key",
+      "current_status",
+      "created_at",
+      "updated_at"
+    ],
+    "aliases": {
+      "accountable_agent": "owner",
+      "current_status": "status",
+      "execution_deadline": "deadline",
+      "input_artifacts": "input_refs",
+      "output_artifact": "output_expectations"
+    },
+    "required": [
+      "task_id",
+      "title",
+      "objective",
+      "accountable_agent",
+      "acceptance_criteria",
+      "priority",
+      "current_status",
+      "created_at"
+    ],
+    "recommended": [
+      "correlation_id",
+      "category",
+      "risk_level",
+      "permission_scopes",
+      "budget_limit",
+      "out_of_scope",
+      "dependencies",
+      "output_artifact"
+    ],
+    "recommended_note": "Reported as warnings, not refusals. The delegation path in src/agents/runner.ts populates the required set today, and requiring the recommended set would refuse live delegations that are otherwise well formed. Every field the operating specification names as required for a task to be ready appears here as at least recommended: category, permission_scopes, budget_limit, dependencies and output_artifact, so the machine half cannot silently drop one of them."
+  },
+  "artifacts": {
+    "kinds": [
+      "task",
+      "acceptance_criteria",
+      "design",
+      "diagnosis",
+      "pull_request",
+      "diff",
+      "test_report",
+      "review",
+      "release",
+      "changelog_entry",
+      "report",
+      "note"
+    ],
+    "source": "src/agents/artifacts.ts",
+    "handoff_rule": "Artifact ids travel between agents; summaries are the index, not the evidence."
+  },
+  "severity": {
+    "order": [
+      "critical",
+      "high",
+      "medium",
+      "low",
+      "informational"
+    ],
+    "blocks_release": [
+      "critical",
+      "high"
+    ],
+    "exception_required_to_release": "An authorised risk exception, recorded as an artifact, is the only way a blocking finding releases."
+  },
+  "financial": {
+    "stages": [
+      "TRANSACTION_INTENT",
+      "POLICY_VALIDATION",
+      "TRANSACTION_SIMULATION",
+      "AUTHORIZATION",
+      "SIGNING",
+      "BROADCAST",
+      "CONFIRMATION",
+      "SETTLEMENT",
+      "RECONCILIATION"
+    ],
+    "owner_agent": "tdt_blockchain",
+    "independent_authority": "src/agents/payments-policy.ts",
+    "forbids": [
+      "changing its own financial limits",
+      "adding its own signing authority",
+      "changing treasury ownership",
+      "bypassing the policy engine",
+      "using restricted treasury funds outside mandate",
+      "hiding or rewriting transaction records"
+    ],
+    "reorg_rule": "Never auto-reverse a credited-then-reorged deposit. Flag it for authorised reconciliation."
+  },
+  "pipelines": {
+    "required": [
+      "feature",
+      "bugfix",
+      "incident"
+    ],
+    "by_category": {
+      "feature": "feature",
+      "bugfix": "bugfix",
+      "incident": "incident",
+      "security": "bugfix",
+      "maintenance": "bugfix",
+      "infrastructure": "incident",
+      "documentation": "feature",
+      "research": "feature",
+      "architecture": "feature",
+      "data_intelligence": "feature",
+      "commercial": "feature",
+      "wallet_operation": "feature",
+      "financial_reconciliation": "incident"
+    },
+    "planned_not_built": [
+      "wallet_operation",
+      "financial_reconciliation",
+      "research",
+      "maintenance"
+    ],
+    "planned_note": "The specification says to create these four workflows only where needed. Until then they route through the pipelines above, and the category mapping is recorded here rather than pretended to exist as a file.",
+    "stage_lifecycle": {
+      "scope": "PLANNED",
+      "design": "PLANNED",
+      "build": "IN_PROGRESS",
+      "verify": "QA_VERIFICATION",
+      "security_review": "SECURITY_REVIEW",
+      "release_readiness": "RELEASE_READY",
+      "release": "RELEASED",
+      "accept": "COMPLETED",
+      "document": "DOCUMENTED",
+      "intake": "TRIAGED",
+      "diagnose": "PLANNED",
+      "patch": "IN_PROGRESS",
+      "record": "DOCUMENTED",
+      "detect": "RECEIVED",
+      "contain": "IN_PROGRESS",
+      "postmortem": "POST_RELEASE_VERIFICATION"
+    },
+    "known_gaps": [
+      {
+        "pipeline": "feature",
+        "stages": ["release_plan", "closure"],
+        "problem": "release_readiness produces release_plan and accept produces closure, neither of which the artifact registry accepts, so those two handoffs have no kind to store. Surfaced when the release_readiness and accept stages arrived; fixing it means widening ARTIFACT_KINDS or renaming the outputs, and either way this entry comes out."
+      },
+      {
+        "pipeline": "incident",
+        "stages": [
+          "incident_timeline",
+          "containment",
+          "postmortem"
+        ],
+        "problem": "These three declare a produced artifact that the registry does not accept, so a handoff from those stages has no kind to store. Recorded here rather than silently tolerated; fixing it means either widening ARTIFACT_KINDS or renaming the three stage outputs, and either way this entry comes out."
+      }
+    ]
+  },
+  "completion": {
+    "requires": [
+      "objective addressed",
+      "acceptance criteria evaluated",
+      "required artifacts exist",
+      "tests carry actual recorded results",
+      "QA review complete",
+      "security review passed where required",
+      "release authorisation on record where deployed",
+      "deployed behaviour verified where deployment occurred",
+      "documentation updated",
+      "no blocking finding open"
+    ],
+    "partial_rule": "An unmet criterion leaves the task open, blocked, or explicitly partially complete. Never completed."
+  }
+}

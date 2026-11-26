@@ -49,3 +49,29 @@ the delegation report rather than stored and addressable, so a long pipeline los
 each hop. And the check that would make `verify` trustworthy still cannot be installed because
 of the GitHub token's missing workflow scope. Until that lands, `verify` rests on a human
 reading a diff, which is exactly what a gate is supposed to replace.
+
+
+## Relationship to the operating specification
+
+`team/operating-spec/MASTER-OPERATING-SPEC.md` (adopted 2026-11-15, version 1.0) is the team's shared operating specification: roles, job categories, priorities, the fifteen-stage task lifecycle, the task envelope, delegation rules, artifact handoffs, the nine-stage financial lifecycle, failure recovery and the completion rule.
+
+It extends the pipelines rather than replacing them. The division is deliberate:
+
+| Concern | Authority |
+|---|---|
+| Who approves production | `team/policies/authority.md` (owner), unchanged |
+| Stage order, gate text, failure move | the pipeline files in `team/pipelines/` |
+| Requirement that a stage has an owner, a gate and an artifact | the operating specification |
+| Machine-checkable form of the above | `src/team/spec.json` |
+| Enforcement | `tests/operating-spec.test.ts` |
+
+`src/team/spec.ts` exposes the specification as code: `checkTransition` orders the lifecycle and reports which gates a move skipped, `validateOperatingTask` runs the existing JSON Schema validator unchanged and then applies its own required and recommended field lists on top, so the fields it insists on are its lists rather than schema additions, `stageForTaskStatus` projects the eight stored statuses onto the chain, and `checkRoleCoverage` compares the specified roles against `team/agents/*` so an added or renamed pack cannot drift away from the document.
+
+Two mappings worth stating explicitly, because they are judgement calls rather than facts:
+
+- The specification names a **wallet and finance specialist** and a **data intelligence specialist**. Both map onto identities that already exist (`tdt_blockchain`, `tdt_intelligence`) instead of creating competing agents. `tdt_agent-engineer` is kept and listed as unmapped, because it owns the runner and tooling, which no specified role covers.
+- The specification names four additional workflows (wallet_operation, financial_reconciliation, research, maintenance) that do not exist as pipeline files yet. `src/team/spec.json` records where each category routes today and marks those four as planned rather than built.
+
+Known gap recorded by the suite rather than tolerated: the incident pipeline declares `incident_timeline`, `containment` and `postmortem` as produced artifacts, and none of the three is a kind the artifact registry accepts, so a handoff from those three stages is stored under the `report` fallback rather than lost, which also means its declared kind is not preserved at runtime. Fixing it means either widening `ARTIFACT_KINDS` or renaming those stage outputs; `SPEC.pipelines.known_gaps` must be updated with the fix or the suite fails.
+
+The task schema (`src/team/schemas/task.schema.json`) was widened additively with the envelope fields the specification requires: `correlation_id`, `requester`, `source_reference`, `category`, `affected_capability`, `supporting_agents`, `out_of_scope`, `permission_scopes`, `budget_limit`. All are optional, so a task that validated before still validates.
