@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import './styles.css'
 import { api, fmtUsd, fmtMicroPerM, short, fmtDate, toast, Toasts, useWallets, signInWith, connectWalletConnect, walletConnectConfigured, readChainId, chainById, NetworkPrompt } from './wallet'
 import type { User, KeyRow, ByokRow, ChainInfo } from './wallet'
@@ -168,6 +168,7 @@ function BarChart({ data }: { data: any[] }) {
 function Keys({ onChanged }: { onChanged: () => void }) {
   const [keys, setKeys] = useState<KeyRow[]>([])
   const [name, setName] = useState('')
+  const nameRef = useRef<HTMLInputElement | null>(null)
   const [rpm, setRpm] = useState('60')
   const [tpm, setTpm] = useState('1000000')
   const [secret, setSecret] = useState<string | null>(null)
@@ -176,11 +177,13 @@ function Keys({ onChanged }: { onChanged: () => void }) {
   useEffect(load, [load])
   const create = async () => {
     // Validate on click, not by disabling the control: a browser-autofilled field can look
-    // filled while React state is still empty, which left this button permanently greyed.
-    if (!name.trim()) { toast('Give the key a name first', 'error'); return }
+    // filled while React state is still empty, which left this button permanently greyed. Read the
+    // DOM value as well as the state so autofill cannot produce a filled form that refuses to submit.
+    const keyName = (nameRef.current?.value ?? name).trim()
+    if (!keyName) { toast('Give the key a name first', 'error'); return }
     setBusy(true)
     try {
-      const r = await api('/api/keys', { method: 'POST', body: JSON.stringify({ name, rpm: Number(rpm), tpm: Number(tpm) }) })
+      const r = await api('/api/keys', { method: 'POST', body: JSON.stringify({ name: keyName, rpm: Number(rpm), tpm: Number(tpm) }) })
       setSecret(r.secret)
       setName('')
       load(); onChanged()
@@ -212,7 +215,7 @@ function Keys({ onChanged }: { onChanged: () => void }) {
       <div className="card">
         <h2>Create API key</h2>
         <div className="row">
-          <div><label>Name</label><input value={name} placeholder="production-app" autoComplete="off" onChange={(e) => setName(e.target.value)} /></div>
+          <div><label>Name</label><input ref={nameRef} value={name} placeholder="production-app" autoComplete="off" onChange={(e) => setName(e.target.value)} /></div>
           <div><label>RPM limit</label><input value={rpm} onChange={(e) => setRpm(e.target.value)} /></div>
           <div><label>TPM limit</label><input value={tpm} onChange={(e) => setTpm(e.target.value)} /></div>
         </div>
@@ -273,14 +276,17 @@ function Byok({ onChanged }: { onChanged: () => void }) {
   const [rows, setRows] = useState<ByokRow[]>([])
   const [provider, setProvider] = useState('openai')
   const [apiKey, setApiKey] = useState('')
+  const apiKeyRef = useRef<HTMLInputElement | null>(null)
   const [busy, setBusy] = useState(false)
   const load = useCallback(() => { api('/api/keys/byok').then((r) => setRows(r.providers)).catch(() => {}) }, [])
   useEffect(load, [load])
   const save = async () => {
-    if (!apiKey.trim()) { toast('Paste a provider key first', 'error'); return }
+    // Same autofill hazard as the key form: the field can look filled while state is empty.
+    const key = (apiKeyRef.current?.value ?? apiKey).trim()
+    if (!key) { toast('Paste a provider key first', 'error'); return }
     setBusy(true)
     try {
-      await api('/api/keys/byok', { method: 'PUT', body: JSON.stringify({ provider, api_key: apiKey }) })
+      await api('/api/keys/byok', { method: 'PUT', body: JSON.stringify({ provider, api_key: key }) })
       toast('Provider key saved (encrypted)')
       setApiKey(''); load(); onChanged()
     } catch (e: any) { toast(e.message, 'error') } finally { setBusy(false) }
@@ -303,7 +309,7 @@ function Byok({ onChanged }: { onChanged: () => void }) {
               <option value="deepseek">DeepSeek</option>
             </select>
           </div>
-          <div style={{ flex: 2 }}><label>API key</label><input type="password" value={apiKey} placeholder="sk-… / sk-ant-…" autoComplete="off" onChange={(e) => setApiKey(e.target.value)} /></div>
+          <div style={{ flex: 2 }}><label>API key</label><input ref={apiKeyRef} type="password" value={apiKey} placeholder="sk-… / sk-ant-…" autoComplete="off" onChange={(e) => setApiKey(e.target.value)} /></div>
         </div>
         <div style={{ marginTop: 14 }}>
           <button onClick={save} disabled={busy}>Save key</button>

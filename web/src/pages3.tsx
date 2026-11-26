@@ -6,6 +6,8 @@ type Msg = { role: 'user' | 'assistant'; content: string; cost?: string }
 /** Chat with any catalogue model directly, using a session-scoped key. */
 export function Playground({ user, onChanged }: { user: any; onChanged: () => void }) {
   const [models, setModels] = useState<ModelRow[]>([])
+  // Tracked separately from the list so an empty or failed catalogue stops saying "Loading" forever.
+  const [modelState, setModelState] = useState<'loading' | 'ready' | 'empty' | 'error'>('loading')
   const [model, setModel] = useState('gpt-oss-120b')
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [input, setInput] = useState('')
@@ -23,8 +25,9 @@ export function Playground({ user, onChanged }: { user: any; onChanged: () => vo
       // first real id. The previous code read `m.id`, a field this endpoint never returns, so every
       // option was blank and the selected model was undefined, which sent no model at all.
       if (list.length && !list.some((m) => m.model === model)) setModel(list[0].model)
+      setModelState(list.length ? 'ready' : 'empty')
       if (!list.length) setErr('No models are available on this account yet.')
-    }).catch((e) => setErr(`Could not load the model list: ${String(e.message || e)}`))
+    }).catch((e) => { setModelState('error'); setErr(`Could not load the model list: ${String(e.message || e)}`) })
     // One short-lived key for this page load; it is revoked on the next load.
     api('/api/playground/token', { method: 'POST' })
       .then((r) => { setToken(r.token); setBalance(r.balance_usd_micros ?? null) })
@@ -67,7 +70,9 @@ export function Playground({ user, onChanged }: { user: any; onChanged: () => vo
           <label style={{ flex: 1, minWidth: 220 }}>
             <span className="muted">Model</span>
             <select value={model} onChange={(e) => setModel(e.target.value)} disabled={busy || models.length === 0}>
-              {models.length === 0 && <option value="">Loading models…</option>}
+              {models.length === 0 && (
+                <option value="">{modelState === 'loading' ? 'Loading models…' : modelState === 'error' ? 'Could not load models' : 'No models available'}</option>
+              )}
               {models.map((m) => (
                 <option key={m.model} value={m.model}>
                   {m.model} · {m.provider} · ${(m.price_in_1m_usd_micros / 1e6).toFixed(2)}/M in
@@ -111,12 +116,12 @@ export function Playground({ user, onChanged }: { user: any; onChanged: () => vo
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
         />
         <div className="row" style={{ alignItems: 'center', gap: 12 }}>
-          <button onClick={send} disabled={!token || busy || !input.trim()}>
+          <button onClick={send} disabled={!token || busy || !input.trim() || models.length === 0}>
             {busy ? 'Sending…' : 'Send'}
           </button>
           {/* A greyed button with no explanation is the complaint, so say what is missing. */}
           <span className="muted small">
-            {!token ? 'Waiting for a playground key.' : busy ? 'In flight.' : !input.trim() ? 'Type a message to enable Send.' : ''}
+            {!token ? 'Waiting for a playground key.' : models.length === 0 ? (modelState === 'error' ? 'The model list could not be loaded, so nothing can be sent.' : modelState === 'loading' ? 'Loading the model list.' : 'No model is available on this account.') : busy ? 'In flight.' : !input.trim() ? 'Type a message to enable Send.' : ''}
           </span>
         </div>
       </div>
