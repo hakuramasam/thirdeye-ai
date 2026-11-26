@@ -67,3 +67,60 @@ The repository's current default-branch workflow set was inspected alongside rec
 - `.github/ISSUE_TEMPLATE/agent-task.yml` captures pipeline, accountable owner, objective, testable acceptance criteria, out-of-scope items, dependencies, risk and approvals. Owner values match the task schema enum.
 - `.github/PULL_REQUEST_TEMPLATE.md` asks for evidence, exact SHA, CI/test results, independent QA/SENTINEL review, rollback and production approval.
 - `.github/dependabot.yml` schedules weekly npm and GitHub Actions version updates. Dependency update PRs still require CI, review and normal approval; Dependabot is not allowed to auto-merge or deploy.
+
+
+## Role-scoped hosted platform MCP connections
+
+The in-product runner can connect to the official hosted MCP services without embedding credentials in an agent prompt or in the `agents.mcp_servers` JSON. Supported secret references are resolved by the server and bound to fixed vendor hosts:
+
+- AgentMail: `https://mcp.agentmail.to/mcp`, auth reference `{ "provider": "agentmail" }`, runtime secret `AGENTMAIL_API_KEY`, sent only as `x-api-key` to `mcp.agentmail.to`.
+- Cloudflare: `https://mcp.cloudflare.com/mcp`, auth reference `{ "provider": "cloudflare" }`, runtime secret `CLOUDFLARE_API_TOKEN`, sent only as `Authorization: Bearer ...` to `mcp.cloudflare.com`.
+
+Never store the secret value in Neon, a prompt, source, an issue, a task artifact or a log. The configuration stores only the provider reference. The runtime rejects a provider reference pointed at a different host, a non-HTTPS URL, or a literal credential header that conflicts with the secret reference.
+
+Each server configuration can set `allowedTools` to an exact list of remote tool names. Only those tools are exposed to that agent; unlisted tools are not callable through the runner. Omit `allowedTools` only when the full tool catalog is explicitly intended.
+
+Example configuration (illustrative; credentials are resolved at runtime):
+
+```json
+[
+  {
+    "name": "agentmail",
+    "url": "https://mcp.agentmail.to/mcp",
+    "auth": { "provider": "agentmail" },
+    "allowedTools": [
+      "list_inboxes", "search_threads", "list_threads", "get_thread",
+      "list_messages", "search_messages", "get_message",
+      "create_draft", "list_drafts", "get_draft", "update_draft",
+      "get_attachment"
+    ]
+  },
+  {
+    "name": "cloudflare",
+    "url": "https://mcp.cloudflare.com/mcp",
+    "auth": { "provider": "cloudflare" },
+    "allowedTools": ["search", "docs", "execute"]
+  }
+]
+```
+
+Recommended role mapping:
+
+| Role | AgentMail | Cloudflare |
+|---|---|---|
+| HERMES | No direct mailbox tools; delegate to the responsible specialist | No direct API access; coordinate DevOps/SENTINEL |
+| AGENT-ENGINEER | Read inboxes/messages and create/update drafts; no send/delete/inbox administration | None |
+| PRODUCT | Read support threads and create draft responses; no send/delete | None |
+| DEVOPS | None | `search`, `docs`, `execute` only with a narrowly scoped account token for approved Workers/Pages/observability work |
+| SENTINEL | None | Documentation/search by default; account inspection requires a separate read-only token |
+| QA | Read-only inbox/thread/message checks for test fixtures | Read-only checks through a separate read-only token |
+| Other roles | No connection unless their documented task requires it | No connection unless their documented task requires it |
+
+Security requirements:
+
+- Prefer an AgentMail pod- or inbox-scoped key for the support mailbox. Do not expose organization-wide inbox administration, message deletion, account sign-up, or outbound-send tools to agents by default.
+- Use a Cloudflare token scoped to the intended account and only the required Workers/Pages/observability permissions. Do not give an agent a global account token or DNS-write/billing permissions. Cloudflare's `execute` tool can call any endpoint allowed by the token, so the token's own permission scope is the real enforcement boundary.
+- A role's `allowedTools` is an additional boundary, not a replacement for provider-side permissions.
+- Support replies are drafts until a human approves sending. DNS changes, production deployments, destructive operations and secret changes remain approval-gated.
+- Configure `AGENTMAIL_API_KEY` and `CLOUDFLARE_API_TOKEN` only in the backend runtime secret store after the code is deployed. Do not put values in agent records.
+- The current production agent rows must be explicitly configured with these reference objects after secrets are provisioned. This PR adds safe resolution and filtering; it does not alter production agent rows or enable connections by itself.
