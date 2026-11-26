@@ -10,6 +10,8 @@ import { CHAINS, isPolicyPricedToken, platformTokenUsdMicros } from '../payments
 import { verifyDeposit } from '../payments/verify.js'
 import { findIncomingTransfer, checkSenderOwnership } from '../payments/verify.js'
 import { prepareAutoConvert, autoConvertPolicyFromEnv } from '../payments/autoConvert.js'
+import { decideSettlement } from '../payments/finality.js'
+import { markCredited, markReorged, paymentStateFor } from '../payments/settle.js'
 import { randomBytes } from 'node:crypto'
 import type { IncomingTransfer } from '../payments/verify.js'
 
@@ -66,23 +68,30 @@ async function recordPayment(args: {
   transfer: IncomingTransfer
   receivedAt: string
   usdMicros: number
-  status: 'recorded' | 'refused' | 'pending_conversion'
+  status: 'recorded' | 'refused' | 'pending_conversion' | 'pending_confirmations'
   refusalCode: string | null
   priceUsd?: number | null
   pool?: string | null
+  /** Settlement state and the confirmation evidence behind it. */
+  state?: string
+  confirmations?: number
+  observedBlock?: number
 }): Promise<{ paymentId: string; duplicate: boolean }> {
   const t = args.transfer
   const id = 'pay_' + randomBytes(9).toString('hex')
   const inserted = (
     await query(
       `INSERT INTO payments (id, intent_id, user_id, chain_id, token, tx_hash, received_by, sender,
-                             raw_amount, decimals, usd_value_micros, price_usd, pool, purpose, memo, status, refusal_code)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+                             raw_amount, decimals, usd_value_micros, price_usd, pool, purpose, memo, status, refusal_code,
+                             state, confirmations, observed_block)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        ON CONFLICT (chain_id, tx_hash, token, received_by) DO NOTHING
        RETURNING id`,
       [id, args.intent?.id ?? null, args.userId, t.chain_id, t.token, t.tx_hash ?? null, args.receivedAt,
        t.from, t.raw_amount, t.decimals, args.usdMicros, args.priceUsd ?? null, args.pool ?? null,
-       args.intent?.purpose ?? null, args.intent?.memo ?? null, args.status, args.refusalCode]
+       args.intent?.purpose ?? null, args.intent?.memo ?? null, args.status, args.refusalCode,
+       args.state ?? (args.status === 'recorded' ? 'confirmed' : 'detected'),
+       args.confirmations ?? null, args.observedBlock ?? t.block_number ?? null]
     )
   ).rows
 
@@ -252,6 +261,30 @@ export function registerCreditsRoutes(app: SessionApp): void {
     const receivers = platformReceivers()
     const found = await findIncomingTransfer({ chainId, txHash, receivers })
     if (!found.ok) {
+      // A transfer we already recorded that is no longer on the chain is a reorg, not a bad claim.
+      // It is marked and audited rather than ignored, and a credited one is flagged because its
+      // ledger entry now has no backing transfer and reversing it is a human decision.
+      if (found.code === 'not_found') {
+        const reorged = await markReorged(chainId, txHash)
+        if (reorged) {
+          return c.json(
+            {
+              accepted: false,
+              reconciliation: true,
+              needs_reconciliation: reorged.wasCredited,
+              payment_id: reorged.paymentId,
+              verification: {
+                ok: false,
+                code: 'reorg_detected',
+                message: reorged.wasCredited
+                  ? 'This transaction was credited and is no longer on the chain. The payment is flagged for reconciliation; the ledger entry is kept until it is reviewed.'
+                  : 'This transaction is no longer on the chain, so the deposit was reversed. The payment is marked reorged and nothing is credited.',
+              },
+            },
+            409
+          )
+        }
+      }
       return c.json({ accepted: false, verification: { ok: false, code: found.code, message: found.message } }, 422)
     }
     const t = found.transfer
@@ -269,6 +302,40 @@ export function registerCreditsRoutes(app: SessionApp): void {
         403
       )
     }
+    // Finality gate. Recorded now, credited later: the row exists so a retry can complete the
+    // claim once the transfer is buried deep enough, and a reorg cannot leave money behind.
+    const finality = found.finality
+    const receivedAtOf = (transfer: IncomingTransfer) =>
+      transfer.to === String(env.platformReceiverAddress || '').toLowerCase()
+        ? 'treasury_vault'
+        : transfer.to === String(env.platformAutomationReceiver || '').toLowerCase()
+          ? 'automation_account'
+          : transfer.to === String(env.platformSponsorReceiver || '').toLowerCase()
+            ? 'sponsored_wallet'
+            : 'agent_wallet'
+    if (finality.state === 'confirming') {
+      const waiting = await recordPayment({
+        intent, userId: c.get('user')!.id, transfer: t, receivedAt: receivedAtOf(t),
+        usdMicros: 0, status: 'pending_confirmations', refusalCode: null,
+        state: 'confirming', confirmations: finality.confirmations, observedBlock: finality.observedBlock,
+      })
+      return c.json(
+        {
+          accepted: true,
+          credited: false,
+          credit_status: 'confirming',
+          payment_id: waiting.paymentId,
+          duplicate: waiting.duplicate,
+          confirmations: finality.confirmations,
+          required_confirmations: finality.required,
+          received_at: receivedAtOf(t),
+          intent: memoOf(intent),
+          message: `Waiting for ${finality.required} confirmations (${finality.confirmations} so far). Nothing is credited until then; sending this same request again completes the claim.`,
+        },
+        202
+      )
+    }
+
     // Platform token: valued by the published policy rate, never by the curve we run.
     // It also has no tradable market to convert against, so the auto-convert analysis is
     // skipped on purpose rather than refused.
@@ -311,13 +378,15 @@ export function registerCreditsRoutes(app: SessionApp): void {
         refusalCode: policyDecision.status === 'credited' ? null : policyDecision.status,
       })
       let policyCredited = false
-      if (
-        policyChain &&
-        policyDecision.status === 'credited' &&
-        shouldCreditPayment({ status: 'recorded', duplicate: policyRecord.duplicate, usdMicros })
-      ) {
+      const policySettle = decideSettlement({
+        state: policyRecord.duplicate ? await paymentStateFor(t) : 'confirmed',
+        confirmations: finality.confirmations,
+        required: finality.required,
+      })
+      if (policyChain && policyDecision.status === 'credited' && policySettle.action === 'credit') {
         const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: policyChain, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
         policyCredited = Boolean(dep.credited)
+        if (policyCredited) await markCredited(policyRecord.paymentId, usdMicros)
       }
       return c.json({
         accepted: true,
@@ -398,9 +467,15 @@ export function registerCreditsRoutes(app: SessionApp): void {
           : 'The received token valued at zero, so nothing was credited.',
       })
     }
-    if (chainSlug && shouldCreditPayment({ status: 'recorded', duplicate: recorded.duplicate, usdMicros })) {
+    const settle = decideSettlement({
+      state: recorded.duplicate ? await paymentStateFor(t) : 'confirmed',
+      confirmations: finality.confirmations,
+      required: finality.required,
+    })
+    if (chainSlug && settle.action === 'credit') {
       const dep = await creditVerified(c.get('user')!.id, usdMicros, { chain: chainSlug, txHash: t.tx_hash, token: t.token }, (intent as any)?.id ?? null)
       credited = Boolean(dep.credited)
+      if (credited) await markCredited(recorded.paymentId, usdMicros)
       balanceMicros = dep.to === 'account' ? (dep.deposit as any).balance : await getBalanceMicros(c.get('user')!.id)
     } else if (recorded.duplicate) {
       balanceMicros = await getBalanceMicros(c.get('user')!.id)
