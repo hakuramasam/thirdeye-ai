@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import './styles.css'
 import { api, fmtUsd, fmtMicroPerM, short, fmtDate, toast, Toasts, useWallets, signInWith, connectWalletConnect, walletConnectConfigured, readChainId, chainById, NetworkPrompt } from './wallet'
 import type { User, KeyRow, ByokRow, ChainInfo } from './wallet'
+import { BridgeDeposit } from './bridge'
 
 type Tab = 'overview' | 'keys' | 'byok' | 'credits' | 'agents' | 'models' | 'docs'
 
@@ -454,6 +455,7 @@ function Credits({ onChanged }: { onChanged: () => void }) {
                 ))}
               </tbody>
             </table>
+            <BridgeDeposit />
             <div className="row">
               <div>
                 <label>Chain</label>
