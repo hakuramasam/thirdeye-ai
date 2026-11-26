@@ -343,6 +343,11 @@
     },
     "known_gaps": [
       {
+        "pipeline": "feature",
+        "stages": ["release_plan", "closure"],
+        "problem": "release_readiness produces release_plan and accept produces closure, neither of which the artifact registry accepts, so those two handoffs have no kind to store. Surfaced when the release_readiness and accept stages arrived; fixing it means widening ARTIFACT_KINDS or renaming the outputs, and either way this entry comes out."
+      },
+      {
         "pipeline": "incident",
         "stages": [
           "incident_timeline",
