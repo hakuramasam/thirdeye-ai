@@ -623,3 +623,40 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_redemptions_idem
 CREATE UNIQUE INDEX IF NOT EXISTS idx_redemptions_payout
   ON redemptions(payout_tx_hash) WHERE payout_tx_hash IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_redemptions_user_time ON redemptions(user_id, created_at);
+
+-- ---------------------------------------------------------------------------------------------
+-- Durable task spine (PH2-004).
+--
+-- A delegated job used to exist only as a line inside a report plus a couple of audit events, so
+-- no one could answer "who owns this work right now", "is this the first pass or a rework", or
+-- "how often does a stage finish without a retry". Here a job IS a row: it is created once, claimed
+-- by exactly one owner through a single atomic UPDATE, and then completed or failed. Because the
+-- row survives the run that touched it, rework is countable (attempt > 1) and first-pass success
+-- becomes a measured ratio instead of an impression.
+--
+-- status is constrained at the database level, so a typo or an optimistic agent cannot invent a
+-- state the rest of the system does not understand. owner_agent_id is written by the claim, never
+-- by create, which is what makes "claimed by two agents" impossible rather than merely unlikely.
+CREATE TABLE IF NOT EXISTS agent_tasks (
+  id             text PRIMARY KEY,                       -- tsk_<24 hex>; appears in prompts and trails
+  correlation_id text NOT NULL,                          -- the chain this job belongs to
+  pipeline_id    text,
+  stage_id       text,
+  title          text NOT NULL,
+  instruction    text NOT NULL,
+  owner_agent_id text,                                   -- set by the claim, null while queued
+  status         text NOT NULL DEFAULT 'queued'
+                 CHECK (status IN ('queued','in_progress','blocked','review','completed','failed','cancelled')),
+  priority       text,
+  parent_task_id text,                                   -- the task this one was split out of
+  attempt        integer NOT NULL DEFAULT 1,             -- 1 = first pass; >1 means rework
+  artifacts      jsonb NOT NULL DEFAULT '[]'::jsonb,     -- addresses of what this task produced
+  result         jsonb,                                  -- what completion recorded
+  error          text,                                   -- why the last attempt failed
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  updated_at     timestamptz,
+  started_at     timestamptz,                            -- first claim, not every claim
+  completed_at   timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_pipeline_status ON agent_tasks(pipeline_id, status);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_correlation ON agent_tasks(correlation_id);
