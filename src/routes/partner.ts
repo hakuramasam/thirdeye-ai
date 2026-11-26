@@ -104,7 +104,7 @@ async function audit(actor: string, action: string, detail: Record<string, unkno
   ])
 }
 
-const PUBLIC_URL = process.env.PUBLIC_BASE_URL || 'https://thirdeye-ai-alpha.vercel.app'
+const PUBLIC_URL = process.env.PUBLIC_BASE_URL || 'https://thirdeyeai.fs.kg'
 
 const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Thirdeye partner hub</title>

@@ -17,8 +17,11 @@ export type WebSearchDeps = {
   /** Injected for tests. Never a live socket in a unit test. */
   fetchImpl?: typeof fetch
   apiKey?: string
-  provider?: 'brave' | 'tavily'
+  /** Widen to string: an unrecognised value must be refused, not cast. */
+  provider?: string
   timeoutMs?: number
+  /** Injected for tests; defaults to WEB_SEARCH_ENABLED. */
+  enabled?: boolean
 }
 
 export const WEB_SEARCH_TOOL = {
@@ -37,6 +40,9 @@ export const WEB_SEARCH_TOOL = {
 } as const
 
 const ALLOWED_ARGS = new Set(['query', 'count'])
+
+/** Ceiling on one provider request, so a hung search cannot consume the invocation. */
+const DEFAULT_TIMEOUT_MS = 10_000
 
 /** Off unless the deployment says otherwise, and off is the safe default for an egress tool. */
 export function isWebSearchEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -82,12 +88,29 @@ export async function runWebSearch(
   if (!query) throw new WebSearchError('web_search requires a non-empty query')
   if (query.length > 400) throw new WebSearchError('web_search query is longer than 400 characters')
 
-  const provider = deps.provider ?? ((process.env.WEB_SEARCH_PROVIDER as 'brave' | 'tavily') || 'brave')
+  // The flag gates the whole handler: a disabled tool must not read a key or open a socket, even when
+  // a caller reaches the exported function directly instead of through the runner.
+  const enabled = deps.enabled ?? isWebSearchEnabled()
+  if (!enabled) {
+    throw new WebSearchError('web_search is disabled; set WEB_SEARCH_ENABLED=true to allow network calls')
+  }
+
+  // Validate before the key is read. A cast let a typo such as "Tavily" or "brave " through, which
+  // then sent WEB_SEARCH_API_KEY to Brave while normalisation read the Tavily shape, so a real
+  // response came back as zero results and looked like a working search.
+  const rawProvider = String(deps.provider ?? process.env.WEB_SEARCH_PROVIDER ?? 'brave').trim().toLowerCase()
+  if (rawProvider !== 'brave' && rawProvider !== 'tavily') {
+    throw new WebSearchError(`WEB_SEARCH_PROVIDER must be "brave" or "tavily", not "${rawProvider}"`)
+  }
+  const provider = rawProvider as 'brave' | 'tavily'
+
   const apiKey = deps.apiKey ?? process.env.WEB_SEARCH_API_KEY ?? ''
   if (!apiKey) throw new WebSearchError('WEB_SEARCH_API_KEY is not set, so web_search cannot run')
   const count = clampCount(args?.count)
   const doFetch = deps.fetchImpl ?? fetch
-  const signal = deps.timeoutMs ? AbortSignal.timeout(Math.max(1, Math.floor(deps.timeoutMs))) : undefined
+  // A finite default: without one a stalled provider holds the whole invocation open.
+  const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const signal = AbortSignal.timeout(Math.max(1, Math.floor(timeoutMs)))
 
   let res: Response
   if (provider === 'tavily') {
@@ -95,14 +118,14 @@ export async function runWebSearch(
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({ query, max_results: count, search_depth: 'basic' }),
-      ...(signal ? { signal } : {}),
+      signal,
     })
   } else {
     const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`
     res = await doFetch(url, {
       method: 'GET',
       headers: { Accept: 'application/json', 'X-Subscription-Token': apiKey },
-      ...(signal ? { signal } : {}),
+      signal,
     })
   }
 

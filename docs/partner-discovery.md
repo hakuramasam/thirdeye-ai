@@ -1,7 +1,7 @@
 # Partner discovery surfaces (2026-11-07)
 
 Additive only: no existing route, price or behaviour changed. Live on
-`https://thirdeye-ai-alpha.vercel.app`.
+`https://thirdeyeai.fs.kg`.
 
 | Surface | Path | Auth |
 | --- | --- | --- |

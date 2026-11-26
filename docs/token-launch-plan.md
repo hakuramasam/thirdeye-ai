@@ -324,7 +324,7 @@ is claim by hand, then sweep by script.
 
 ## Partner hub (live 2026-11-07, commit e108706)
 
-Private integration surface at `https://thirdeye-ai-alpha.vercel.app/partner`, gated
+Private integration surface at `https://thirdeyeai.fs.kg/partner`, gated
 server-side. No client-side gate exists anywhere.
 
 Access:

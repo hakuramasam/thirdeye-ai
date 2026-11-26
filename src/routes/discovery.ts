@@ -10,7 +10,7 @@ import { query } from '../db/index.js'
 import { env } from '../lib/env.js'
 import type { AppEnv } from '../lib/types.js'
 
-const BASE_URL = process.env.PUBLIC_BASE_URL || 'https://thirdeye-ai-alpha.vercel.app'
+const BASE_URL = process.env.PUBLIC_BASE_URL || 'https://thirdeyeai.fs.kg'
 const SERVICE_VERSION = '0.2.0'
 const UPDATED_AT = '2026-11-07'
 

@@ -11,7 +11,7 @@ import { query } from '../db/index.js'
  */
 
 const API = () => `https://api.telegram.org/bot${env.telegramBotToken}`
-const SITE = 'https://thirdeye-ai-alpha.vercel.app'
+const SITE = 'https://thirdeyeai.fs.kg'
 const JOIN_GRACE_HOURS = 24
 
 async function tg(method: string, payload: Record<string, unknown>): Promise<void> {

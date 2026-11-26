@@ -236,7 +236,7 @@ export async function connectWalletConnect(): Promise<Eip1193Provider> {
     metadata: {
       name: 'Thirdeye AI',
       description: 'OpenAI-compatible AI gateway with USDC prepaid credits',
-      url: typeof location !== 'undefined' ? location.origin : 'https://thirdeye-ai-alpha.vercel.app',
+      url: typeof location !== 'undefined' ? location.origin : 'https://thirdeyeai.fs.kg',
       icons: [],
     },
   })

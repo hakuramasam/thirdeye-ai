@@ -18,3 +18,15 @@ Adding a role means adding a folder here and pointing its `system_prompt` at it,
 | DOCS | `team/agents/docs/SKILL.md` |
 | PRODUCT | `team/agents/product/SKILL.md` |
 | AGENT-ENGINEER | `team/agents/agent-engineer/SKILL.md` |
+
+## Platform adapters
+
+The role packs in this directory are the single source of role-specific knowledge. Codex, Claude Code, Cursor, GitHub Copilot and Gemini CLI adapters reference these packs rather than maintaining separate copies.
+
+- Platform map and per-role host tool scopes: `team/platforms.json`
+- Runtime tool contracts: `team/tools.json`
+- Knowledge, skill, workflow and schema index: `team/resources.json`
+- Cross-platform setup and limitations: `docs/agent-platforms.md`
+- Drift validation: `npm run agent:platforms:check`
+
+Host tool profiles are not application authorization. The in-product runner and `team/policies/authority.md` remain authoritative.

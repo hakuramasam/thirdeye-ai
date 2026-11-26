@@ -1,0 +1,312 @@
+{
+  "version": 1,
+  "source_of_truth": {
+    "roster": "team/organization.json",
+    "authority": "team/policies/authority.md",
+    "role_knowledge": "team/agents/<role>/SKILL.md",
+    "pipelines": "team/pipelines/",
+    "workflows": "team/workflows/",
+    "task_contract": "src/team/schemas/task.schema.json",
+    "message_contract": "src/team/schemas/agent-message.schema.json",
+    "report_contract": "src/team/schemas/agent-report.schema.json"
+  },
+  "platforms": {
+    "codex": {
+      "instructions": "AGENTS.md",
+      "skills": ".agents/skills/",
+      "agents": ".codex/agents/<role>.toml"
+    },
+    "claude_code": {
+      "instructions": "CLAUDE.md",
+      "skills": ".claude/skills/",
+      "agents": ".claude/agents/<role>.md"
+    },
+    "cursor": {
+      "instructions": "AGENTS.md",
+      "rules": ".cursor/rules/thirdeye-team.mdc"
+    },
+    "github_copilot": {
+      "instructions": ".github/copilot-instructions.md",
+      "agents": ".github/agents/<role>.agent.md"
+    },
+    "gemini_cli": {
+      "instructions": "GEMINI.md",
+      "skills": ".agents/skills/"
+    },
+    "github_actions": {
+      "ci": ".github/workflows/ci.yml",
+      "neon_lifecycle": ".github/workflows/neon-preview-branch-expiry.yml",
+      "controlled_preview": ".github/workflows/controlled-vercel-preview.yml",
+      "dependabot": ".github/dependabot.yml",
+      "pull_request_template": ".github/PULL_REQUEST_TEMPLATE.md",
+      "issue_template": ".github/ISSUE_TEMPLATE/agent-task.yml"
+    }
+  },
+  "tool_authority": {
+    "principle": "Platform profiles describe task focus and expose only necessary host tools; they do not grant application permissions.",
+    "runtime_enforced": [
+      "repo_read",
+      "repo_write",
+      "delegate_to_agent",
+      "http_fetch",
+      "read_artifact",
+      "namespaced_mcp_tools",
+      "x402_payment_policy"
+    ],
+    "write_rule": "The runner adds repo_write when run-level allowWrite=true or the agent record has repo_access=write. The team authority policy requires task-scoped grants; persisted write entitlements must be treated as high risk and approved by the owner. The server enforces agent/* branches, allowlisted paths, size/file caps and credential checks; it opens PRs and never merges.",
+    "external_mcp": "Only explicitly configured MCP servers with approved public hosts may be used. No provider credentials or endpoints are embedded in this repository."
+  },
+  "verification": {
+    "typecheck": "npm run typecheck",
+    "tests": "env -u DATABASE_URL -u DATABASE_URL_UNPOOLED npm test",
+    "web_build": "npm run build:web",
+    "platform_config": "node scripts/validate-agent-platforms.mjs"
+  },
+  "role_profiles": [
+    {
+      "agent_id": "tdt_hermes",
+      "slug": "hermes",
+      "skill": "team/agents/hermes/SKILL.md",
+      "copilot_profile": ".github/agents/hermes.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "agent"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Task"
+      ],
+      "codex_agent": ".codex/agents/hermes.toml",
+      "agent_skill": ".agents/skills/hermes/SKILL.md",
+      "claude_skill": ".claude/skills/hermes/SKILL.md"
+    },
+    {
+      "agent_id": "tdt_product",
+      "slug": "product",
+      "skill": "team/agents/product/SKILL.md",
+      "copilot_profile": ".github/agents/product.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
+      ],
+      "codex_agent": ".codex/agents/product.toml",
+      "agent_skill": ".agents/skills/product/SKILL.md",
+      "claude_skill": ".claude/skills/product/SKILL.md"
+    },
+    {
+      "agent_id": "tdt_architect",
+      "slug": "architect",
+      "skill": "team/agents/architect/SKILL.md",
+      "copilot_profile": ".github/agents/architect.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit",
+        "agent"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
+      ],
+      "codex_agent": ".codex/agents/architect.toml",
+      "agent_skill": ".agents/skills/architect/SKILL.md",
+      "claude_skill": ".claude/skills/architect/SKILL.md"
+    },
+    {
+      "agent_id": "tdt_backend",
+      "slug": "backend",
+      "skill": "team/agents/backend/SKILL.md",
+      "copilot_profile": ".github/agents/backend.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
+      ],
+      "codex_agent": ".codex/agents/backend.toml",
+      "agent_skill": ".agents/skills/backend/SKILL.md",
+      "claude_skill": ".claude/skills/backend/SKILL.md"
+    },
+    {
+      "agent_id": "tdt_frontend",
+      "slug": "frontend",
+      "skill": "team/agents/frontend/SKILL.md",
+      "copilot_profile": ".github/agents/frontend.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
+      ],
+      "codex_agent": ".codex/agents/frontend.toml",
+      "agent_skill": ".agents/skills/frontend/SKILL.md",
+      "claude_skill": ".claude/skills/frontend/SKILL.md"
+    },
+    {
+      "agent_id": "tdt_blockchain",
+      "slug": "blockchain",
+      "skill": "team/agents/blockchain/SKILL.md",
+      "copilot_profile": ".github/agents/blockchain.agent.md",
+      "tools": [
+        "read",
+        "search"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob"
+      ],
+      "codex_agent": ".codex/agents/blockchain.toml",
+      "agent_skill": ".agents/skills/blockchain/SKILL.md",
+      "claude_skill": ".claude/skills/blockchain/SKILL.md"
+    },
+    {
+      "agent_id": "tdt_intelligence",
+      "slug": "intelligence",
+      "skill": "team/agents/intelligence/SKILL.md",
+      "copilot_profile": ".github/agents/intelligence.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
+      ],
+      "codex_agent": ".codex/agents/intelligence.toml",
+      "agent_skill": ".agents/skills/intelligence/SKILL.md",
+      "claude_skill": ".claude/skills/intelligence/SKILL.md"
+    },
+    {
+      "agent_id": "tdt_agent-engineer",
+      "slug": "agent-engineer",
+      "skill": "team/agents/agent-engineer/SKILL.md",
+      "copilot_profile": ".github/agents/agent-engineer.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
+      ],
+      "codex_agent": ".codex/agents/agent-engineer.toml",
+      "agent_skill": ".agents/skills/agent-engineer/SKILL.md",
+      "claude_skill": ".claude/skills/agent-engineer/SKILL.md"
+    },
+    {
+      "agent_id": "tdt_qa",
+      "slug": "qa",
+      "skill": "team/agents/qa/SKILL.md",
+      "copilot_profile": ".github/agents/qa.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "execute"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Bash"
+      ],
+      "codex_agent": ".codex/agents/qa.toml",
+      "agent_skill": ".agents/skills/qa/SKILL.md",
+      "claude_skill": ".claude/skills/qa/SKILL.md"
+    },
+    {
+      "agent_id": "tdt_sentinel",
+      "slug": "sentinel",
+      "skill": "team/agents/sentinel/SKILL.md",
+      "copilot_profile": ".github/agents/sentinel.agent.md",
+      "tools": [
+        "read",
+        "search"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob"
+      ],
+      "codex_agent": ".codex/agents/sentinel.toml",
+      "agent_skill": ".agents/skills/sentinel/SKILL.md",
+      "claude_skill": ".claude/skills/sentinel/SKILL.md"
+    },
+    {
+      "agent_id": "tdt_devops",
+      "slug": "devops",
+      "skill": "team/agents/devops/SKILL.md",
+      "copilot_profile": ".github/agents/devops.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
+      ],
+      "codex_agent": ".codex/agents/devops.toml",
+      "agent_skill": ".agents/skills/devops/SKILL.md",
+      "claude_skill": ".claude/skills/devops/SKILL.md"
+    },
+    {
+      "agent_id": "tdt_docs",
+      "slug": "docs",
+      "skill": "team/agents/docs/SKILL.md",
+      "copilot_profile": ".github/agents/docs.agent.md",
+      "tools": [
+        "read",
+        "search",
+        "edit"
+      ],
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Edit",
+        "Write"
+      ],
+      "codex_agent": ".codex/agents/docs.toml",
+      "agent_skill": ".agents/skills/docs/SKILL.md",
+      "claude_skill": ".claude/skills/docs/SKILL.md"
+    }
+  ]
+}

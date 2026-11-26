@@ -16,14 +16,14 @@ import { WHITEPAPER } from './whitepaper.js'
 const esc = (s: unknown): string =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
 
-const SITE = 'https://thirdeye-ai-alpha.vercel.app'
+const SITE = 'https://thirdeyeai.fs.kg'
 
 /**
  * The project's official contact address, published here on purpose.
  *
  * Token listings ask for an address on the project's own domain. The project domain is a
- * vercel.app subdomain, which cannot receive mail, so the address is hosted on AgentMail's public
- * domain instead. Publishing it on this page is what makes it verifiable: a reviewer can see the
+ * served host, and mail is handled on AgentMail's public domain by choice rather than because the
+ * domain cannot receive mail: a mailbox there would need MX records and ongoing maintenance. Publishing it on this page is what makes it verifiable: a reviewer can see the
  * address the project claims, on the project's own site, next to the contract and the creator
  * address it belongs to. Keep this value in sync with any listing submission.
  */
@@ -156,7 +156,7 @@ const PLATFORM = `
   <div class="card"><h3>Streaming and tools</h3><p>Server-sent events and OpenAI-shaped tool calling, both billed the same way as a normal call.</p></div>
 </div>
 <h2>Use it</h2>
-<pre><code>curl https://thirdeye-ai-alpha.vercel.app/api/v1/chat/completions \\
+<pre><code>curl https://thirdeyeai.fs.kg/api/v1/chat/completions \\
   -H "authorization: Bearer $THIRDEYE_API_KEY" \\
   -H "content-type: application/json" \\
   -d '{"model":"gpt-oss-120b","messages":[{"role":"user","content":"hi"}]}'</code></pre>
@@ -295,7 +295,7 @@ const DOCS_AGENTS = `
 <h2>What an identity is, and is not</h2>
 <p>An identity belongs to an owner account and its key bills that account. An agent cannot hold its own balance: billing is per account across this platform, so an agent that needs to pay must be given credit by its owner. Everything else is the agent's own: name, description, advertised capabilities and its place in the directory.</p>
 <h2>Register</h2>
-<pre><code>curl -X POST https://thirdeye-ai-alpha.vercel.app/api/v1/agents/register \\
+<pre><code>curl -X POST https://thirdeyeai.fs.kg/api/v1/agents/register \\
   -H "authorization: Bearer $THIRDEYE_API_KEY" \\
   -H "content-type: application/json" \\
   -d '{"name":"Ledger Owl","description":"Watches onchain transfer logs and reports anomalies twice an hour.","capabilities":["log-watch"],"homepage":"https://example.com/owl"}'</code></pre>
@@ -317,7 +317,7 @@ const DOCS_AGENTS = `
 </tbody></table>
 <h2>Using the key</h2>
 <p>An agent key is an ordinary platform key, so it works on the inference endpoints:</p>
-<pre><code>curl https://thirdeye-ai-alpha.vercel.app/api/v1/chat/completions \\
+<pre><code>curl https://thirdeyeai.fs.kg/api/v1/chat/completions \\
   -H "authorization: Bearer $AGENT_KEY" \\
   -H "content-type: application/json" \\
   -d '{"model":"gpt-oss-120b","messages":[{"role":"user","content":"hello"}]}'</code></pre>
@@ -532,7 +532,7 @@ const CONTACT = `
   <div class="card"><h3>Partnerships</h3><p>First contact for barter and integration enquiries. Terms already published at <a href="/partnerships">Partnerships</a>.</p></div>
 </div>
 <h2>Why the address is not on this domain</h2>
-<p>The project site runs on a <code>vercel.app</code> subdomain. A subdomain of a hosting platform cannot receive mail, so the project mail is hosted on AgentMail's public domain instead. That is a public mail domain in the same sense as Gmail, which is why this page exists: the address is published on the project's own site, next to the contract and the creator address it belongs to, so a reviewer can confirm that the project is the party claiming it rather than relying on the address alone.</p>
+<p>The project site is served from <code>thirdeyeai.fs.kg</code>, and project mail is handled by AgentMail by choice rather than because mail on this domain is impossible: a mailbox there would need MX records and a maintained inbox, so the address lives on a public mail domain in the same sense as Gmail. Publishing it here, on the project's own site, is what makes it verifiable: the address is published on the project's own site, next to the contract and the creator address it belongs to, so a reviewer can confirm that the project is the party claiming it rather than relying on the address alone.</p>
 <h2>Verifying that this is the project</h2>
 <p>Every anchor below is onchain or on a public host, so none of them depend on this page being truthful.</p>
 <table><thead><tr><th>Anchor</th><th>Value</th></tr></thead><tbody>
