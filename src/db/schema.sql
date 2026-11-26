@@ -538,7 +538,7 @@ CREATE TABLE IF NOT EXISTS agent_audit_events (
   pipeline_id           text,
   stage_id              text,
   event_type            text NOT NULL,
-  actor_type            text NOT NULL DEFAULT 'agent',        -- agent | system | owner | scheduler
+  actor_type            text NOT NULL DEFAULT 'agent',        -- agent | system | owner | scheduler | user | service
   authorization_context jsonb NOT NULL DEFAULT '{}',
   tool_name             text,
   artifact_ids          jsonb NOT NULL DEFAULT '[]',

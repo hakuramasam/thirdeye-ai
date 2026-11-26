@@ -28,7 +28,7 @@ import { query } from '../db/index.js'
 import { newId } from '../lib/env.js'
 import { traceIdFrom } from '../telemetry/langfuse.js'
 
-export type ActorType = 'agent' | 'system' | 'owner' | 'scheduler'
+export type ActorType = 'agent' | 'system' | 'owner' | 'scheduler' | 'user' | 'service'
 
 export type AuditEventType =
   | 'run.created'
