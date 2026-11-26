@@ -10,7 +10,10 @@ export type KeyRow = {
   credit_usd_micros?: number | null
 }
 export type ByokRow = { provider: string; created_at: string }
-export type ModelRow = { model: string; provider: string; price_in_1m_usd_micros: number; price_out_1m_usd_micros: number }
+export type ModelRow = {
+  model: string; provider: string; price_in_1m_usd_micros: number; price_out_1m_usd_micros: number
+  available?: boolean; byok_supported?: boolean; unavailable_reason?: string | null; provider_key_var?: string
+}
 export type AgentRow = {
   id: string; name: string; system_prompt: string; model: string
   mcp_servers: { name: string; url: string }[]

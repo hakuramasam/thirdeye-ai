@@ -1,4 +1,5 @@
-import { one } from '../db/index.js'
+import { one, query } from '../db/index.js'
+import { availableModelIds, cheapestAvailable, providerNameFor } from '../lib/availability.js'
 import { decryptSecret, env } from '../lib/env.js'
 import type { ModelRow } from '../lib/pricing.js'
 import type { UserRow } from '../lib/types.js'
@@ -85,21 +86,28 @@ export async function getModelRow(modelName: string): Promise<ModelRow | null> {
   return row
 }
 
-export function deriveProviderName(model: ModelRow): string {
-  if (model.provider === 'openai' || model.provider === 'anthropic' || model.provider === 'mock') {
-    return model.provider
-  }
-  if (model.base_url) {
-    try {
-      const url = new URL(model.base_url.startsWith('http') ? model.base_url : `https://${model.base_url}`)
-      let host = url.hostname.toLowerCase()
-      host = host.replace(/^api\./, '').replace(/\.[a-z]+$/, '')
-      return host
-    } catch (_) {
-      return model.provider
-    }
-  }
-  return model.provider
+/**
+ * Provider name for a catalogue row, in the form `PROV_<NAME>_API_KEY` is built from.
+ *
+ * The rule lives in src/lib/availability.ts now, because the catalogue endpoint has to report
+ * availability from the same derivation the resolver uses. Two copies of this rule would drift
+ * and the drift would show up as a model listed as servable and then refused. Kept as an export
+ * so existing callers and the provider adapter stay untouched.
+ */
+export const deriveProviderName = providerNameFor
+
+/** Every enabled catalogue row. Small table, read on the rare path that needs all of it. */
+export async function listEnabledModels(): Promise<ModelRow[]> {
+  const res = await query('SELECT * FROM models_catalog WHERE enabled = true')
+  return (res.rows ?? []) as ModelRow[]
+}
+
+/**
+ * Resolve the `auto` pseudo-model to the cheapest model that is servable right now, or null
+ * when the platform holds no provider key at all.
+ */
+export async function resolveAutoModel(): Promise<ModelRow | null> {
+  return cheapestAvailable(await listEnabledModels(), env.providerKeys)
 }
 
 export async function resolveProvider(user: UserRow, model: ModelRow): Promise<ProviderCall> {
@@ -125,17 +133,30 @@ export async function resolveProvider(user: UserRow, model: ModelRow): Promise<P
     } else {
       apiKey = env.providerKeys[providerName] || ''
       if (!apiKey) {
-        throw new UpstreamError(
-          `No API key available for provider ${providerName}. Add one in the dashboard (BYOK) or use a model the platform brokers.`,
-          402,
-          {
-            error: {
-              message: `No API key available for provider ${providerName}. Add one in the dashboard (BYOK) or use a model the platform brokers.`,
-              type: 'billing',
-              code: 402,
-            },
-          }
-        )
+        // Name what actually works. The old message said "use a model the platform brokers"
+        // without naming one, so a caller had to guess, and the reasonable guess was that the
+        // platform needed a key it did not have. The list is computed from the same key lookup
+        // that just failed, so it cannot claim a model this code path would then refuse.
+        const servable = availableModelIds(await listEnabledModels(), env.providerKeys)
+        const offered = servable.slice(0, 6).join(', ')
+        const message =
+          `Model '${model.model}' is catalogued but the platform holds no ${providerName} key, so it cannot be served on platform credit. ` +
+          (servable.length
+            ? `Retry with one of: ${offered}. `
+            : `No model is servable on platform credit right now. `) +
+          `Or add your own ${providerName} key in the dashboard (BYOK), which is metered at 2% of catalogue price.`
+        throw new UpstreamError(message, 402, {
+          error: {
+            message,
+            type: 'billing',
+            code: 'model_unavailable',
+            param: 'model',
+            model: model.model,
+            provider: providerName,
+            available_models: servable,
+            hint: servable.length ? 'retry_with_available_model' : 'byok_required',
+          },
+        })
       }
     }
   }

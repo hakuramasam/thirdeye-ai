@@ -8,7 +8,10 @@ type AgentRow = {
   cron: string | null; last_run_at: string | null; status: string; created_at: string
 }
 type RunRow = { id: string; status: string; input: string; output: string | null; tool_calls: number; spend_usd_micros: number; error: string | null; created_at: string }
-type ModelRow = { model: string; provider: string; price_in_1m_usd_micros: number; price_out_1m_usd_micros: number }
+type ModelRow = {
+  model: string; provider: string; price_in_1m_usd_micros: number; price_out_1m_usd_micros: number
+  available?: boolean; byok_supported?: boolean; unavailable_reason?: string | null; provider_key_var?: string
+}
 
 /* ---------------- agents ---------------- */
 type Draft = {
@@ -325,13 +328,22 @@ function Models() {
     <div className="card">
       <h2>Model catalog</h2>
       <p className="muted small">Brokered calls are charged catalog price + platform margin. BYOK calls are metered at 2%.</p>
+      <p className="muted small">
+        A model marked <strong>needs your key</strong> is catalogued but the platform has no upstream key for it,
+        so it answers only with a key you supply. Anything marked <strong>ready</strong> works on your credit today.
+      </p>
       <table>
-        <thead><tr><th>Model</th><th>Provider</th><th>Input price</th><th>Output price</th></tr></thead>
+        <thead><tr><th>Model</th><th>Provider</th><th>Status</th><th>Input price</th><th>Output price</th></tr></thead>
         <tbody>
           {models.map((m) => (
             <tr key={m.model}>
               <td className="mono">{m.model}</td>
               <td><span className="pill">{m.provider}</span></td>
+              <td>
+                {m.available
+                  ? <span className="pill">ready</span>
+                  : <span className="pill" title={`Set ${m.provider_key_var || 'a provider key'} to serve this on platform credit`}>needs your key</span>}
+              </td>
               <td>{'$' + (m.price_in_1m_usd_micros / 1e6).toFixed(4)}/1M</td>
               <td>{'$' + (m.price_out_1m_usd_micros / 1e6).toFixed(4)}/1M</td>
             </tr>
@@ -357,7 +369,7 @@ const client = new OpenAI({
 })
 
 const res = await client.chat.completions.create({
-  model: 'gpt-4o-mini',
+  model: 'gpt-oss-120b', // or 'auto' for the cheapest model servable right now
   messages: [{ role: 'user', content: 'Hello!' }],
 })
 console.log(res.choices[0].message.content)`}</pre>
@@ -369,7 +381,7 @@ console.log(res.choices[0].message.content)`}</pre>
   -H "Authorization: Bearer sk-thirdeye-…" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "gpt-4o-mini",
+    "model": "gpt-oss-120b",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'`}</pre>
       </div>

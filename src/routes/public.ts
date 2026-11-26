@@ -186,7 +186,7 @@ const DOCS_API = `
 authorization: Bearer $THIRDEYE_API_KEY</code></pre>
 <h2>Endpoints</h2>
 <table><thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead><tbody>
-<tr><td>GET</td><td><code>/api/v1/models</code></td><td>Public model catalogue with per-model pricing. The only endpoint that needs no key.</td></tr>
+<tr><td>GET</td><td><code>/api/v1/models</code></td><td>Model catalogue with per-model pricing and an availability flag. Requires an API key; <code>/api/models/public</code> is the version that does not.</td></tr>
 <tr><td>POST</td><td><code>/api/v1/chat/completions</code></td><td>Chat completions, streaming or buffered, with tool calling.</td></tr>
 <tr><td>GET</td><td><code>/api/keys</code></td><td>List your keys with per-key credit, budget and rate limits.</td></tr>
 <tr><td>POST</td><td><code>/api/keys</code></td><td>Issue a key. The secret is shown once.</td></tr>
@@ -199,12 +199,25 @@ authorization: Bearer $THIRDEYE_API_KEY</code></pre>
 <tr><td><code>x-thirdeye-cost-usd</code></td><td>The billed amount for this call, including margin. This is the number to quote.</td></tr>
 <tr><td><code>x-thirdeye-key-credit-remaining-usd</code></td><td>Credit left on the key that paid, when the key carries its own balance.</td></tr>
 <tr><td><code>x-thirdeye-key-budget-remaining-usd</code></td><td>Spend left under the key's monthly ceiling, when one is set.</td></tr>
+<tr><td><code>x-thirdeye-model-resolved</code></td><td>The catalogue model that actually answered, when you sent an alias or <code>auto</code>.</td></tr>
 </tbody></table>
 <p class="muted">Do not compute cost from the catalogue and present it as the price you paid: catalogue rates exclude the platform margin, so the arithmetic understates the real charge by roughly ten percent.</p>
+<h2>Choosing a model</h2>
+<p>The catalogue holds models the platform can serve on your credit and models it cannot. Each entry says which:
+<code>available: true</code> means the platform holds an upstream key and the model answers on your balance.
+<code>available: false</code> with <code>unavailable_reason: "no_platform_key"</code> means the model is catalogued and priced,
+but it answers only with a provider key you supply yourself (BYOK). <code>byok_supported</code> tells you whether that option exists.</p>
+<p>If you would rather not track which models are servable, send <code>model: "auto"</code>. It resolves to the cheapest model
+that is servable at the moment of the call, and <code>x-thirdeye-model-resolved</code> names what actually answered.
+<code>auto</code> never resolves to the mock model.</p>
+<p>Naming a model that is not servable returns <code>402</code> with code <code>model_unavailable</code> and an
+<code>available_models</code> array, so a client can retry immediately instead of guessing. When no model is servable at all,
+<code>auto</code> returns <code>503</code> with code <code>no_model_available</code>.</p>
 <h2>Errors</h2>
 <table><thead><tr><th>Status</th><th>Code</th><th>Meaning</th></tr></thead><tbody>
 <tr><td>401</td><td><code>auth</code></td><td>No valid session or key.</td></tr>
-<tr><td>402</td><td><code>insufficient_credit</code> / <code>budget_exceeded</code></td><td>The account or the key cannot cover the call.</td></tr>
+<tr><td>402</td><td><code>insufficient_credit</code> / <code>budget_exceeded</code> / <code>model_unavailable</code></td><td>The account or the key cannot cover the call, or the named model needs a provider key the platform does not hold. <code>model_unavailable</code> carries <code>available_models</code>.</td></tr>
+<tr><td>503</td><td><code>no_model_available</code></td><td><code>auto</code> was requested and no model is servable right now.</td></tr>
 <tr><td>404</td><td><code>model_not_found</code></td><td>The model is not in the catalogue.</td></tr>
 <tr><td>429</td><td><code>rate_limit</code></td><td>The key is over its RPM or TPM window, or the endpoint is protecting itself.</td></tr>
 </tbody></table>

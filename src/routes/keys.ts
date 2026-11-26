@@ -2,7 +2,8 @@ import { Hono } from 'hono'
 import type { SessionApp } from '../lib/session.js'
 import { requireUser } from '../lib/session.js'
 import { createApiKey } from '../lib/keys.js'
-import { encryptSecret, newId } from '../lib/env.js'
+import { encryptSecret, env, newId } from '../lib/env.js'
+import { modelAvailability } from '../lib/availability.js'
 import { query, one } from '../db/index.js'
 
 export function registerKeysRoutes(app: SessionApp): void {
@@ -327,17 +328,27 @@ export function registerKeysRoutes(app: SessionApp): void {
   // GET /api/models
   app.get('/api/models', requireUser, async (c) => {
     const res = await query(
-      `SELECT model, provider, price_in_1m_usd_micros, price_out_1m_usd_micros
+      `SELECT model, provider, base_url, enabled, price_in_1m_usd_micros, price_out_1m_usd_micros
        FROM models_catalog
        WHERE enabled = true
        ORDER BY model ASC`
     )
-    const models = res.rows.map((r) => ({
-      model: r.model,
-      provider: r.provider,
-      price_in_1m_usd_micros: Number(r.price_in_1m_usd_micros),
-      price_out_1m_usd_micros: Number(r.price_out_1m_usd_micros),
-    }))
+    // Availability is shown in the dashboard for the same reason it is shown in the API: the
+    // catalogue holds models we price but cannot currently serve, and a user picking from this
+    // table deserves to know which ones will answer without a key of their own.
+    const models = res.rows.map((r: any) => {
+      const availability = modelAvailability(r, env.providerKeys)
+      return {
+        model: r.model,
+        provider: r.provider,
+        price_in_1m_usd_micros: Number(r.price_in_1m_usd_micros),
+        price_out_1m_usd_micros: Number(r.price_out_1m_usd_micros),
+        available: availability.available,
+        byok_supported: availability.byok_supported,
+        unavailable_reason: availability.unavailable_reason ?? null,
+        provider_key_var: `PROV_${availability.provider.toUpperCase()}_API_KEY`,
+      }
+    })
 
     return c.json({ models })
   })
