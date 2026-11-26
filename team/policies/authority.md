@@ -11,20 +11,25 @@ Autonomous inside it, escalation outside it, and no agent may widen its own auth
 
 HERMES decides, without asking:
 
-- Which teammate takes a task, and whether that teammate may hold `repo_write` for it.
+- Which teammate takes a task, and whether that teammate may hold repo_write for it.
 - Whether a proposed change is in scope for the current project or feature brief.
 - Whether a bug report, user feedback item or review comment justifies work at all, and its order.
 - Whether a teammate's report is acceptable, needs another pass, or should be abandoned.
 - Whether to open a pull request for a change, including fixes to non-money code paths.
+- Whether a completed technical evidence gate may advance to the next evaluation stage, provided the evaluator confirms exact-SHA provenance and policy requirements.
 
 HERMES must escalate, never decide alone:
 
 - Anything that moves money: pricing, credit grants, refunds, revshare, x402 caps, seller allowlists.
-- Anything touching `src/payments/`, billing, settlement, keys, `schema.sql`, or production secrets.
-- Merging to `main` and deploying to production. A green CI run and Sam's word decide that, not HERMES.
+- Anything touching src/payments/, billing, settlement, keys, schema.sql, or production secrets.
+- Merging any pull request into main or another default branch, until HERMES graduation and every merge gate in team/policies/autonomous-authority-control-plane.md are active.
+- Production deployment authorization and production environment approval.
+- Financial acceptance, independent security acceptance, and owner-level permission changes.
 - Deleting data, revoking customer keys, or changing another user's account.
 - Public statements about price, performance or partnerships. Measured first, approved by Sam.
 - Hiring anyone into the team, or changing an agent's standing permissions.
+
+A passing test or CI run is evidence for its exact technical predicate only. It is not, by itself, financial acceptance, security acceptance, production readiness, or permission to access production. See team/policies/autonomous-authority-control-plane.md for the complete role matrix, gates, capability policy and tracking contract.
 
 ### Every specialist
 
@@ -33,26 +38,29 @@ unknown. Never decides: scope expansion, permissions, money, or anything on HERM
 
 ## The write grant
 
-`repo_write` is granted per task, not per agent row. A run holds it only when its own
-`repo_access` is `write` or an entitled orchestrator passed `allow_write: true` for that single
-delegation. The grant is recorded in the parent's report as `[write granted for this task]` or
-`[write withheld]`.
+repo_write is granted per task, not per agent row. A run holds it only when its own
+repo_access is write or an entitled orchestrator passed allow_write: true for that single
+delegation. The grant is recorded in the parent's report as [write granted for this task] or
+[write withheld].
 
-What write can never do, enforced in `src/agents/repo-write.ts`, not in a prompt:
+What write can never do, enforced in src/agents/repo-write.ts, not in a prompt:
 
-- Commit to `main` or any default branch. Every write lands on a new `agent/<slug>` branch.
+- Commit to main or any default branch. Every write lands on a new agent/<slug> branch.
 - Merge a pull request. The tool opens a PR and stops.
-- Touch money paths, `schema.sql`, keys, env files or `.git`.
-- Write outside `src/`, `web/`, `tests/`, `docs/`, `team/`, `.github/`.
+- Touch money paths, schema.sql, keys, env files or .git.
+- Write outside src/, web/, tests/, docs/, team/, .github/.
 - Commit credential-shaped content, more than 12 files, or more than 200 KB.
 
 ## Evidence standard
 
-A report is a diagnosis, an evidence line with `path:line`, a proposed patch, and the verification
+A report is a diagnosis, an evidence line with path:line, a proposed patch, and the verification
 that should prove it. "Fixed" is not a status an agent may claim: nothing an agent says makes a
-change live. CI green plus a deploy SHA is the only proof, and that is recorded by the human side.
+change live. A technical pass must be bound to the exact immutable commit SHA and trusted workflow provenance. Domain acceptance and production release require their separate gates and approvals.
 
 ## Decision log
 
-Every delegated task records its grant decision. Until the audit log exists, the parent run's
-`tool_calls` row is the record; that gap is why autonomous merges stay off the table.
+Every delegated task records its grant decision. Until authority evaluations and grants are persisted to the audit log, the parent run's
+tool_calls row is the record; that gap is why autonomous merges stay off the table.
+All authority evaluations, grants, approvals, denials and revocations must use the append-only
+audit model described in docs/architecture/audit-log.md. The new authority evaluation workflow
+starts in observe-only mode and does not issue runtime permissions.
