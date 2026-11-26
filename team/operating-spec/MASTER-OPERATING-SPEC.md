@@ -4,7 +4,9 @@ This is the team's single operating specification. Read it before planning any t
 Provenance
   source   : owner directive supplied 2026-11-15 by Hakurama Sam
   version  : 1.0
-  body     : reproduced verbatim below, no edits
+  body     : reproduced verbatim below, except the role-mapping edits recorded in
+             deviations (sections F, G and K name the live roster identity instead of a role
+             that was never created)
   contract : the machine-readable half of this document is src/team/spec.json. tests/operating-spec.test.ts
              binds the two halves where they can be checked mechanically (role ids, categories,
              artifact kinds, gate order and selected phrases); it does not verify this prose in full
@@ -17,6 +19,10 @@ Provenance
     - a pipeline file wins on stage mechanics (order, gate text, failure move).
     - this document wins on requirements: a task needs an owner, a gate, an artifact and evidence.
     - a conflict between the machine contract and this body is a failing test, not a judgement call.
+deviations:
+  - section F (wallet and finance) names tdt_blockchain, section G (data) names tdt_intelligence and
+    section K's role list follows the live roster; no tdt_wallet or tdt_data agent exists, and the
+    original directive asked for roles that were never created. Nothing else in the body is edited.
 -->
 
 THIRDEYE AI — DEVELOPMENT AGENT TEAM

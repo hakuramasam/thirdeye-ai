@@ -101,6 +101,9 @@ export const agentForRole = (role: string): string | undefined => BY_ROLE.get(ro
 export const packFor = (agentId: string): string | undefined => BY_AGENT.get(agentId)?.pack
 
 export const stageIndex = (stage: string): number => STAGES.indexOf(stage)
+
+/** The ordinary review stage: skippable only with a risk policy, never silently. */
+const REVIEW_STAGE_INDEX = STAGES.indexOf('REVIEW_READY')
 export const isStage = (v: string): boolean => STAGES.includes(v)
 export const isException = (v: string): boolean => EXCEPTIONS.includes(v)
 
@@ -117,12 +120,18 @@ export type TransitionCheck =
 /**
  * Can a task move from one lifecycle stage to another?
  *
- * Forward moves are fine, and the gates a move jumps over are reported rather than hidden, because
- * the specification allows skipping a review stage only when risk policy says so and never allows
- * skipping QA, security or release readiness. A backward move is legal but it is REWORK by
- * definition, and an exception state can be entered from anywhere and left for any stage.
+ * Forward moves are fine unless they jump something the specification protects. Skipping QA,
+ * security or release readiness is always refused. Skipping the ordinary review stage is refused
+ * too, unless the caller states that the applicable risk policy permits it, because this function
+ * has no way to read a policy itself. A backward move is legal but it is REWORK by definition. An
+ * exception state can be entered from anywhere, but leaving it is refused when the target sits
+ * beyond a mandatory gate, since the task would re-enter past a check it never ran.
  */
-export function checkTransition(from: string, to: string): TransitionCheck {
+export function checkTransition(
+  from: string,
+  to: string,
+  opts: { riskPolicyAllowsReviewSkip?: boolean } = {},
+): TransitionCheck {
   const fromIdx = stageIndex(from)
   const toIdx = stageIndex(to)
   const fromIsException = isException(from)
@@ -155,6 +164,16 @@ export function checkTransition(from: string, to: string): TransitionCheck {
     // straight to release, so a move over one of these is a refusal and the gates are the reason.
     if (skippedGates.length) {
       return { ok: false, errors: [`cannot skip mandatory gate(s): ${skippedGates.join(', ')}`] }
+    }
+    // REVIEW_READY is the ordinary review stage: skippable only when risk policy says so, and this
+    // function cannot read a policy, so the caller has to state it. Silent acceptance let a caller
+    // walk build straight into QA having never been reviewed.
+    const skipsReview = REVIEW_STAGE_INDEX > fromIdx && REVIEW_STAGE_INDEX < toIdx
+    if (skipsReview && !opts.riskPolicyAllowsReviewSkip) {
+      return {
+        ok: false,
+        errors: [`cannot skip ${STAGES[REVIEW_STAGE_INDEX]} without a risk policy that permits it`],
+      }
     }
     return { ok: true, rework: false, skippedGates: [] }
   }

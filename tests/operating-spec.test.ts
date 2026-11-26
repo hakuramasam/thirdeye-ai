@@ -185,6 +185,13 @@ test('transitions allow forward progress, flag skipped gates, and never hide a b
   assert.equal(backward.ok, true)
   assert.equal(backward.ok && backward.rework, true)
 
+  // Skipping the ordinary review stage needs the caller to state that risk policy allows it.
+  const unreviewed = checkTransition('IN_PROGRESS', 'QA_VERIFICATION')
+  assert.equal(unreviewed.ok, false, 'build must not reach QA having skipped review')
+  assert.match(!unreviewed.ok ? unreviewed.errors.join(' ') : '', /REVIEW_READY/)
+  const policySkip = checkTransition('IN_PROGRESS', 'QA_VERIFICATION', { riskPolicyAllowsReviewSkip: true })
+  assert.equal(policySkip.ok, true, 'a stated risk policy permits the review skip')
+
   assert.equal(checkTransition('IN_PROGRESS', 'BLOCKED').ok, true)
   assert.equal(checkTransition('BLOCKED', 'IN_PROGRESS').ok, true)
   assert.equal(checkTransition('IN_PROGRESS', 'INVENTED').ok, false)

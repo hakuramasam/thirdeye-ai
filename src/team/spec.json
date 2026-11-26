@@ -181,7 +181,7 @@
     "failed": "REWORK",
     "cancelled": "CANCELLED"
   },
-  "status_map_note": "The stored agent task schema keeps its eight coarse statuses. QUEUED_INTAKE stands for RECEIVED..PLANNED, because the database does not yet distinguish them; the lifecycle refinement is tracked in code, not faked in the status column.",
+  "status_map_note": "The stored agent task schema keeps its eight coarse statuses. `queued` projects onto RECEIVED, the first lifecycle stage, because the database does not yet distinguish RECEIVED..PLANNED; the lifecycle refinement is tracked in code, not faked in the status column.",
   "envelope": {
     "fields": [
       "task_id",
