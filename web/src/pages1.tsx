@@ -81,7 +81,7 @@ function Landing({ onSignedIn }: { onSignedIn: (u: User, mode: string) => void }
           <div className="card feature"><h3>Usage analytics</h3><p>Token usage, cost, and platform inflow/outflow feeds — the substrate for tokenized assets.</p></div>
         </div>
         <footer style={{ borderTop: '1px solid #212121', marginTop: 34, paddingTop: 16, fontSize: 13, color: '#888888', display: 'flex', flexWrap: 'wrap', gap: '6px 18px' }}>
-          <span>Official project email: <a href="mailto:thirdeye-ai@agentmail.to">thirdeye-ai@agentmail.to</a></span>
+          <span>Official project email: <a href="mailto:team@thirdeyeai.fs.kg">team@thirdeyeai.fs.kg</a></span>
           <a href="/contact">Contact and verification</a>
           <a href="/whitepaper">Whitepaper</a>
           <a href="/status">Status</a>
