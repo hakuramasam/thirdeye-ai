@@ -785,6 +785,19 @@ async function runAgentInner(
             } else if (tc.function.name === 'http_fetch') {
               denied = 'http_fetch requires x402 to be enabled'
               result = `Refused: http_fetch is disabled for this agent.`
+            } else if (tc.function.name === 'read_artifact') {
+              // Built-in handoff reader: keep it in the runner rather than routing it through
+              // configured MCP servers. The address is always scoped to the current user.
+              const read = await readArtifactWindow(user.id, String(args.id ?? ''), {
+                offset: Number(args.offset ?? 0),
+                limit: Number(args.limit ?? MAX_ARTIFACT_READ_CHARS),
+              })
+              if (!read.ok) {
+                result = `Tool error: artifact read ${read.code}: ${read.message}`
+              } else {
+                result = `Artifact ${read.artifact.id} (${read.artifact.kind}, ${read.artifact.bytes} bytes)\n${read.content}` +
+                  (read.truncated ? `\n[more content available; next_offset=${read.next_offset}]` : '')
+              }
             } else if (mcpTools) {
               result = (await mcpTools.call(tc.function.name, args)).slice(0, MAX_TOOL_RESULT_CHARS)
             } else {
