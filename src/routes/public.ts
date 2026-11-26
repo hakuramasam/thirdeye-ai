@@ -546,7 +546,7 @@ const CONTACT = `
 </tbody></table>
 <h2>What this address will never ask for</h2>
 <p>No one writing from this address will ask for a seed phrase, a private key, a signed transaction you did not initiate, or a payment to anywhere other than the deposit path documented in <a href="/docs/api">the API guide</a>. A message from a lookalike domain is not from us: the address on this page is the only one the project uses.</p>
-<p class="muted">Response is not instant. The mailbox is read by the project operator, and an autonomous agent triages it first; anything involving money, credentials or a contract change is escalated to the operator rather than answered by the agent.</p>
+<p class="muted">Mailbox delivery and agent triage are not yet verified. Once inbound delivery, outbound delivery and the security checks above pass, support messages are intended to be triaged by an autonomous agent, with anything involving money, credentials or a contract change escalated to the project operator rather than answered autonomously.</p>
 `
 
 export function registerPublicRoutes(app: SessionApp): void {
