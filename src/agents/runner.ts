@@ -613,8 +613,8 @@ async function runAgentInner(
                       review_pr: deps.stagingDispatch.reviewPrNumber,
                       target_sha: deps.stagingDispatch.targetSha,
                       revision_verified: true,
-                      changed_paths: (() => { try { return JSON.parse(result.match(/^REVIEW_DIFF_METADATA:(\\{.*\\})$/m)?.[1] ?? '{}').changed_paths ?? [] } catch { return [] } })(),
-                      read_required_paths: (() => { try { return JSON.parse(result.match(/^REVIEW_DIFF_METADATA:(\\{.*\\})$/m)?.[1] ?? '{}').read_required_paths ?? [] } catch { return [] } })(),
+                      changed_paths: (() => { try { return JSON.parse(result.match(/^REVIEW_DIFF_METADATA:(\{.*\})$/m)?.[1] ?? '{}').changed_paths ?? [] } catch { return [] } })(),
+                      read_required_paths: (() => { try { return JSON.parse(result.match(/^REVIEW_DIFF_METADATA:(\{.*\})$/m)?.[1] ?? '{}').read_required_paths ?? [] } catch { return [] } })(),
                     },
                   })
                   if (!diffAudit) {
