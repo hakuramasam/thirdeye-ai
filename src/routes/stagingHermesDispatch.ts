@@ -139,7 +139,7 @@ export function registerStagingHermesDispatchRoute(app: SessionApp): void {
         'Independently delegate one separate review task to QA (canonical agent tdt_qa) and one to SENTINEL (canonical agent tdt_sentinel).',
         'QA must focus on correctness, tests, regressions, and acceptance criteria. SENTINEL must focus on security boundaries, authorization, secrets, concurrency, and spend enforcement.',
         'Each reviewer report must begin with exactly one explicit verdict line: VERDICT: APPROVE, VERDICT: REQUEST_CHANGES, or VERDICT: BLOCKED. APPROVE is allowed only when that reviewer independently verified all in-scope checks; otherwise choose REQUEST_CHANGES or BLOCKED and list evidence. HERMES must not edit either report.',
-        'Both reviewers must inspect the exact same commit SHA and produce separate evidence-backed reports. Do not combine or rewrite their source reports.',
+        'Both reviewers must inspect the exact same commit SHA and produce separate evidence-backed reports. Start with repo_read op=diff to inspect the PR patch; then read changed files at the pinned SHA. Do not combine or rewrite their source reports.',
         'You may summarize their results, but must not claim approval unless both child runs complete successfully with separate durable artifacts.',
         'This dispatch is read-only. Do not merge, deploy, modify files, use wallets, make x402 payments, call arbitrary URLs, or request secrets.',
       ].join('\n')
@@ -152,6 +152,7 @@ export function registerStagingHermesDispatchRoute(app: SessionApp): void {
           allowedChildAgentIds: reviewers.map((r) => String(r.id)),
           maxDelegationDepth: 1,
           targetSha: TARGET_SHA,
+          reviewPrNumber: 116,
         },
         roster: 'QA, SENTINEL',
       })
