@@ -71,6 +71,10 @@ app.get('/api/healthz', async (c) => {
   return c.json(healthzBody(configProblems, dbMode(), undefined, database))
 })
 
+// This route validates its staging credential and Preview identity before it explicitly migrates.
+// Register it ahead of the general API bootstrap so an invalid request does not touch the database.
+registerStagingHermesDispatchRoute(app)
+
 app.use('/api/*', async (_c, next) => {
   await bootstrap()
   await next()
@@ -95,7 +99,6 @@ registerAgentApiRoutes(app)
 registerPlaygroundRoutes(app)
 registerAgentsRoutes(app)
 registerCronRoute(app)
-registerStagingHermesDispatchRoute(app)
 registerInngestRoutes(app)
 registerV1Routes(app)
 
