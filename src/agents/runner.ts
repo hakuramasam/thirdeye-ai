@@ -474,9 +474,21 @@ async function runAgentInner(
   if (agent.x402_enabled) tools.push(HTTP_FETCH_TOOL)
   // Write is granted per run, not per agent row: an orchestrator may hand one task write
   // authority and withhold it from the next, so the grant travels with the run.
-  // Persisted agent-row entitlements are not task grants. Only the caller may pass an
-  // explicit, bounded grant for this invocation; delegation further narrows it per child task.
-  const canWrite = deps.allowWrite === true
+  // Persisted agent-row entitlements are not task grants. A write grant is valid only
+  // when this run explicitly received it AND owns a durable in-progress task row. Fail closed
+  // while the task spine is absent or the task cannot be verified.
+  let canWrite = false
+  if (deps.allowWrite === true && deps.taskId) {
+    try {
+      const ownedTask = await one(
+        `SELECT id FROM agent_tasks WHERE id = $1 AND status = 'in_progress' AND owner_agent_id = $2 LIMIT 1`,
+        [deps.taskId, agent.id]
+      )
+      canWrite = Boolean(ownedTask)
+    } catch {
+      canWrite = false
+    }
+  }
   if (hasRepoAccess((agent as any).repo_access)) tools.push(REPO_TOOL)
   if (canWrite) tools.push(REPO_WRITE_TOOL)
 
