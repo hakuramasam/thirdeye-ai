@@ -4,9 +4,9 @@ import { describe, it, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { Hono } from 'hono'
 import type { AppEnv } from '../src/lib/types.js'
-import { migrate, query, one } from '../src/db/index.js'
-import { registerStagingHermesDispatchRoute, reviewVerdict } from '../src/routes/stagingHermesDispatch.js'
-import { reserveSharedBudget, settleSharedBudget } from '../src/agents/shared-budget.js'
+const { migrate, query, one } = await import('../src/db/index.js')
+const { registerStagingHermesDispatchRoute, reviewVerdict } = await import('../src/routes/stagingHermesDispatch.js')
+const { reserveSharedBudget, settleSharedBudget } = await import('../src/agents/shared-budget.js')
 
 const TARGET_SHA = 'dd956e60524020d1e8218bd1652d1cab356d2414'
 const CAP = 67_000
