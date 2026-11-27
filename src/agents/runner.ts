@@ -479,7 +479,7 @@ async function runAgentInner(
   // Write is granted per run, not per agent row: an orchestrator may hand one task write
   // authority and withhold it from the next, so the grant travels with the run.
   const canWrite = deps.allowWrite ?? ((agent as any).repo_access === 'write')
-  if (hasRepoAccess((agent as any).repo_access)) tools.push(REPO_TOOL)
+  if (hasRepoAccess((agent as any).repo_access)) tools.push(deps.stagingDispatch ? STAGING_REPO_TOOL : REPO_TOOL)
   if (canWrite) tools.push(REPO_WRITE_TOOL)
 
   try {
