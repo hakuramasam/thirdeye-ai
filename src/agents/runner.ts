@@ -617,7 +617,7 @@ async function runAgentInner(
                 }
                 if (deps.stagingDispatch && String(args.op) === 'read' && result.startsWith(`hakuramasam/thirdeye-ai@${deps.stagingDispatch.targetSha}:`)) {
                   const prefix = `hakuramasam/thirdeye-ai@${deps.stagingDispatch.targetSha}:`
-                  const reviewedPath = result.slice(prefix.length).split(' ')[0]
+                  const reviewedPath = result.slice(prefix.length).split(' (lines ')[0]
                   const readAudit = await createAuditEvent({
                     ...audit,
                     eventType: 'tool.invoked',
