@@ -152,4 +152,41 @@ describe('PH2-003 addressable artifacts', () => {
     assert.match(describeArtifact(childArtifact), /^art_[0-9a-f]{20} \(report/)
     assert.match(describeArtifact(childArtifact), /kB\)$/)
   })
+
+  it('dispatches the built-in read_artifact tool and returns the owner-scoped artifact content', async () => {
+    const payload = 'QA handoff evidence: artifact reader must return this exact text.'
+    const stored = await storeArtifact({
+      userId: user.id,
+      kind: 'test_report',
+      content: payload,
+      correlationId: `read-tool-${randomUUID()}`,
+      createdBy: 'QA',
+    })
+    const agent = (await one(
+      `INSERT INTO agents (id, user_id, name, system_prompt, model, can_delegate, repo_access, budget_usd_micros, max_steps)
+       VALUES ($1,$2,'DOCS','read handoff','stub-model',false,'none',100000,3) RETURNING *`,
+      [`tdt_read_${randomUUID().slice(0, 6)}`, user.id]
+    )) as AgentRow
+    let observedToolResult = ''
+    let call = 0
+    const llm = {
+      call: async (params: any) => {
+        call++
+        if (call === 1) {
+          return {
+            content: '',
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            tool_calls: [toolCall('read_artifact', { id: stored.id })],
+          }
+        }
+        observedToolResult = String((params.messages ?? []).find((m: any) => m.role === 'tool')?.content ?? '')
+        return { content: 'artifact reviewed', prompt_tokens: 1, completion_tokens: 1 }
+      },
+    }
+    const result = await runAgent(agent, 'Read the QA handoff artifact.', user, { llm })
+    assert.equal(result.status, 'success')
+    assert.equal(observedToolResult, payload)
+  })
+
 })
