@@ -1,7 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
+// This module imports the provider registry, which imports the DB and environment modules.
+// Force the same isolated environment used by the PGlite suite before those imports run.
+delete process.env.PREVIEW_DATABASE_URL
+delete process.env.DATABASE_URL
+delete process.env.DATABASE_URL_UNPOOLED
 process.env.PGLITE_DIR = 'memory://'
+
 const { deriveProviderName } = await import('../src/providers/index.js')
 
 test('provider routing uses the canonical Google key name for Gemini OpenAI-compatible endpoint', () => {
