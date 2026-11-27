@@ -2,6 +2,7 @@ process.env.PGLITE_DIR = 'memory://'
 
 import { describe, it, before } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { Hono } from 'hono'
 import type { AppEnv } from '../src/lib/types.js'
 const { migrate, migrateStagingDispatch, query, one } = await import('../src/db/index.js')
@@ -16,6 +17,14 @@ describe('staging HERMES dispatch guardrails', () => {
     await migrate()
     await migrateStagingDispatch()
     await query(`INSERT INTO users (id, wallet, role) VALUES ('staging-owner', '0x5555555555555555555555555555555555555555', 'admin') ON CONFLICT DO NOTHING`)
+  })
+
+  it('keeps staging ledger DDL out of the global production schema', () => {
+    const globalSchema = readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8')
+    const stagingSchema = readFileSync(new URL('../src/db/staging-dispatch.sql', import.meta.url), 'utf8')
+    assert.doesNotMatch(globalSchema, /staging_agent_dispatches|staging_agent_budget_reservations/)
+    assert.match(stagingSchema, /CREATE TABLE IF NOT EXISTS staging_agent_dispatches/)
+    assert.match(stagingSchema, /CREATE TABLE IF NOT EXISTS staging_agent_budget_reservations/)
   })
 
   it('requires the staging credential and never accepts CRON_SECRET as a substitute', async () => {
