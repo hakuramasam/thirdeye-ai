@@ -103,7 +103,7 @@ export type RunnerDeps = {
   /** Injectable for tests; default resolves via the provider layer. */
   llm?: { call(params: Record<string, any>, opts?: { timeoutMs?: number }): Promise<LlmResult> }
   /** Server-created policy for the isolated staging HERMES review dispatch. */
-  stagingDispatch?: { dispatchId: string; allowedChildAgentIds: string[]; maxDelegationDepth: number; targetSha: string }
+  stagingDispatch?: { dispatchId: string; allowedChildAgentIds: string[]; maxDelegationDepth: number; targetSha: string; reviewPrNumber: number }
   /** Override the rate-limit wait budget (tests use a few milliseconds instead of 50s). */
   retryWaitMs?: number
   /**
@@ -601,7 +601,7 @@ async function runAgentInner(
                 denied = 'staging_repo_search_not_revision_pinned'
                 result = 'Refused: code search is not revision-pinned. Use list/read operations so every file is fetched at the approved commit SHA.'
               } else {
-                result = await runRepoTool(args, deps.stagingDispatch ? { repo: 'hakuramasam/thirdeye-ai', ref: deps.stagingDispatch.targetSha } : undefined)
+                result = await runRepoTool(args, deps.stagingDispatch ? { repo: 'hakuramasam/thirdeye-ai', ref: deps.stagingDispatch.targetSha, reviewPrNumber: deps.stagingDispatch.reviewPrNumber } : undefined)
               }
             } else if (tc.function.name === 'http_fetch' && agent.x402_enabled && !deps.stagingDispatch) {
               const sellers = typeof agent.x402_allowed_sellers === 'string'
