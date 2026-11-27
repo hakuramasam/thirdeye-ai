@@ -1,7 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { ThetaConfig } from './config.js'
-import { assertThetaCredentials } from './config.js'
 
 export type ThetaReadTool = {
   name: string
