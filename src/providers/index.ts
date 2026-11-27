@@ -97,13 +97,12 @@ export function providerNameForBaseUrl(baseUrl: string, fallback: string): strin
   try {
     const url = new URL(baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`)
     const host = url.hostname.toLowerCase()
-    if (
-      host === 'generativelanguage.googleapis.com' &&
-      url.protocol === 'https:' &&
-      !url.port &&
-      !url.username &&
-      !url.password
-    ) return 'google'
+    if (host === 'generativelanguage.googleapis.com') {
+      // Only the canonical HTTPS endpoint may select Google's credential namespace.
+      // Insecure URLs, alternate ports, and credential-bearing URLs stay on the catalog fallback.
+      if (url.protocol === 'https:' && !url.port && !url.username && !url.password) return 'google'
+      return fallback
+    }
     return host.replace(/^api\./, '').replace(/\.[a-z]+$/, '') || fallback
   } catch {
     return fallback
