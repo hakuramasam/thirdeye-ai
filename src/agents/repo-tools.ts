@@ -155,15 +155,22 @@ async function readPinnedReviewDiff(cfg: RepoConfig): Promise<string> {
   })
   const diff = await response.text()
   if (!response.ok) throw new Error(`GitHub ${response.status}: ${diff.slice(0, 200)}`)
-  const paths = [...diff.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm)].map((m) => m[2])
+  const sections = diff.split(/(?=^diff --git )/m)
+  const fileSections = sections.map((section) => ({
+    section,
+    path: section.match(/^diff --git a\/(.+?) b\/(.+)$/m)?.[2] ?? '',
+  })).filter((item) => item.path)
+  const paths = fileSections.map((item) => item.path)
+  const readRequiredPaths = fileSections.filter((item) => !/^\+\+\+ \/dev\/null$/m.test(item.section)).map((item) => item.path)
   if (!paths.length) throw new Error('Pinned PR diff is empty; no review evidence is available')
   const deniedPaths = paths.filter((path) => isDeniedPath(path))
   if (deniedPaths.length) throw new Error('Pinned PR diff contains a path outside the reviewer read allowlist')
   const safeDiff = redactReviewDiff(diff)
   const clipped = safeDiff.length > MAX_REVIEW_DIFF_CHARS
-    ? `${safeDiff.slice(0, MAX_REVIEW_DIFF_CHARS)}\n\n[Diff truncated. Read remaining changed files by path at the pinned SHA. Changed paths: ${paths.join(', ')}]`
+    ? `${safeDiff.slice(0, MAX_REVIEW_DIFF_CHARS)}\n\n[Diff truncated. Read remaining changed files by path at the pinned SHA.]`
     : safeDiff
-  return `${cfg.repo}#${cfg.reviewPrNumber} at ${cfg.ref}\nChanged paths: ${paths.join(', ')}\n${clipped}`
+  const metadata = JSON.stringify({ changed_paths: paths, read_required_paths: readRequiredPaths })
+  return `${cfg.repo}#${cfg.reviewPrNumber} at ${cfg.ref}\nREVIEW_DIFF_METADATA:${metadata}\n${clipped}`
 }
 
 /** Execute a repo tool call. Always returns a string for the model, never throws to the runner. */
