@@ -69,13 +69,14 @@ export const REPO_TOOL = {
   },
 }
 
-type RepoConfig = { token: string; repo: string; ref: string }
+type RepoConfig = { token: string; repo: string; ref: string; reviewPrNumber?: number }
 
 function config(override?: Partial<RepoConfig>): RepoConfig {
   return {
     token: override?.token ?? env.githubToken,
     repo: override?.repo ?? env.githubRepo,
     ref: override?.ref ?? env.githubRef,
+    reviewPrNumber: override?.reviewPrNumber,
   }
 }
 
@@ -107,6 +108,33 @@ function withLineNumbers(text: string, startLine: number): string {
     .split('\n')
     .map((line, i) => `${String(startLine + i).padStart(5)} | ${line}`)
     .join('\n')
+}
+
+const MAX_REVIEW_DIFF_CHARS = 50_000
+
+async function readPinnedReviewDiff(cfg: RepoConfig): Promise<string> {
+  if (!cfg.reviewPrNumber) throw new Error('PR diff access is not enabled for this run')
+  const path = `/repos/${cfg.repo}/pulls/${cfg.reviewPrNumber}`
+  const metadata = await gh(cfg, path)
+  if (metadata?.base?.repo?.full_name !== cfg.repo || metadata?.head?.sha !== cfg.ref) {
+    throw new Error('Pinned PR diff refused: repository or head SHA does not match the approved review target')
+  }
+  if (!cfg.token) throw new Error('Repository access is not configured on this deployment (GITHUB_TOKEN missing)')
+  const response = await fetch(`https://api.github.com${path}`, {
+    headers: {
+      authorization: `Bearer ${cfg.token}`,
+      accept: 'application/vnd.github.diff',
+      'x-github-api-version': '2022-11-28',
+      'user-agent': 'thirdeye-agent',
+    },
+  })
+  const diff = await response.text()
+  if (!response.ok) throw new Error(`GitHub ${response.status}: ${diff.slice(0, 200)}`)
+  const paths = [...diff.matchAll(/^diff --git a\\/(.+?) b\\/(.+)$/gm)].map((m) => m[2])
+  const clipped = diff.length > MAX_REVIEW_DIFF_CHARS
+    ? `${diff.slice(0, MAX_REVIEW_DIFF_CHARS)}\\n\\n[Diff truncated. Read remaining changed files by path at the pinned SHA. Changed paths: ${paths.join(', ')}]`
+    : diff
+  return `${cfg.repo}#${cfg.reviewPrNumber} at ${cfg.ref}\\n${clipped}`
 }
 
 /** Execute a repo tool call. Always returns a string for the model, never throws to the runner. */
@@ -161,6 +189,10 @@ export async function runRepoTool(args: Record<string, unknown>, override?: Part
       const lastLine = startLine + slice.length - 1
       const footer = truncated || lastLine < total ? `\n\n[... truncated at line ${lastLine} of ${total}; request a range with start_line/end_line to continue]` : ''
       return `${cfg.repo}@${cfg.ref}:${path} (lines ${startLine}-${lastLine} of ${total})\n${body}${footer}`
+    }
+
+    if (op === 'diff') {
+      return await readPinnedReviewDiff(cfg)
     }
 
     if (op === 'search') {
