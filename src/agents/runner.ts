@@ -17,7 +17,7 @@ import { createMcpTools, type McpTools, type McpServerConfig } from './mcp.js'
 import { validateTask } from '../team/validate.js'
 import { emitAgentRunSpan, traceIdFrom, spanIdFrom } from '../telemetry/langfuse.js'
 import { paidFetch } from './x402.js'
-import { REPO_TOOL, runRepoTool, hasRepoAccess } from './repo-tools.js'
+import { REPO_TOOL, STAGING_REPO_TOOL, runRepoTool, hasRepoAccess } from './repo-tools.js'
 import { REPO_WRITE_TOOL, runRepoWrite } from './repo-write.js'
 import { logRunEvent } from './monitor.js'
 import {
