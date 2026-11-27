@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { Hono } from 'hono'
 import type { AppEnv } from '../src/lib/types.js'
 import { migrate, query, one } from '../src/db/index.js'
-import { registerStagingHermesDispatchRoute } from '../src/routes/stagingHermesDispatch.js'
+import { registerStagingHermesDispatchRoute, reviewVerdict } from '../src/routes/stagingHermesDispatch.js'
 import { reserveSharedBudget, settleSharedBudget } from '../src/agents/shared-budget.js'
 
 const TARGET_SHA = 'dd956e60524020d1e8218bd1652d1cab356d2414'
@@ -87,6 +87,21 @@ describe('staging HERMES dispatch guardrails', () => {
       body: JSON.stringify({ dispatch_id: 'dispatch-extra-key', target_sha: TARGET_SHA, agent_id: 'tdt_architect' }),
     })
     assert.equal(extraKey.status, 400)
+
+    const disabled = await app.request('/api/ops/staging/hermes-review', {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-staging-secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ dispatch_id: 'dispatch-disabled', target_sha: TARGET_SHA }),
+    })
+    assert.equal(disabled.status, 503)
+  })
+
+  it('accepts only explicit, unambiguous reviewer verdict lines', () => {
+    assert.equal(reviewVerdict('VERDICT: APPROVE\\nAll checks passed.'), 'APPROVE')
+    assert.equal(reviewVerdict('VERDICT: REQUEST_CHANGES\\nIssue found.'), 'REQUEST_CHANGES')
+    assert.equal(reviewVerdict('VERDICT: BLOCKED'), 'BLOCKED')
+    assert.equal(reviewVerdict('The review looks good.'), null)
+    assert.equal(reviewVerdict('VERDICT: APPROVED'), null)
   })
 
   it('reserves a single aggregate cap atomically across concurrent reviewers', async () => {
