@@ -26,6 +26,7 @@ import { registerPlaygroundRoutes } from './routes/playground.js'
 import { registerParagraphRoutes } from './routes/paragraph.js'
 import { registerArtifactsRoutes } from './routes/artifacts.js'
 import { registerAntseedRoutes } from './routes/antseed.js'
+import { registerStagingHermesDispatchRoute } from './routes/stagingHermesDispatch.js'
 
 const app = new Hono<AppEnv>()
 
@@ -94,6 +95,7 @@ registerAgentApiRoutes(app)
 registerPlaygroundRoutes(app)
 registerAgentsRoutes(app)
 registerCronRoute(app)
+registerStagingHermesDispatchRoute(app)
 registerInngestRoutes(app)
 registerV1Routes(app)
 
