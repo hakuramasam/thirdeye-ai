@@ -1,3 +1,8 @@
+// Keep the test suite on its isolated in-memory database even when a developer or CI
+// environment happens to carry a preview or production connection variable.
+delete process.env.PREVIEW_DATABASE_URL
+delete process.env.DATABASE_URL
+delete process.env.DATABASE_URL_UNPOOLED
 process.env.PGLITE_DIR = 'memory://'
 
 import { describe, it, before } from 'node:test'
@@ -177,7 +182,7 @@ describe('PH2-003 addressable artifacts', () => {
             content: '',
             prompt_tokens: 1,
             completion_tokens: 1,
-            tool_calls: [toolCall('read_artifact', { id: stored.id })],
+            tool_calls: [toolCall('read_artifact', { id: stored.id, offset: 'not-a-number', limit: 'Infinity' })],
           }
         }
         observedToolResult = String((params.messages ?? []).find((m: any) => m.role === 'tool')?.content ?? '')
