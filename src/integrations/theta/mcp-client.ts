@@ -50,6 +50,7 @@ export class ThetaReadOnlyMcpClient {
     if (!this.config.projectApiKey && !this.config.inferenceApiKey) {
       throw new Error('Theta read-only credentials are not configured')
     }
+    if (!this.config.projectId) throw new Error('Theta project ID is not configured for staging')
     const headers: Record<string, string> = {}
     if (this.config.projectApiKey) headers['x-api-key'] = this.config.projectApiKey
     if (this.config.inferenceApiKey) headers.Authorization = `Bearer ${this.config.inferenceApiKey}`
