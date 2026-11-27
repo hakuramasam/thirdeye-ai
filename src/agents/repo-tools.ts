@@ -132,7 +132,7 @@ async function readPinnedReviewDiff(cfg: RepoConfig): Promise<string> {
   if (!cfg.reviewPrNumber) throw new Error('PR diff access is not enabled for this run')
   const path = `/repos/${cfg.repo}/pulls/${cfg.reviewPrNumber}`
   const metadata = await gh(cfg, path)
-  if (metadata?.base?.repo?.full_name !== cfg.repo || metadata?.head?.sha !== cfg.ref) {
+  if (metadata?.base?.repo?.full_name !== cfg.repo || metadata?.head?.repo?.full_name !== cfg.repo || metadata?.base?.ref !== 'main' || metadata?.head?.sha !== cfg.ref) {
     throw new Error('Pinned PR diff refused: repository or head SHA does not match the approved review target')
   }
   if (!cfg.token) throw new Error('Repository access is not configured on this deployment (GITHUB_TOKEN missing)')
