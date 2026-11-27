@@ -1,5 +1,5 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto'
-import { query, one, migrate } from '../db/index.js'
+import { query, one, migrate, migrateStagingDispatch } from '../db/index.js'
 import type { SessionApp } from '../lib/session.js'
 import type { AgentRow } from '../agents/runner.js'
 import { runAgent } from '../agents/runner.js'
@@ -60,6 +60,8 @@ export function registerStagingHermesDispatchRoute(app: SessionApp): void {
     ) {
       return error(c, 404, 'Staging dispatch is unavailable in this environment')
     }
+    // Never fall back to DATABASE_URL: a Preview dispatch must have its own Neon branch URL.
+    if (!process.env.PREVIEW_DATABASE_URL) return error(c, 503, 'Preview database is not configured; production DATABASE_URL fallback is forbidden')
 
     const body = await c.req.json().catch(() => null)
     if (!body || typeof body !== 'object' || Array.isArray(body)) return error(c, 400, 'Invalid JSON body')
@@ -76,6 +78,7 @@ export function registerStagingHermesDispatchRoute(app: SessionApp): void {
     // This route is registered ahead of the general API bootstrap middleware. Migrate only
     // after authentication, Preview identity, and strict request validation have passed.
     await migrate()
+    await migrateStagingDispatch()
 
     const dispatchId = body.dispatch_id
     const correlationId = newCorrelationId()
