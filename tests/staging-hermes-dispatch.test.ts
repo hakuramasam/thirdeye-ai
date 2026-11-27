@@ -42,6 +42,7 @@ describe('staging HERMES dispatch guardrails', () => {
   })
 
   it('refuses production, development, and missing deployment identity before database dispatch', async () => {
+    process.env.VERCEL = '1'
     process.env.STAGING_DISPATCH_SECRET = 'test-staging-secret'
     process.env.STAGING_DISPATCH_ENABLED = 'true'
     process.env.STAGING_DISPATCH_DEPLOYMENT_SHA = 'feature-preview-sha'
@@ -67,6 +68,7 @@ describe('staging HERMES dispatch guardrails', () => {
   })
 
   it('pins the review SHA and rejects unknown request keys', async () => {
+    process.env.VERCEL = '1'
     process.env.VERCEL_ENV = 'preview'
     process.env.VERCEL_GIT_COMMIT_SHA = 'feature-preview-sha'
     process.env.STAGING_DISPATCH_DEPLOYMENT_SHA = 'feature-preview-sha'
