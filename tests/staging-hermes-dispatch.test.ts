@@ -3,6 +3,7 @@ process.env.PGLITE_DIR = 'memory://'
 import { describe, it, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { Hono } from 'hono'
+import type { AppEnv } from '../src/lib/types.js'
 import { migrate, query, one } from '../src/db/index.js'
 import { registerStagingHermesDispatchRoute } from '../src/routes/stagingHermesDispatch.js'
 import { reserveSharedBudget, settleSharedBudget } from '../src/agents/shared-budget.js'
@@ -21,7 +22,7 @@ describe('staging HERMES dispatch guardrails', () => {
     process.env.VERCEL_GIT_COMMIT_SHA = 'feature-preview-sha'
     process.env.STAGING_DISPATCH_SECRET = 'test-staging-secret'
     process.env.CRON_SECRET = 'test-cron-secret'
-    const app = new Hono()
+    const app = new Hono<AppEnv>()
     registerStagingHermesDispatchRoute(app)
 
     const missing = await app.request('/api/ops/staging/hermes-review', {
@@ -89,8 +90,8 @@ describe('staging HERMES dispatch guardrails', () => {
   })
 
   it('reserves a single aggregate cap atomically across concurrent reviewers', async () => {
-    await query(`INSERT INTO staging_agent_dispatches (id, target_sha, status, budget_cap_usd_micros)
-      VALUES ('budget-concurrency', $1, 'running', $2) ON CONFLICT (id) DO NOTHING`, [TARGET_SHA, CAP])
+    await query(`INSERT INTO staging_agent_dispatches (id, target_sha, status, budget_cap_usd_micros, correlation_id)
+      VALUES ('budget-concurrency', $1, 'running', $2, 'corr-budget-concurrency') ON CONFLICT (id) DO NOTHING`, [TARGET_SHA, CAP])
 
     const attempts = await Promise.all(Array.from({ length: 8 }, (_, i) =>
       reserveSharedBudget('budget-concurrency', 'reservation-' + i, 10_000)
@@ -103,8 +104,8 @@ describe('staging HERMES dispatch guardrails', () => {
   })
 
   it('settles actual spend and releases unused reservation; refuses over-cap settlement', async () => {
-    await query(`INSERT INTO staging_agent_dispatches (id, target_sha, status, budget_cap_usd_micros)
-      VALUES ('budget-settlement', $1, 'running', $2) ON CONFLICT (id) DO NOTHING`, [TARGET_SHA, CAP])
+    await query(`INSERT INTO staging_agent_dispatches (id, target_sha, status, budget_cap_usd_micros, correlation_id)
+      VALUES ('budget-settlement', $1, 'running', $2, 'corr-budget-settlement') ON CONFLICT (id) DO NOTHING`, [TARGET_SHA, CAP])
     const reserved = await reserveSharedBudget('budget-settlement', 'reservation-settle', 20_000)
     assert.equal(reserved.ok, true)
     const settled = await settleSharedBudget('budget-settlement', 'reservation-settle', 12_000)
