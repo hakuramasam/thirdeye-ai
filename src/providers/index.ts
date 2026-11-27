@@ -97,7 +97,13 @@ export function providerNameForBaseUrl(baseUrl: string, fallback: string): strin
   try {
     const url = new URL(baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`)
     const host = url.hostname.toLowerCase()
-    if (host === 'generativelanguage.googleapis.com') return 'google'
+    if (
+      host === 'generativelanguage.googleapis.com' &&
+      url.protocol === 'https:' &&
+      !url.port &&
+      !url.username &&
+      !url.password
+    ) return 'google'
     return host.replace(/^api\./, '').replace(/\.[a-z]+$/, '') || fallback
   } catch {
     return fallback
