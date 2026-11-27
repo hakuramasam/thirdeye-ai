@@ -66,3 +66,9 @@ test('fails closed without credentials and redacts connection failures', async (
   const client = new ThetaReadOnlyMcpClient(config)
   await assert.rejects(() => client.connect(), /credentials are not configured/)
 })
+
+test('requires a server-pinned staging project before connecting', async () => {
+  const config = loadThetaConfig({ THETA_PROJECT_API_KEY: 'project-secret' })
+  const client = new ThetaReadOnlyMcpClient(config)
+  await assert.rejects(() => client.connect(), /project ID is not configured/)
+})
