@@ -128,6 +128,15 @@ function withLineNumbers(text: string, startLine: number): string {
 
 const MAX_REVIEW_DIFF_CHARS = 50_000
 
+function redactReviewDiff(value: string): string {
+  return value
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
+    .replace(/(?<=bearer\\s)[A-Za-z0-9._-]{10,}/gi, '***')
+    .replace(/gh[pousr]_[A-Za-z0-9]{20,}/g, 'gh***')
+    .replace(/AKIA[0-9A-Z]{16}/g, 'AKIA***')
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[private key redacted]')
+}
+
 async function readPinnedReviewDiff(cfg: RepoConfig): Promise<string> {
   if (!cfg.reviewPrNumber) throw new Error('PR diff access is not enabled for this run')
   const path = `/repos/${cfg.repo}/pulls/${cfg.reviewPrNumber}`
@@ -147,10 +156,14 @@ async function readPinnedReviewDiff(cfg: RepoConfig): Promise<string> {
   const diff = await response.text()
   if (!response.ok) throw new Error(`GitHub ${response.status}: ${diff.slice(0, 200)}`)
   const paths = [...diff.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm)].map((m) => m[2])
-  const clipped = diff.length > MAX_REVIEW_DIFF_CHARS
-    ? `${diff.slice(0, MAX_REVIEW_DIFF_CHARS)}\n\n[Diff truncated. Read remaining changed files by path at the pinned SHA. Changed paths: ${paths.join(', ')}]`
-    : diff
-  return `${cfg.repo}#${cfg.reviewPrNumber} at ${cfg.ref}\n${clipped}`
+  if (!paths.length) throw new Error('Pinned PR diff is empty; no review evidence is available')
+  const deniedPaths = paths.filter((path) => isDeniedPath(path))
+  if (deniedPaths.length) throw new Error('Pinned PR diff contains a path outside the reviewer read allowlist')
+  const safeDiff = redactReviewDiff(diff)
+  const clipped = safeDiff.length > MAX_REVIEW_DIFF_CHARS
+    ? `${safeDiff.slice(0, MAX_REVIEW_DIFF_CHARS)}\n\n[Diff truncated. Read remaining changed files by path at the pinned SHA. Changed paths: ${paths.join(', ')}]`
+    : safeDiff
+  return `${cfg.repo}#${cfg.reviewPrNumber} at ${cfg.ref}\nChanged paths: ${paths.join(', ')}\n${clipped}`
 }
 
 /** Execute a repo tool call. Always returns a string for the model, never throws to the runner. */
