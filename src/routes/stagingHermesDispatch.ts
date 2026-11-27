@@ -1,5 +1,5 @@
 import { randomUUID, timingSafeEqual } from 'node:crypto'
-import { query, one } from '../db/index.js'
+import { query, one, migrate } from '../db/index.js'
 import type { SessionApp } from '../lib/session.js'
 import type { AgentRow } from '../agents/runner.js'
 import { runAgent } from '../agents/runner.js'
@@ -20,7 +20,7 @@ function sameSecret(provided: string, expected: string): boolean {
 }
 
 function error(c: any, status: number, message: string) {
-  return c.json({ error: { message, type: status === 401 ? 'auth' : 'staging_dispatch', code: status } }, status)
+  return c.json({ error: { message, type: status === 401 ? 'auth' : 'staging_dispatch', code: status } }, status as 400 | 401 | 404 | 503)
 }
 
 function parseArtifactIds(value: unknown): string[] {
@@ -66,6 +66,10 @@ export function registerStagingHermesDispatchRoute(app: SessionApp): void {
     }
     if (body.target_sha !== TARGET_SHA) return error(c, 400, 'target_sha must equal the approved immutable review revision')
     if (process.env.STAGING_DISPATCH_ENABLED !== 'true') return error(c, 503, 'Staging dispatch is disabled pending independent approval')
+
+    // This route is registered ahead of the general API bootstrap middleware. Migrate only
+    // after authentication, Preview identity, and strict request validation have passed.
+    await migrate()
 
     const dispatchId = body.dispatch_id
     const correlationId = newCorrelationId()
@@ -140,6 +144,7 @@ export function registerStagingHermesDispatchRoute(app: SessionApp): void {
           dispatchId,
           allowedChildAgentIds: reviewers.map((r) => String(r.id)),
           maxDelegationDepth: 1,
+          targetSha: TARGET_SHA,
         },
         roster: 'QA, SENTINEL',
       })
