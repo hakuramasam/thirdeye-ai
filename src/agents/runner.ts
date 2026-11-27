@@ -597,7 +597,7 @@ async function runAgentInner(
               result = await runRepoWrite(args)
             } else if (tc.function.name === 'repo_read' && hasRepoAccess((agent as any).repo_access)) {
               result = await runRepoTool(args)
-            } else if (tc.function.name === 'http_fetch' && agent.x402_enabled) {
+            } else if (tc.function.name === 'http_fetch' && agent.x402_enabled && !deps.stagingDispatch) {
               const sellers = typeof agent.x402_allowed_sellers === 'string'
                 ? JSON.parse(agent.x402_allowed_sellers || '[]')
                 : (agent.x402_allowed_sellers ?? [])
@@ -640,9 +640,10 @@ async function runAgentInner(
               }
             } else if (tc.function.name === 'delegate_to_agent' && (agent as any).can_delegate) {
               const depth = Number((deps as any).delegationDepth ?? 0)
-              if (depth >= MAX_DELEGATION_DEPTH) {
-                denied = `delegation depth limit ${MAX_DELEGATION_DEPTH} reached`
-                result = `Delegation refused: depth limit ${MAX_DELEGATION_DEPTH} reached. Do the work yourself or report the blocker.`
+              const maxDepth = deps.stagingDispatch?.maxDelegationDepth ?? MAX_DELEGATION_DEPTH
+              if (depth >= maxDepth) {
+                denied = `delegation depth limit ${maxDepth} reached`
+                result = `Delegation refused: depth limit ${maxDepth} reached. Do the work yourself or report the blocker.`
               } else {
                 const wanted = String(args.agent || '').trim()
                 const child = await one(
@@ -653,6 +654,9 @@ async function runAgentInner(
                   denied = `no active teammate named "${wanted}"`
                   result = `No active teammate named "${wanted}". Your roster: ${(deps as any).roster ?? 'unavailable'}.`
 
+                } else if (deps.stagingDispatch && (!deps.stagingDispatch.allowedChildAgentIds.includes(String((child as any).id)) || depth !== 0)) {
+                  denied = 'staging_dispatch_child_not_allowlisted'
+                  result = 'Delegation refused: only the server-allowlisted QA and SENTINEL identities may be children of HERMES.'
                 } else {
                   // The delegation boundary is a contract: check the task against the
                   // blueprint schema before a teammate spends money on it.
@@ -742,8 +746,11 @@ async function runAgentInner(
                       }
                     }
                     if (stageClaimed) {
+                    const executionChild = deps.stagingDispatch
+                      ? { ...(child as AgentRow), mcp_servers: [], x402_enabled: false, x402_allowed_sellers: [], repo_access: 'read', can_delegate: false, budget_usd_micros: STAGING_SHARED_BUDGET_CAP_MICROS, max_steps: Math.min(Number((child as any).max_steps) || 4, 4) } as AgentRow
+                      : child as AgentRow
                     const childRun = await runAgent(
-                      child as AgentRow,
+                      executionChild,
                       `[delegated by ${agent.name}] ${String(args.task || '').slice(0, 4000)}`,
                       user,
                       {
@@ -763,6 +770,7 @@ async function runAgentInner(
                         // The child runs inside this invocation, so it must not claim a fresh
                         // lifetime of its own: it is clamped to the parent's ceiling.
                         deadlineMs: hardCeiling,
+                        ...(deps.stagingDispatch ? { stagingDispatch: { ...deps.stagingDispatch, allowedChildAgentIds: [] } } : {}),
                       }
                     )
                     await recordTaskOutcome(
