@@ -341,6 +341,7 @@ async function runAgentInner(
   const startedAt = Date.now()
   const budget = Number(agent.budget_usd_micros)
   const maxSteps = Math.min(Math.max(agent.max_steps || 8, 1), 20)
+  const stagingDelegatedIds = new Set<string>()
 
   const inserted = await query(
     `INSERT INTO agent_runs (id, agent_id, user_id, status, input) VALUES ($1, $2, $3, 'running', $4)
@@ -659,7 +660,7 @@ async function runAgentInner(
                   denied = `no active teammate named "${wanted}"`
                   result = `No active teammate named "${wanted}". Your roster: ${(deps as any).roster ?? 'unavailable'}.`
 
-                } else if (deps.stagingDispatch && (!deps.stagingDispatch.allowedChildAgentIds.includes(String((child as any).id)) || depth !== 0)) {
+                } else if (deps.stagingDispatch && (!deps.stagingDispatch.allowedChildAgentIds.includes(String((child as any).id)) || depth !== 0 || stagingDelegatedIds.has(String((child as any).id)))) {
                   denied = 'staging_dispatch_child_not_allowlisted'
                   result = 'Delegation refused: only the server-allowlisted QA and SENTINEL identities may be children of HERMES.'
                 } else {
@@ -727,6 +728,7 @@ async function runAgentInner(
                     result = `Delegation refused: the audit log could not record this handoff, so no authority was passed (${String(e?.message ?? e).slice(0, 200)}). Do the work yourself or report the blocker.`
                   }
                   if (handoffRecorded) {
+                    if (deps.stagingDispatch) stagingDelegatedIds.add(String((child as any).id))
                     // Claim the stage in the trail before any work starts, so a second delegation
                     // in the same correlation sees it in flight instead of running it twice. Fail
                     // closed like the handoff: an unrecorded stage claim means no stage at all.
