@@ -608,7 +608,14 @@ async function runAgentInner(
                     eventType: 'tool.invoked',
                     status: 'succeeded',
                     toolName: 'repo_read',
-                    metadata: { operation: 'diff', review_pr: deps.stagingDispatch.reviewPrNumber, target_sha: deps.stagingDispatch.targetSha, revision_verified: true, changed_paths: [...result.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm)].map((m) => m[2]) },
+                    metadata: {
+                      operation: 'diff',
+                      review_pr: deps.stagingDispatch.reviewPrNumber,
+                      target_sha: deps.stagingDispatch.targetSha,
+                      revision_verified: true,
+                      changed_paths: result.slice(result.indexOf('diff --git')).split(/(?=^diff --git )/m).map((section) => section.match(/^diff --git a\\/(.+?) b\\/(.+)$/m)?.[2]).filter(Boolean),
+                      read_required_paths: result.slice(result.indexOf('diff --git')).split(/(?=^diff --git )/m).filter((section) => !/^\\+\\+\\+ \/dev\/null$/m.test(section)).map((section) => section.match(/^diff --git a\\/(.+?) b\\/(.+)$/m)?.[2]).filter(Boolean),
+                    },
                   })
                   if (!diffAudit) {
                     denied = 'staging_diff_audit_unavailable'
