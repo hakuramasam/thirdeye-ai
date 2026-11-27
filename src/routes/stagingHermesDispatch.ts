@@ -24,7 +24,7 @@ function error(c: any, status: number, message: string) {
 }
 
 export function reviewVerdict(content: unknown): 'APPROVE' | 'REQUEST_CHANGES' | 'BLOCKED' | null {
-  const match = String(content ?? '').match(/^\\s*VERDICT\\s*:\\s*(APPROVE|REQUEST_CHANGES|BLOCKED)\\b/im)
+  const match = String(content ?? '').match(/^\s*VERDICT\s*:\s*(APPROVE|REQUEST_CHANGES|BLOCKED)\\b/im)
   return match ? match[1].toUpperCase() as 'APPROVE' | 'REQUEST_CHANGES' | 'BLOCKED' : null
 }
 
@@ -176,12 +176,12 @@ export function registerStagingHermesDispatchRoute(app: SessionApp): void {
           run_id: childRunId,
           completed: Boolean(completed),
           artifacts: artifacts.rows.map((a: any) => ({ id: a.id, sha256: a.content_sha256, verdict: reviewVerdict(a.content) })),
-          approved: artifacts.rows.some((a: any) => reviewVerdict(a.content) === 'APPROVE'),
+          approved: artifacts.rows.length === 1 && reviewVerdict(artifacts.rows[0].content) === 'APPROVE',
           artifact_ids_from_audit: completed ? parseArtifactIds(completed.artifact_ids) : [],
         })
       }
 
-      const allCompleted = reviewerEvidence.every((r) => r.completed && r.artifacts.length > 0 && r.artifacts.some((a: any) => a.verdict !== null))
+      const allCompleted = reviewerEvidence.every((r) => r.completed && r.artifacts.length === 1 && r.artifacts[0].verdict !== null)
       const allApproved = rootResult.status === 'success' && allCompleted && reviewerEvidence.every((r) => r.approved)
       const ledger = await one(
         'SELECT reserved_usd_micros, spent_usd_micros, status FROM staging_agent_dispatches WHERE id = $1',
