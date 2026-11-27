@@ -188,7 +188,7 @@ export function registerStagingHermesDispatchRoute(app: SessionApp): void {
         'SELECT reserved_usd_micros, spent_usd_micros, status FROM staging_agent_dispatches WHERE id = $1',
         [dispatchId]
       )
-      const status = ledger?.status === 'over_budget' ? 'over_budget' : !allCompleted ? 'failed' : allApproved ? 'completed' : 'changes_requested'
+      const status = ledger?.status === 'over_budget' ? 'over_budget' : rootResult.status !== 'success' || !allCompleted ? 'failed' : allApproved ? 'completed' : 'changes_requested'
       await query(
         `UPDATE staging_agent_dispatches
             SET status = $2, result_summary = $3, completed_at = now()
