@@ -44,7 +44,7 @@ describe('staging HERMES dispatch guardrails', () => {
     process.env.STAGING_DISPATCH_SECRET = 'test-staging-secret'
     process.env.STAGING_DISPATCH_ENABLED = 'true'
     process.env.STAGING_DISPATCH_DEPLOYMENT_SHA = 'feature-preview-sha'
-    const app = new Hono()
+    const app = new Hono<AppEnv>()
     registerStagingHermesDispatchRoute(app)
     for (const envName of ['production', 'development', '']) {
       process.env.VERCEL_ENV = envName
@@ -71,7 +71,7 @@ describe('staging HERMES dispatch guardrails', () => {
     process.env.STAGING_DISPATCH_DEPLOYMENT_SHA = 'feature-preview-sha'
     process.env.STAGING_DISPATCH_SECRET = 'test-staging-secret'
     process.env.STAGING_DISPATCH_ENABLED = 'false'
-    const app = new Hono()
+    const app = new Hono<AppEnv>()
     registerStagingHermesDispatchRoute(app)
 
     const wrongSha = await app.request('/api/ops/staging/hermes-review', {
