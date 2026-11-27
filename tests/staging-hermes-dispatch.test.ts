@@ -122,6 +122,21 @@ describe('staging HERMES dispatch guardrails', () => {
     assert.ok(Number(ledger.reserved_usd_micros) + Number(ledger.spent_usd_micros) <= CAP)
   })
 
+  it('records an actual provider overrun and blocks every later reservation', async () => {
+    await query(`INSERT INTO staging_agent_dispatches (id, target_sha, status, budget_cap_usd_micros, correlation_id)
+      VALUES ('budget-overrun', $1, 'running', $2, 'corr-budget-overrun') ON CONFLICT (id) DO NOTHING`, [TARGET_SHA, CAP])
+    const reserved = await reserveSharedBudget('budget-overrun', 'reservation-overrun', 1_000)
+    assert.equal(reserved.ok, true)
+    const settled = await settleSharedBudget('budget-overrun', 'reservation-overrun', 1_001)
+    assert.equal(settled.ok, false)
+    const ledger = await one(`SELECT status, reserved_usd_micros, spent_usd_micros FROM staging_agent_dispatches WHERE id = 'budget-overrun'`)
+    assert.equal(ledger.status, 'over_budget')
+    assert.equal(Number(ledger.reserved_usd_micros), 0)
+    assert.equal(Number(ledger.spent_usd_micros), 1_001)
+    const later = await reserveSharedBudget('budget-overrun', 'reservation-later', 1)
+    assert.equal(later.ok, false)
+  })
+
   it('settles actual spend and releases unused reservation; refuses over-cap settlement', async () => {
     await query(`INSERT INTO staging_agent_dispatches (id, target_sha, status, budget_cap_usd_micros, correlation_id)
       VALUES ('budget-settlement', $1, 'running', $2, 'corr-budget-settlement') ON CONFLICT (id) DO NOTHING`, [TARGET_SHA, CAP])
