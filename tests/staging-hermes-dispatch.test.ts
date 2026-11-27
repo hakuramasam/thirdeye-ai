@@ -100,12 +100,12 @@ describe('staging HERMES dispatch guardrails', () => {
   })
 
   it('accepts only explicit, unambiguous reviewer verdict lines', () => {
-    assert.equal(reviewVerdict('VERDICT: APPROVE\\nAll checks passed.'), 'APPROVE')
-    assert.equal(reviewVerdict('VERDICT: REQUEST_CHANGES\\nIssue found.'), 'REQUEST_CHANGES')
+    assert.equal(reviewVerdict(`VERDICT: APPROVE\nAll checks passed.`), 'APPROVE')
+    assert.equal(reviewVerdict(`VERDICT: REQUEST_CHANGES\nIssue found.`), 'REQUEST_CHANGES')
     assert.equal(reviewVerdict('VERDICT: BLOCKED'), 'BLOCKED')
     assert.equal(reviewVerdict('The review looks good.'), null)
     assert.equal(reviewVerdict('VERDICT: APPROVED'), null)
-    assert.equal(reviewVerdict('Preamble\\nVERDICT: APPROVE'), null)
+    assert.equal(reviewVerdict(`Preamble\nVERDICT: APPROVE`), null)
   })
 
   it('reserves a single aggregate cap atomically across concurrent reviewers', async () => {
