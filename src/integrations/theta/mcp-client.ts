@@ -80,8 +80,12 @@ export class ThetaReadOnlyMcpClient {
     }
     // Project identity is pinned by server configuration, never supplied by an agent.
     const safeArgs = { ...args }
+    const schema = this.allowed.get(name)?.inputSchema as { properties?: Record<string, unknown> } | undefined
     if ('project_id' in safeArgs || 'projectId' in safeArgs) {
       throw new Error('Theta project identity is controlled by server configuration')
+    }
+    if (schema?.properties && Object.prototype.hasOwnProperty.call(schema.properties, 'project_id')) {
+      safeArgs.project_id = this.config.projectId
     }
     return this.session.callTool({ name, arguments: safeArgs })
   }
