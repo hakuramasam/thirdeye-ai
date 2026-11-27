@@ -474,7 +474,21 @@ async function runAgentInner(
   if (agent.x402_enabled) tools.push(HTTP_FETCH_TOOL)
   // Write is granted per run, not per agent row: an orchestrator may hand one task write
   // authority and withhold it from the next, so the grant travels with the run.
-  const canWrite = deps.allowWrite ?? ((agent as any).repo_access === 'write')
+  // Persisted agent-row entitlements are not task grants. A write grant is valid only
+  // when this run explicitly received it AND owns a durable in-progress task row. Fail closed
+  // while the task spine is absent or the task cannot be verified.
+  let canWrite = false
+  if (deps.allowWrite === true && deps.taskId) {
+    try {
+      const ownedTask = await one(
+        `SELECT id FROM agent_tasks WHERE id = $1 AND status = 'in_progress' AND owner_agent_id = $2 LIMIT 1`,
+        [deps.taskId, agent.id]
+      )
+      canWrite = Boolean(ownedTask)
+    } catch {
+      canWrite = false
+    }
+  }
   if (hasRepoAccess((agent as any).repo_access)) tools.push(REPO_TOOL)
   if (canWrite) tools.push(REPO_WRITE_TOOL)
 
@@ -563,7 +577,24 @@ async function runAgentInner(
           let denied: string | null = null
           try {
             const args = JSON.parse(tc.function.arguments || '{}')
-            if (tc.function.name === 'repo_write' && canWrite) {
+            if (tc.function.name === 'read_artifact') {
+              // Artifact reads are a built-in handoff tool, not an MCP tool. Keep the lookup
+              // scoped to the current user and normalize untrusted numeric arguments before
+              // slicing; NaN would otherwise produce an empty page with no continuation.
+              const requestedOffset = Number(args.offset ?? 0)
+              const requestedLimit = Number(args.limit ?? MAX_ARTIFACT_READ_CHARS)
+              const offset = Number.isFinite(requestedOffset) ? Math.max(0, Math.floor(requestedOffset)) : 0
+              const limit = Number.isFinite(requestedLimit)
+                ? Math.min(MAX_ARTIFACT_READ_CHARS, Math.max(1, Math.floor(requestedLimit)))
+                : MAX_ARTIFACT_READ_CHARS
+              const read = await readArtifactWindow(user.id, String(args.id ?? ''), { offset, limit })
+              if (!read.ok) {
+                denied = 'artifact_read_refused'
+                result = `Artifact read refused: ${read.message}`
+              } else {
+                result = read.content + (read.truncated ? `\n[artifact continues at offset ${read.next_offset}]` : '')
+              }
+            } else if (tc.function.name === 'repo_write' && canWrite) {
               result = await runRepoWrite(args)
             } else if (tc.function.name === 'repo_read' && hasRepoAccess((agent as any).repo_access)) {
               result = await runRepoTool(args)
