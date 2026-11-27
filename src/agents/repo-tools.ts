@@ -197,7 +197,8 @@ export async function runRepoTool(args: Record<string, unknown>, override?: Part
       const data = await gh(cfg, `/repos/${cfg.repo}/contents/${encodeURI(path)}?ref=${encodeURIComponent(cfg.ref)}`)
       if (Array.isArray(data)) return `${path} is a directory. Use op=list.`
       if (data?.encoding !== 'base64') return `Cannot read ${path}: unexpected encoding ${data?.encoding}`
-      const text = Buffer.from(String(data.content || ''), 'base64').toString('utf8')
+      const decoded = Buffer.from(String(data.content || ''), 'base64').toString('utf8')
+      const text = cfg.reviewPrNumber ? redactReviewDiff(decoded) : decoded
       const allLines = text.split('\n')
       const total = allLines.length
       const startRaw = Number(args.start_line)
