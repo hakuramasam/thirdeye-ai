@@ -4,13 +4,15 @@ import { test } from 'node:test'
 process.env.GITHUB_TOKEN = 'test-github-token'
 process.env.GITHUB_REPO = 'hakuramasam/thirdeye-ai'
 
-const { runRepoTool, REPO_TOOL } = await import('../src/agents/repo-tools.js')
+const { runRepoTool, REPO_TOOL, STAGING_REPO_TOOL } = await import('../src/agents/repo-tools.js')
 const TARGET_SHA = 'dd956e60524020d1e8218bd1652d1cab356d2414'
 
 test('staging repo tool exposes a fixed diff operation without adding a caller-selected PR id', () => {
   const schema = REPO_TOOL.function.parameters as any
-  assert.deepEqual(schema.properties.op.enum, ['list', 'read', 'search', 'diff'])
-  assert.equal(schema.properties.pull_request, undefined)
+  assert.deepEqual(schema.properties.op.enum, ['list', 'read', 'search'])
+  const stagingSchema = STAGING_REPO_TOOL.function.parameters as any
+  assert.deepEqual(stagingSchema.properties.op.enum, ['list', 'read', 'diff'])
+  assert.equal(stagingSchema.properties.pull_request, undefined)
 })
 
 test('fixed PR diff is fetched only after repository and exact head SHA are verified', async () => {
