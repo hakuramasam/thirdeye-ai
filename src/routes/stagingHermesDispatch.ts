@@ -23,6 +23,11 @@ function error(c: any, status: number, message: string) {
   return c.json({ error: { message, type: status === 401 ? 'auth' : 'staging_dispatch', code: status } }, status as 400 | 401 | 404 | 503)
 }
 
+export function reviewVerdict(content: unknown): 'APPROVE' | 'REQUEST_CHANGES' | 'BLOCKED' | null {
+  const match = String(content ?? '').match(/^\\s*VERDICT\\s*:\\s*(APPROVE|REQUEST_CHANGES|BLOCKED)\\b/im)
+  return match ? match[1].toUpperCase() as 'APPROVE' | 'REQUEST_CHANGES' | 'BLOCKED' : null
+}
+
 function parseArtifactIds(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String)
   if (typeof value === 'string') {
@@ -109,7 +114,7 @@ export function registerStagingHermesDispatchRoute(app: SessionApp): void {
           `SELECT * FROM agents WHERE id = $1 AND user_id = $2 AND status = 'active'`,
           [reviewer.id, root.user_id]
         )
-        if (!row) throw new Error(`Canonical ${reviewer.role} reviewer is missing, inactive, or owned by another account`)
+        if (!row || String(row.name).toLowerCase() !== reviewer.role.toLowerCase()) throw new Error(`Canonical ${reviewer.role} reviewer is missing, inactive, misnamed, or owned by another account`)
         reviewers.push(row)
       }
       const user = await one('SELECT * FROM users WHERE id = $1', [root.user_id])
@@ -132,6 +137,7 @@ export function registerStagingHermesDispatchRoute(app: SessionApp): void {
         'Review only PR https://github.com/hakuramasam/thirdeye-ai/pull/116 at immutable commit ' + TARGET_SHA + '.',
         'Independently delegate one separate review task to QA (canonical agent tdt_qa) and one to SENTINEL (canonical agent tdt_sentinel).',
         'QA must focus on correctness, tests, regressions, and acceptance criteria. SENTINEL must focus on security boundaries, authorization, secrets, concurrency, and spend enforcement.',
+        'Each reviewer report must begin with exactly one explicit verdict line: VERDICT: APPROVE, VERDICT: REQUEST_CHANGES, or VERDICT: BLOCKED. APPROVE is allowed only when that reviewer independently verified all in-scope checks; otherwise choose REQUEST_CHANGES or BLOCKED and list evidence. HERMES must not edit either report.',
         'Both reviewers must inspect the exact same commit SHA and produce separate evidence-backed reports. Do not combine or rewrite their source reports.',
         'You may summarize their results, but must not claim approval unless both child runs complete successfully with separate durable artifacts.',
         'This dispatch is read-only. Do not merge, deploy, modify files, use wallets, make x402 payments, call arbitrary URLs, or request secrets.',
@@ -162,24 +168,26 @@ export function registerStagingHermesDispatchRoute(app: SessionApp): void {
         const runCreated = events.rows.find((e) => e.event_type === 'run.created')
         const childRunId = completed?.run_id ?? runCreated?.run_id ?? null
         const artifacts = childRunId
-          ? await query('SELECT id, content_sha256 FROM agent_artifacts WHERE correlation_id = $1 AND run_id = $2', [correlationId, childRunId])
+          ? await query('SELECT id, content_sha256, content FROM agent_artifacts WHERE correlation_id = $1 AND run_id = $2', [correlationId, childRunId])
           : { rows: [] }
         reviewerEvidence.push({
           agent_id: reviewer.id,
           role: reviewer.name,
           run_id: childRunId,
           completed: Boolean(completed),
-          artifacts: artifacts.rows.map((a: any) => ({ id: a.id, sha256: a.content_sha256 })),
+          artifacts: artifacts.rows.map((a: any) => ({ id: a.id, sha256: a.content_sha256, verdict: reviewVerdict(a.content) })),
+          approved: artifacts.rows.some((a: any) => reviewVerdict(a.content) === 'APPROVE'),
           artifact_ids_from_audit: completed ? parseArtifactIds(completed.artifact_ids) : [],
         })
       }
 
-      const allApproved = rootResult.status === 'success' && reviewerEvidence.every((r) => r.completed && r.artifacts.length > 0)
+      const allCompleted = reviewerEvidence.every((r) => r.completed && r.artifacts.length > 0 && r.artifacts.some((a: any) => a.verdict !== null))
+      const allApproved = rootResult.status === 'success' && allCompleted && reviewerEvidence.every((r) => r.approved)
       const ledger = await one(
         'SELECT reserved_usd_micros, spent_usd_micros, status FROM staging_agent_dispatches WHERE id = $1',
         [dispatchId]
       )
-      const status = ledger?.status === 'over_budget' ? 'over_budget' : allApproved ? 'completed' : 'failed'
+      const status = ledger?.status === 'over_budget' ? 'over_budget' : !allCompleted ? 'failed' : allApproved ? 'completed' : 'changes_requested'
       await query(
         `UPDATE staging_agent_dispatches
             SET status = $2, result_summary = $3, completed_at = now()
