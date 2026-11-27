@@ -602,6 +602,19 @@ async function runAgentInner(
                 result = 'Refused: code search is not revision-pinned. Use list/read operations so every file is fetched at the approved commit SHA.'
               } else {
                 result = await runRepoTool(args, deps.stagingDispatch ? { repo: 'hakuramasam/thirdeye-ai', ref: deps.stagingDispatch.targetSha, reviewPrNumber: deps.stagingDispatch.reviewPrNumber } : undefined)
+                if (deps.stagingDispatch && String(args.op) === 'diff' && result.startsWith(`hakuramasam/thirdeye-ai#${deps.stagingDispatch.reviewPrNumber} at ${deps.stagingDispatch.targetSha}`) && result.includes('diff --git')) {
+                  const diffAudit = await createAuditEvent({
+                    ...audit,
+                    eventType: 'tool.invoked',
+                    status: 'succeeded',
+                    toolName: 'repo_read',
+                    metadata: { operation: 'diff', review_pr: deps.stagingDispatch.reviewPrNumber, target_sha: deps.stagingDispatch.targetSha, revision_verified: true },
+                  })
+                  if (!diffAudit) {
+                    denied = 'staging_diff_audit_unavailable'
+                    result = 'Refused: the pinned PR diff could not be durably audited; do not approve this review.'
+                  }
+                }
               }
             } else if (tc.function.name === 'http_fetch' && agent.x402_enabled && !deps.stagingDispatch) {
               const sellers = typeof agent.x402_allowed_sellers === 'string'
