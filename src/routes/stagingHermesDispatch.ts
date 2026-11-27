@@ -173,28 +173,38 @@ export function registerStagingHermesDispatchRoute(app: SessionApp): void {
           ? await query('SELECT id, content_sha256, content FROM agent_artifacts WHERE correlation_id = $1 AND run_id = $2', [correlationId, childRunId])
           : { rows: [] }
         const diffAudit = await query(
-          `SELECT id FROM agent_audit_events WHERE correlation_id = $1 AND agent_id = $2 AND event_type = 'tool.invoked' AND tool_name = 'repo_read' AND metadata->>'operation' = 'diff' AND metadata->>'target_sha' = $3 AND metadata->>'revision_verified' = 'true' LIMIT 1`,
+          `SELECT id, metadata->'changed_paths' AS changed_paths FROM agent_audit_events WHERE correlation_id = $1 AND agent_id = $2 AND event_type = 'tool.invoked' AND tool_name = 'repo_read' AND metadata->>'operation' = 'diff' AND metadata->>'target_sha' = $3 AND metadata->>'revision_verified' = 'true' LIMIT 1`,
           [correlationId, reviewer.id, TARGET_SHA]
         )
+        const changedPaths = diffAudit.rows.length ? parseArtifactIds(diffAudit.rows[0].changed_paths) : []
+        const readAudit = await query(
+          `SELECT metadata->>'path' AS path FROM agent_audit_events WHERE correlation_id = $1 AND agent_id = $2 AND event_type = 'tool.invoked' AND tool_name = 'repo_read' AND metadata->>'operation' = 'read' AND metadata->>'target_sha' = $3 AND metadata->>'revision_verified' = 'true'`,
+          [correlationId, reviewer.id, TARGET_SHA]
+        )
+        const reviewedPaths = readAudit.rows.map((row: any) => String(row.path ?? ''))
+        const changedPathsRead = changedPaths.length > 0 && changedPaths.every((path: string) => reviewedPaths.includes(path))
         const reportText = artifacts.rows.length === 1 ? String(artifacts.rows[0].content ?? '') : ''
         const verdict = artifacts.rows.length === 1 ? reviewVerdict(reportText) : null
-        const targetVerified = reportText.includes(TARGET_SHA) && reportText.includes('PR #116')
-        const evidencePresent = /^Evidence:/im.test(reportText) && /(?:src|tests|docs|team)\\/[A-Za-z0-9_./-]+/.test(reportText)
+        const targetVerified = reportText.includes('Reviewed PR: #116') && reportText.includes('Reviewed SHA: ' + TARGET_SHA)
+        const evidencePresent = /^Evidence:/im.test(reportText) && changedPaths.length > 0 && changedPaths.every((path: string) => reportText.includes(path))
         reviewerEvidence.push({
           agent_id: reviewer.id,
           role: reviewer.name,
           run_id: childRunId,
           completed: Boolean(completed),
           diff_verified: diffAudit.rows.length > 0,
+          changed_paths: changedPaths,
+          reviewed_paths: reviewedPaths,
+          changed_paths_read: changedPathsRead,
           target_verified: targetVerified,
           evidence_present: evidencePresent,
           artifacts: artifacts.rows.map((a: any) => ({ id: a.id, sha256: a.content_sha256, verdict })),
-          approved: Boolean(diffAudit.rows.length > 0 && targetVerified && evidencePresent && verdict === 'APPROVE'),
+          approved: Boolean(diffAudit.rows.length > 0 && changedPathsRead && targetVerified && evidencePresent && verdict === 'APPROVE'),
           artifact_ids_from_audit: completed ? parseArtifactIds(completed.artifact_ids) : [],
         })
       }
 
-      const allCompleted = reviewerEvidence.every((r) => r.completed && r.diff_verified && r.target_verified && r.evidence_present && r.artifacts.length === 1 && r.artifacts[0].verdict !== null)
+      const allCompleted = reviewerEvidence.every((r) => r.completed && r.diff_verified && r.changed_paths_read && r.target_verified && r.evidence_present && r.artifacts.length === 1 && r.artifacts[0].verdict !== null)
       const allApproved = rootResult.status === 'success' && allCompleted && reviewerEvidence.every((r) => r.approved)
       const ledger = await one(
         'SELECT reserved_usd_micros, spent_usd_micros, status FROM staging_agent_dispatches WHERE id = $1',
