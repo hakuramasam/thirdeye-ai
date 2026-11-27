@@ -25,8 +25,8 @@ test('fixed PR diff is fetched only after repository and exact head SHA are veri
     calls.push({ url, accept })
     if (url.endsWith('/pulls/116') && accept === 'application/vnd.github+json') {
       return new Response(JSON.stringify({
-        base: { repo: { full_name: 'hakuramasam/thirdeye-ai' } },
-        head: { sha: TARGET_SHA },
+        base: { ref: 'main', repo: { full_name: 'hakuramasam/thirdeye-ai' } },
+        head: { ref: 'feature', repo: { full_name: 'hakuramasam/thirdeye-ai' }, sha: TARGET_SHA },
       }), { status: 200 })
     }
     if (url.endsWith('/pulls/116') && accept === 'application/vnd.github.diff') {
@@ -62,8 +62,8 @@ test('fixed PR diff refuses a mutable or mismatched head before downloading the 
   globalThis.fetch = (async () => {
     calls += 1
     return new Response(JSON.stringify({
-      base: { repo: { full_name: 'hakuramasam/thirdeye-ai' } },
-      head: { sha: 'different-commit' },
+      base: { ref: 'main', repo: { full_name: 'hakuramasam/thirdeye-ai' } },
+      head: { ref: 'feature', repo: { full_name: 'hakuramasam/thirdeye-ai' }, sha: 'different-commit' },
     }), { status: 200 })
   }) as typeof fetch
 
