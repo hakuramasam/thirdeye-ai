@@ -132,3 +132,22 @@ export async function migrate(): Promise<void> {
   }
   migrated = true
 }
+
+
+let stagingDispatchMigrated = false
+
+/**
+ * Isolated schema for the authenticated Preview-only HERMES dispatch path.
+ * Kept separate from schema.sql so production bootstrap can never create these tables.
+ */
+export async function migrateStagingDispatch(): Promise<void> {
+  if (stagingDispatchMigrated) return
+  const schema = (await import('node:fs')).readFileSync(new URL('./staging-dispatch.sql', import.meta.url), 'utf8')
+  if (env.databaseUrl) {
+    await query(schema)
+  } else {
+    const db = await getPglite()
+    await db.exec(schema)
+  }
+  stagingDispatchMigrated = true
+}
