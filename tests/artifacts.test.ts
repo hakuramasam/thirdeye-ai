@@ -189,4 +189,33 @@ describe('PH2-003 addressable artifacts', () => {
     assert.equal(observedToolResult, payload)
   })
 
+
+  it('does not treat a persisted repo_access=write value as a task grant', async () => {
+    const agent = (await one(
+      `INSERT INTO agents (id, user_id, name, system_prompt, model, can_delegate, repo_access, budget_usd_micros, max_steps)
+       VALUES ($1,$2,'HERMES','coordinate','stub-model',true,'write',100000,3) RETURNING *`,
+      [`tdt_scope_${randomUUID().slice(0, 6)}`, user.id]
+    )) as AgentRow
+    let observedToolResult = ''
+    let call = 0
+    const llm = {
+      call: async (params: any) => {
+        call++
+        if (call === 1) {
+          return {
+            content: '',
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            tool_calls: [toolCall('repo_write', { branch: 'must-not-run', title: 'must not run', files: [] })],
+          }
+        }
+        observedToolResult = String((params.messages ?? []).find((m: any) => m.role === 'tool')?.content ?? '')
+        return { content: 'write correctly refused', prompt_tokens: 1, completion_tokens: 1 }
+      },
+    }
+    const result = await runAgent(agent, 'Attempt a write without a task grant.', user, { llm })
+    assert.equal(result.status, 'success')
+    assert.match(observedToolResult, /needs write authority for this run/)
+  })
+
 })
