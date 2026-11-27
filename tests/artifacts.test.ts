@@ -213,7 +213,11 @@ describe('PH2-003 addressable artifacts', () => {
         return { content: 'write correctly refused', prompt_tokens: 1, completion_tokens: 1 }
       },
     }
-    const result = await runAgent(agent, 'Attempt a write without a task grant.', user, { llm })
+    const result = await runAgent(agent, 'Attempt a write without an owned durable task.', user, {
+      llm,
+      allowWrite: true,
+      taskId: 'tsk_not_owned_or_missing',
+    })
     assert.equal(result.status, 'success')
     assert.match(observedToolResult, /needs write authority for this run/)
   })
