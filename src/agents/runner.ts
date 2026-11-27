@@ -5,6 +5,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { query, one } from '../db/index.js'
+import { reserveSharedBudget, settleSharedBudget, STAGING_SHARED_BUDGET_CAP_MICROS } from './shared-budget.js'
 import { env } from '../lib/env.js'
 import { debitForUsage } from '../lib/billing.js'
 import { payForStep } from './credit.js'
@@ -101,6 +102,8 @@ export type RunnerDeps = {
   stageId?: string
   /** Injectable for tests; default resolves via the provider layer. */
   llm?: { call(params: Record<string, any>, opts?: { timeoutMs?: number }): Promise<LlmResult> }
+  /** Server-created policy for the isolated staging HERMES review dispatch. */
+  stagingDispatch?: { dispatchId: string; allowedChildAgentIds: string[]; maxDelegationDepth: number }
   /** Override the rate-limit wait budget (tests use a few milliseconds instead of 50s). */
   retryWaitMs?: number
   /**
@@ -459,7 +462,7 @@ async function runAgentInner(
   }
 
   // Resolve MCP tools.
-  const servers = asMcpServers(agent.mcp_servers)
+  const servers = deps.stagingDispatch ? [] : asMcpServers(agent.mcp_servers)
   let mcpTools = deps.mcpTools ?? null
   let ownedMcp = false
   if (!deps.mcpTools && servers.length > 0) {
@@ -470,7 +473,7 @@ async function runAgentInner(
   const tools = [...(mcpTools?.tools ?? [])]
   // Every agent may read an artifact handed to it, including one delegated to by an orchestrator.
   tools.push(READ_ARTIFACT_TOOL)
-  if ((agent as any).can_delegate) tools.push(DELEGATE_TOOL)
+  if ((agent as any).can_delegate && (!deps.stagingDispatch || deps.stagingDispatch.allowedChildAgentIds.length > 0)) tools.push(DELEGATE_TOOL)
   if (agent.x402_enabled) tools.push(HTTP_FETCH_TOOL)
   // Write is granted per run, not per agent row: an orchestrator may hand one task write
   // authority and withhold it from the next, so the grant travels with the run.
