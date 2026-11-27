@@ -169,8 +169,8 @@ async function readPinnedReviewDiff(cfg: RepoConfig): Promise<string> {
   const clipped = safeDiff.length > MAX_REVIEW_DIFF_CHARS
     ? `${safeDiff.slice(0, MAX_REVIEW_DIFF_CHARS)}\n\n[Diff truncated. Read remaining changed files by path at the pinned SHA.]`
     : safeDiff
-  const metadata = JSON.stringify({ changed_paths: paths, read_required_paths: readRequiredPaths })
-  return `${cfg.repo}#${cfg.reviewPrNumber} at ${cfg.ref}\nREVIEW_DIFF_METADATA:${metadata}\n${clipped}`
+  const diffMetadata = JSON.stringify({ changed_paths: paths, read_required_paths: readRequiredPaths })
+  return `${cfg.repo}#${cfg.reviewPrNumber} at ${cfg.ref}\nREVIEW_DIFF_METADATA:${diffMetadata}\n${clipped}`
 }
 
 /** Execute a repo tool call. Always returns a string for the model, never throws to the runner. */
