@@ -18,6 +18,7 @@ describe('staging HERMES dispatch guardrails', () => {
   })
 
   it('requires the staging credential and never accepts CRON_SECRET as a substitute', async () => {
+    process.env.VERCEL = '1'
     process.env.VERCEL_ENV = 'preview'
     process.env.VERCEL_GIT_COMMIT_SHA = 'feature-preview-sha'
     process.env.STAGING_DISPATCH_SECRET = 'test-staging-secret'
@@ -102,6 +103,7 @@ describe('staging HERMES dispatch guardrails', () => {
     assert.equal(reviewVerdict('VERDICT: BLOCKED'), 'BLOCKED')
     assert.equal(reviewVerdict('The review looks good.'), null)
     assert.equal(reviewVerdict('VERDICT: APPROVED'), null)
+    assert.equal(reviewVerdict('Preamble\\nVERDICT: APPROVE'), null)
   })
 
   it('reserves a single aggregate cap atomically across concurrent reviewers', async () => {
