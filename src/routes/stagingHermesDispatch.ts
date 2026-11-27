@@ -24,7 +24,7 @@ function error(c: any, status: number, message: string) {
 }
 
 export function reviewVerdict(content: unknown): 'APPROVE' | 'REQUEST_CHANGES' | 'BLOCKED' | null {
-  const match = String(content ?? '').match(/^\s*VERDICT\s*:\s*(APPROVE|REQUEST_CHANGES|BLOCKED)\b/im)
+  const match = String(content ?? '').match(/^VERDICT:\s*(APPROVE|REQUEST_CHANGES|BLOCKED)\s*(?:\r?\n|$)/i)
   return match ? match[1].toUpperCase() as 'APPROVE' | 'REQUEST_CHANGES' | 'BLOCKED' : null
 }
 
