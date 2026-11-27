@@ -4,7 +4,7 @@ import { describe, it, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { Hono } from 'hono'
 import type { AppEnv } from '../src/lib/types.js'
-const { migrate, query, one } = await import('../src/db/index.js')
+const { migrate, migrateStagingDispatch, query, one } = await import('../src/db/index.js')
 const { registerStagingHermesDispatchRoute, reviewVerdict } = await import('../src/routes/stagingHermesDispatch.js')
 const { reserveSharedBudget, settleSharedBudget } = await import('../src/agents/shared-budget.js')
 
@@ -14,6 +14,7 @@ const CAP = 67_000
 describe('staging HERMES dispatch guardrails', () => {
   before(async () => {
     await migrate()
+    await migrateStagingDispatch()
     await query(`INSERT INTO users (id, wallet, role) VALUES ('staging-owner', '0x5555555555555555555555555555555555555555', 'admin') ON CONFLICT DO NOTHING`)
   })
 
@@ -67,6 +68,25 @@ describe('staging HERMES dispatch guardrails', () => {
     assert.notEqual(missingSha.status, 200)
   })
 
+  it('refuses to use production DATABASE_URL when the Preview database URL is absent', async () => {
+    process.env.VERCEL = '1'
+    process.env.VERCEL_ENV = 'preview'
+    process.env.VERCEL_GIT_COMMIT_SHA = 'feature-preview-sha'
+    process.env.STAGING_DISPATCH_DEPLOYMENT_SHA = 'feature-preview-sha'
+    process.env.STAGING_DISPATCH_SECRET = 'test-staging-secret'
+    process.env.STAGING_DISPATCH_ENABLED = 'true'
+    process.env.DATABASE_URL = 'postgres://production-must-not-be-used'
+    process.env.PREVIEW_DATABASE_URL = ''
+    const app = new Hono<AppEnv>()
+    registerStagingHermesDispatchRoute(app)
+    const response = await app.request('/api/ops/staging/hermes-review', {
+      method: 'POST',
+      headers: { authorization: 'Bearer test-staging-secret', 'content-type': 'application/json' },
+      body: JSON.stringify({ dispatch_id: 'dispatch-no-preview-db', target_sha: TARGET_SHA }),
+    })
+    assert.equal(response.status, 503)
+  })
+
   it('pins the review SHA and rejects unknown request keys', async () => {
     process.env.VERCEL = '1'
     process.env.VERCEL_ENV = 'preview'
@@ -74,6 +94,7 @@ describe('staging HERMES dispatch guardrails', () => {
     process.env.STAGING_DISPATCH_DEPLOYMENT_SHA = 'feature-preview-sha'
     process.env.STAGING_DISPATCH_SECRET = 'test-staging-secret'
     process.env.STAGING_DISPATCH_ENABLED = 'false'
+    process.env.PREVIEW_DATABASE_URL = 'postgres://preview-test-only'
     const app = new Hono<AppEnv>()
     registerStagingHermesDispatchRoute(app)
 
