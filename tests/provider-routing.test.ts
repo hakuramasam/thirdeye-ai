@@ -19,6 +19,24 @@ test('provider routing uses the canonical Google key name for Gemini OpenAI-comp
   assert.equal(deriveProviderName(model), 'google')
 })
 
+test('provider routing does not select Google credentials for an insecure Gemini URL', () => {
+  const model = {
+    provider: 'openai-compatible',
+    base_url: 'http://generativelanguage.googleapis.com/v1beta/openai',
+  } as any
+
+  assert.equal(deriveProviderName(model), 'openai-compatible')
+})
+
+test('provider routing does not select Google credentials for a nonstandard Gemini port', () => {
+  const model = {
+    provider: 'openai-compatible',
+    base_url: 'https://generativelanguage.googleapis.com:8443/v1beta/openai',
+  } as any
+
+  assert.equal(deriveProviderName(model), 'openai-compatible')
+})
+
 test('provider routing keeps existing hostname-derived keys for other OpenAI-compatible providers', () => {
   const model = {
     provider: 'openai-compatible',
