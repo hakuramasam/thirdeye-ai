@@ -54,17 +54,33 @@ export const REPO_TOOL = {
   function: {
     name: 'repo_read',
     description:
-      'Read this project\'s own GitHub repository (read-only). Ops: "list" a directory, "read" a file, "search" the code, or "diff" the fixed staging review PR when the server explicitly grants that capability. Use it to ground work in the real code instead of guessing. Write and commit are not available.',
+      'Read this project\'s own GitHub repository (read-only). Ops: "list" a directory, "read" a file, "search" the code. Use it to ground work in the real code instead of guessing. Write and commit are not available.',
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['list', 'read', 'search', 'diff'], description: 'Operation to perform; diff is available only for the server-pinned staging PR' },
+        op: { type: 'string', enum: ['list', 'read', 'search'], description: 'Operation to perform' },
         path: { type: 'string', description: 'Repo-relative path for list or read, e.g. src/agents/runner.ts' },
         query: { type: 'string', description: 'Search text for op=search' },
         start_line: { type: 'number', description: 'First line to return for op=read (1-based, optional)' },
         end_line: { type: 'number', description: 'Last line to return for op=read (optional)' },
       },
       required: ['op'],
+    },
+  },
+}
+
+// This stricter schema is passed only inside the server-created staging review tree.
+export const STAGING_REPO_TOOL = {
+  ...REPO_TOOL,
+  function: {
+    ...REPO_TOOL.function,
+    description: 'Read-only access to the fixed staging review PR: list/read repository files at the pinned SHA and fetch the exact PR diff after server-side SHA verification. No search or write operation.',
+    parameters: {
+      ...REPO_TOOL.function.parameters,
+      properties: {
+        ...REPO_TOOL.function.parameters.properties,
+        op: { type: 'string', enum: ['list', 'read', 'diff'], description: 'Operation; diff is the fixed, server-pinned staging PR patch' },
+      },
     },
   },
 }
