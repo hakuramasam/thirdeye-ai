@@ -608,11 +608,26 @@ async function runAgentInner(
                     eventType: 'tool.invoked',
                     status: 'succeeded',
                     toolName: 'repo_read',
-                    metadata: { operation: 'diff', review_pr: deps.stagingDispatch.reviewPrNumber, target_sha: deps.stagingDispatch.targetSha, revision_verified: true },
+                    metadata: { operation: 'diff', review_pr: deps.stagingDispatch.reviewPrNumber, target_sha: deps.stagingDispatch.targetSha, revision_verified: true, changed_paths: [...result.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm)].map((m) => m[2]) },
                   })
                   if (!diffAudit) {
                     denied = 'staging_diff_audit_unavailable'
                     result = 'Refused: the pinned PR diff could not be durably audited; do not approve this review.'
+                  }
+                }
+                if (deps.stagingDispatch && String(args.op) === 'read' && result.startsWith(`hakuramasam/thirdeye-ai@${deps.stagingDispatch.targetSha}:`)) {
+                  const prefix = `hakuramasam/thirdeye-ai@${deps.stagingDispatch.targetSha}:`
+                  const reviewedPath = result.slice(prefix.length).split(' ')[0]
+                  const readAudit = await createAuditEvent({
+                    ...audit,
+                    eventType: 'tool.invoked',
+                    status: 'succeeded',
+                    toolName: 'repo_read',
+                    metadata: { operation: 'read', path: reviewedPath, target_sha: deps.stagingDispatch.targetSha, revision_verified: true },
+                  })
+                  if (!readAudit) {
+                    denied = 'staging_read_audit_unavailable'
+                    result = 'Refused: the pinned file read could not be durably audited; do not approve this review.'
                   }
                 }
               }
