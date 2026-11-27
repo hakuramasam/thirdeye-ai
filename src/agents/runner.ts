@@ -596,7 +596,12 @@ async function runAgentInner(
             if (tc.function.name === 'repo_write' && canWrite) {
               result = await runRepoWrite(args)
             } else if (tc.function.name === 'repo_read' && hasRepoAccess((agent as any).repo_access)) {
-              result = await runRepoTool(args, deps.stagingDispatch ? { ref: deps.stagingDispatch.targetSha } : undefined)
+              if (deps.stagingDispatch && String(args.op) === 'search') {
+                denied = 'staging_repo_search_not_revision_pinned'
+                result = 'Refused: code search is not revision-pinned. Use list/read operations so every file is fetched at the approved commit SHA.'
+              } else {
+                result = await runRepoTool(args, deps.stagingDispatch ? { repo: 'hakuramasam/thirdeye-ai', ref: deps.stagingDispatch.targetSha } : undefined)
+              }
             } else if (tc.function.name === 'http_fetch' && agent.x402_enabled && !deps.stagingDispatch) {
               const sellers = typeof agent.x402_allowed_sellers === 'string'
                 ? JSON.parse(agent.x402_allowed_sellers || '[]')
