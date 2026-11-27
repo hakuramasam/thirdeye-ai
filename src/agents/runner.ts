@@ -613,8 +613,8 @@ async function runAgentInner(
                       review_pr: deps.stagingDispatch.reviewPrNumber,
                       target_sha: deps.stagingDispatch.targetSha,
                       revision_verified: true,
-                      changed_paths: result.slice(result.indexOf('diff --git')).split(/(?=^diff --git )/m).map((section) => section.match(/^diff --git a\/(.+?) b\/(.+)$/m)?.[2]).filter(Boolean),
-                      read_required_paths: result.slice(result.indexOf('diff --git')).split(/(?=^diff --git )/m).filter((section) => !/^\+\+\+ \/dev\/null$/m.test(section)).map((section) => section.match(/^diff --git a\/(.+?) b\/(.+)$/m)?.[2]).filter(Boolean),
+                      changed_paths: (() => { try { return JSON.parse(result.match(/^REVIEW_DIFF_METADATA:(\\{.*\\})$/m)?.[1] ?? '{}').changed_paths ?? [] } catch { return [] } })(),
+                      read_required_paths: (() => { try { return JSON.parse(result.match(/^REVIEW_DIFF_METADATA:(\\{.*\\})$/m)?.[1] ?? '{}').read_required_paths ?? [] } catch { return [] } })(),
                     },
                   })
                   if (!diffAudit) {
