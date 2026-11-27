@@ -52,6 +52,7 @@ export function registerStagingHermesDispatchRoute(app: SessionApp): void {
     // Environment identity is checked before any database read or dispatch write.
     const deployedSha = process.env.VERCEL_GIT_COMMIT_SHA || ''
     if (
+      process.env.VERCEL !== '1' ||
       process.env.VERCEL_ENV !== 'preview' ||
       !deployedSha ||
       !process.env.STAGING_DISPATCH_DEPLOYMENT_SHA ||
