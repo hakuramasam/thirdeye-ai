@@ -131,10 +131,10 @@ const MAX_REVIEW_DIFF_CHARS = 50_000
 function redactReviewDiff(value: string): string {
   return value
     .replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
-    .replace(/(?<=bearer\\s)[A-Za-z0-9._-]{10,}/gi, '***')
+    .replace(/(?<=bearer\s)[A-Za-z0-9._-]{10,}/gi, '***')
     .replace(/gh[pousr]_[A-Za-z0-9]{20,}/g, 'gh***')
     .replace(/AKIA[0-9A-Z]{16}/g, 'AKIA***')
-    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[private key redacted]')
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[private key redacted]')
 }
 
 async function readPinnedReviewDiff(cfg: RepoConfig): Promise<string> {
