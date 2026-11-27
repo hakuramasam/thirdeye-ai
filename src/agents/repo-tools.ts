@@ -54,11 +54,11 @@ export const REPO_TOOL = {
   function: {
     name: 'repo_read',
     description:
-      'Read this project\'s own GitHub repository (read-only). Ops: "list" a directory, "read" a file, "search" the code. Use it to ground work in the real code instead of guessing. Write and commit are not available.',
+      'Read this project\'s own GitHub repository (read-only). Ops: "list" a directory, "read" a file, "search" the code, or "diff" the fixed staging review PR when the server explicitly grants that capability. Use it to ground work in the real code instead of guessing. Write and commit are not available.',
     parameters: {
       type: 'object',
       properties: {
-        op: { type: 'string', enum: ['list', 'read', 'search'], description: 'Operation to perform' },
+        op: { type: 'string', enum: ['list', 'read', 'search', 'diff'], description: 'Operation to perform; diff is available only for the server-pinned staging PR' },
         path: { type: 'string', description: 'Repo-relative path for list or read, e.g. src/agents/runner.ts' },
         query: { type: 'string', description: 'Search text for op=search' },
         start_line: { type: 'number', description: 'First line to return for op=read (1-based, optional)' },
@@ -130,11 +130,11 @@ async function readPinnedReviewDiff(cfg: RepoConfig): Promise<string> {
   })
   const diff = await response.text()
   if (!response.ok) throw new Error(`GitHub ${response.status}: ${diff.slice(0, 200)}`)
-  const paths = [...diff.matchAll(/^diff --git a\\/(.+?) b\\/(.+)$/gm)].map((m) => m[2])
+  const paths = [...diff.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm)].map((m) => m[2])
   const clipped = diff.length > MAX_REVIEW_DIFF_CHARS
-    ? `${diff.slice(0, MAX_REVIEW_DIFF_CHARS)}\\n\\n[Diff truncated. Read remaining changed files by path at the pinned SHA. Changed paths: ${paths.join(', ')}]`
+    ? `${diff.slice(0, MAX_REVIEW_DIFF_CHARS)}\n\n[Diff truncated. Read remaining changed files by path at the pinned SHA. Changed paths: ${paths.join(', ')}]`
     : diff
-  return `${cfg.repo}#${cfg.reviewPrNumber} at ${cfg.ref}\\n${clipped}`
+  return `${cfg.repo}#${cfg.reviewPrNumber} at ${cfg.ref}\n${clipped}`
 }
 
 /** Execute a repo tool call. Always returns a string for the model, never throws to the runner. */
