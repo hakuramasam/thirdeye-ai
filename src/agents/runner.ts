@@ -518,14 +518,41 @@ async function runAgentInner(
         // count in agreement with the ledger.
         return await finish('error', null, toolCalls, spend, 'deadline_exceeded: no time left in this invocation to call the model')
       }
-      const res = await callWithRateLimitRetry(
-        () => llm!.call(useTools ? { messages, tools } : { messages }, { timeoutMs: callMs }),
-        { totalWaitMs: retryWaitMs, deadlineMs: retryDeadline }
-      )
+      // Reserve a conservative upper bound before the provider call. UTF-8 bytes upper-bound
+      // token count; max_tokens is pinned for this isolated review. The reservation is settled
+      // before another root/child model call can begin.
+      const reservationId = randomUUID()
+      const maxOutputTokens = 2048
+      const reservationMicros = deps.stagingDispatch && modelRow
+        ? Math.max(1, computeCostMicros(modelRow, Buffer.byteLength(JSON.stringify(messages), 'utf8'), maxOutputTokens, env.platformMarginPct, false))
+        : 0
+      if (deps.stagingDispatch) {
+        const reserved = await reserveSharedBudget(deps.stagingDispatch.dispatchId, reservationId, reservationMicros)
+        if (!reserved.ok) return await finish('error', null, toolCalls, spend, 'Staging shared budget refused the next provider call: ' + (reserved.reason ?? 'reservation_failed'))
+      }
+      let res: LlmResult
+      try {
+        const params: Record<string, any> = useTools ? { messages, tools } : { messages }
+        if (deps.stagingDispatch) params.max_tokens = maxOutputTokens
+        res = await callWithRateLimitRetry(
+          () => llm!.call(params, { timeoutMs: callMs }),
+          { totalWaitMs: retryWaitMs, deadlineMs: retryDeadline }
+        )
+      } catch (error) {
+        if (deps.stagingDispatch) {
+          // A timeout may be ambiguous about upstream execution; charge the full reservation.
+          await settleSharedBudget(deps.stagingDispatch.dispatchId, reservationId, reservationMicros)
+        }
+        throw error
+      }
       const cost =
         modelRow != null
           ? computeCostMicros(modelRow, res.prompt_tokens, res.completion_tokens, env.platformMarginPct, byok)
           : 0
+      if (deps.stagingDispatch) {
+        const settlement = await settleSharedBudget(deps.stagingDispatch.dispatchId, reservationId, cost)
+        if (!settlement.ok) return await finish('error', null, toolCalls, spend, 'Staging shared budget settlement failed: ' + (settlement.reason ?? 'settlement_failed'))
+      }
       if (cost > 0) {
         // The agent's own pot pays first, the owner's ledger covers the rest. A step that
         // neither can settle in full is refused rather than half-charged.
