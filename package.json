@@ -3,9 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=20"
-  },
+  "engines": { "node": ">=20" },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "dev:web": "vite",
@@ -14,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "test:file": "tsx --test",
+    "test:integration": "node --test tests/*.integration.test.mjs",
     "agent:platforms:check": "node scripts/validate-agent-platforms.mjs"
   },
   "dependencies": {
