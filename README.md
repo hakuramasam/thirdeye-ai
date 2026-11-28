@@ -126,7 +126,7 @@ tests/              node:test suites (PGlite for isolated database tests)
 1. Deposit finality, confirmation-depth and reorg reconciliation.
 2. Production release synchronization: the verified production deployment is behind current main; the current Vercel status check reports an account block.
 3. Path-based product surfaces to avoid dependency on unavailable subdomain DNS verification (PR #120 remains open).
-4. Real PostgreSQL Testcontainers CI coverage (PR #122 remains open; its integration job is being corrected to use the Node version required by Testcontainers).
+4. Real PostgreSQL Testcontainers CI coverage (PR #122 has a green CI run #544: 516 PGlite tests plus 3 PostgreSQL integration tests; the PR is still open and pending merge).
 5. Durable development-agent tasks and actual production pipeline/stage activation.
 
 ### Not implemented yet
