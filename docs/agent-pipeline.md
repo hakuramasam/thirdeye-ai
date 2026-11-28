@@ -25,7 +25,7 @@ This is materially different from the earlier state where stage order and artifa
 1. **No durable task queue:** the runner constructs and validates a task object in memory. The production schema has no `agent_tasks` table, so there is no durable task lifecycle, lease, retry, cancellation or resume mechanism.
 2. **No production pipeline activation:** read-only production telemetry for the last 30 days shows 0 pipeline-ID events and 0 stage-ID events.
 3. **No evidence of sustained handoffs:** the same window shows one distinct task ID and one delegated-task audit event; that is not enough to claim a reliable multi-agent workflow.
-4. **Artifact traceability is sparse:** six artifacts were created, only one had a task ID, and none had a pipeline ID in the observed window.
+4. **Artifact traceability is sparse:** seven artifact rows were created, only one had a task ID, and none had a pipeline ID in the observed window.
 5. **The caller is part of the trust boundary:** because the caller can pin a stage, the dispatch endpoint must own pipeline selection and validate that the requested stage is the next stage. Do not let a model or untrusted client choose arbitrary stage IDs.
 6. **Independent acceptance is not operationalized:** QA and SENTINEL must review the same immutable PR SHA and produce separate records before a release can be considered.
 
