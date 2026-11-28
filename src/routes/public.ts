@@ -181,7 +181,7 @@ const DOCS_API = `
 <h1>API guide</h1>
 <p class="lead">OpenAI-compatible at the edge, with per-call billing attached to every response.</p>
 <h2>Authentication</h2>
-<p>The OpenAI-compatible <code>/api/v1/*</code> gateway requires an API key in <code>Authorization: Bearer sk-thirdeye-...</code>. Dashboard account routes use the wallet-authenticated session cookie; a session cookie is not a substitute for a gateway API key.</p>
+<p>The OpenAI-compatible <code>/api/v1/*</code> gateway requires a bearer API key in the <code>Authorization</code> header. Dashboard account routes use the wallet-authenticated session cookie; a session cookie is not a substitute for a gateway API key.</p>
 <pre><code>GET /api/v1/models
 authorization: Bearer $THIRDEYE_API_KEY</code></pre>
 <h2>Endpoints</h2>
