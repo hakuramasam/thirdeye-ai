@@ -33,7 +33,8 @@ The production team is **not yet a reliably autonomous 12-role engineering organ
 | Stage-ID events | 0 |
 | Artifact rows created in the window | 7 |
 | Artifacts carrying a task ID | 1 |
-| Artifacts carrying a pipeline ID | 0 |\n| Artifact rows with a matching creation audit event | 6 of 7 |
+| Artifacts carrying a pipeline ID | 0 |
+| Artifact rows with a matching creation audit event | 6 of 7 |
 
 These are operational counts, not a benchmark of code quality. They include every run recorded for the 12 canonical role IDs during the window.
 
