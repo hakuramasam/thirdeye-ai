@@ -38,9 +38,10 @@ after(async () => {
 
 test("real PostgreSQL accepts the production schema and seeded model catalog", async () => {
   const result = await pool.query(
-    "SELECT count(*)::int AS count FROM models_catalog WHERE enabled = true"
+    "SELECT 1 FROM models_catalog WHERE model = $1 AND enabled = true",
+    ["thirdeye-mock"]
   );
-  assert.ok(result.rows[0].count >= 1, "schema migration should seed enabled models");
+  assert.equal(result.rowCount, 1, "schema migration should seed enabled thirdeye-mock");
 
   const version = await pool.query("SELECT current_setting('server_version_num')::int AS version");
   assert.ok(version.rows[0].version >= 160000, "integration container must run PostgreSQL 16+");
