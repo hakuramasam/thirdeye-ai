@@ -31,9 +31,9 @@ The production team is **not yet a reliably autonomous 12-role engineering organ
 | Distinct task IDs in audit events | 1 |
 | Pipeline-ID events | 0 |
 | Stage-ID events | 0 |
-| Artifacts created in the window | 6 |
+| Artifact rows created in the window | 7 |
 | Artifacts carrying a task ID | 1 |
-| Artifacts carrying a pipeline ID | 0 |
+| Artifacts carrying a pipeline ID | 0 |\n| Artifact rows with a matching creation audit event | 6 of 7 |
 
 These are operational counts, not a benchmark of code quality. They include every run recorded for the 12 canonical role IDs during the window.
 
@@ -54,7 +54,7 @@ These are operational counts, not a benchmark of code quality. They include ever
 | DEVOPS | 3 | 1 | 2 | Needs failure/recovery work. |
 | DOCS | 5 | 5 | 0 | Positive historical sample, but last observed 2026-11-11. |
 
-HERMES had a daily cron expression (`0 9 * * *`) but its latest recorded run was 2026-11-25. This snapshot does not show a later successful scheduled run. A separate legacy `Elio cron probe` generated 11 failed `read_artifact` tool events; it is not one of the 12 canonical roles and should not be counted as team delivery.
+HERMES had a daily cron expression (`0 9 * * *`) but its latest recorded run was 2026-11-25. Of its 18 failed runs, 13 are classified as rate-limit failures and five as other; the exact upstream cause for the rate-limit group still needs diagnosis. This snapshot does not show a later successful scheduled run. A separate legacy `Elio cron probe` generated 11 failed, artifact-related `read_artifact` tool events; it is not one of the 12 canonical roles and should not be counted as team delivery.
 
 ## What is implemented versus what is operational
 
@@ -83,7 +83,7 @@ The repository write tool still has valuable restrictions: it writes only to `ag
 1. **HERMES reliability:** 18 of 22 runs failed. Classify failure codes and root causes before increasing delegation, spend or write authority.
 2. **No durable task system:** task IDs are generated in the runner and events are recorded, but there is no production task table/queue for leases, idempotency, retries, cancellation, resume or task-level audit state.
 3. **Pipelines are dormant:** the runner only enforces the next stage when a caller supplies a pipeline ID and the model chooses the delegation (no caller-pinned stage). Production has zero pipeline/stage events.
-4. **Handoff evidence is weak:** only one task ID and one delegated-task event exist in the 30-day snapshot. Artifact reads also need a success-rate gate.
+4. **Handoff and artifact evidence is weak:** only one task ID and one delegated-task event exist in the 30-day snapshot. Eleven artifact-read failures were recorded for the legacy probe, and one of seven artifact rows has no matching `artifact.created` audit event; reconcile this audit gap.
 5. **Specialists are idle or stale:** PRODUCT, BLOCKCHAIN, INTELLIGENCE and AGENT-ENGINEER have no run evidence; several successful QA/DOCS/ARCHITECT samples are more than two weeks old.
 6. **Independent acceptance is not systematic:** QA and SENTINEL have role packs, but there is no repeated evidence of separate QA and security approvals on the same immutable PR SHA.
 7. **Scheduled execution is not proven:** HERMES's last recorded run is 2026-11-25 despite its daily cron expression. The platform cron is daily; finer schedules depend on an external pinger.
