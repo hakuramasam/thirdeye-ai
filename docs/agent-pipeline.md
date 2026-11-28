@@ -1,51 +1,61 @@
-# Agent pipelines, mapped from CI/CD
+# Agent pipelines: declared, enforced in code, not yet active in production
 
-Sam pointed me at GitLab's CI/CD primer. What is worth taking is not the YAML, it is the
-pipeline model: named stages, artifacts handed forward, environments, and the distinction
-between *delivery* (a human presses release) and *deployment* (the machine does). Our agents
-already do the work; what they lacked was a declared shape for it, so HERMES improvised each
-time and nobody could say what "done" meant for a given class of task.
+**Status snapshot: 2026-11-28.** The pipeline design is no longer merely a document, but it is not yet a proven production workflow.
 
-The pipelines live in `team/pipelines/*.pipeline.json` and are validated by
-`tests/pipelines.test.ts`, which refuses an unowned stage, an ungated stage, a consumed
-artifact that was never produced, a patch released without verification, and any route to
-production that is not owner-approved.
+## Canonical definitions
 
-## The mapping
+Pipeline definitions live in `team/pipelines/*.pipeline.json` and are checked by `tests/pipelines.test.ts`. They declare stages, owners, gates, artifacts, dependencies, environments and owner approval before production release.
 
-| GitLab concept | Ours | State |
-| --- | --- | --- |
-| Pipeline | `team/pipelines/<id>.pipeline.json` | new |
-| Stage | A stage with an owning agent and a gate | new |
-| Job runner | The agent runner (`runAgent`) | exists, no stage awareness |
-| Artifacts passed between jobs | `produces` / `consumes` pairs | declared, not enforced at runtime |
-| `needs:` / DAG | `consumes` ordering, checked by test | declared |
-| `rules:` / `only:` | Pipeline `trigger`, plus HERMES intake | partial |
-| Environments | `none`, `preview`, `production` per stage | declared |
-| Manual gate before production | `approval: owner` | declared and tested |
-| Protected branch | `repo_write` cannot touch main | enforced in code |
-| Merge request review | `security_review` stage | exists as a role |
-| CI checks on the MR | `.github/workflows/ci.yml` | **blocked: token has no workflow scope** |
-| Retries and timeouts | Run-level only (`maxDuration`, budget) | partial |
-| Artifact retention | `agent_runs` output, truncated | weak |
+The task, agent-message and agent-report contracts live in `src/team/schemas/`. The task schema is validated before the runner attempts a delegation.
 
-## What this changes in practice
+## Runtime behavior
 
-HERMES stops inventing an order. A bug report now follows intake, diagnose, patch, verify,
-security review, release, record, and he can decline at any gate. A failure names a move
-(`stop`, `back_to_patch`, `escalate_owner`) rather than trailing off.
+The current runner imports `planForPipeline`, reads the stage ledger, records stage transitions and carries correlation, task, pipeline and stage identifiers into delegated child runs.
 
-Two gates carry most of the value. `verify` must attach typecheck and suite counts, and an
-unrun check is reported as unrun instead of as a pass, which is the failure mode that got us
-before. `release` is the only stage that touches production and it is the only one that
-requires Sam rather than HERMES, which makes continuous *delivery* our model and continuous
-*deployment* deliberately out of reach until there is a real CI check to trust.
+- Pipeline enforcement is active only when the caller supplies a `pipelineId`.
+- When the model chooses a delegation and no caller-pinned stage is supplied, the runner asks `planForPipeline` for the next permitted stage and rejects a wrong owner or unmet dependency.
+- A caller-pinned stage is treated as an explicit driver decision: the runner records the stage but does not independently select the next stage.
+- Handoffs validate the task contract and fail closed if the delegation audit event cannot be written.
+- Artifacts are stored with IDs, versions, content hashes and task/pipeline/stage references; the HTTP artifact API is owner-scoped and supports bounded reads.
 
-## What is still missing, honestly
+This is materially different from the earlier state where stage order and artifact content existed only in prose.
 
-The pipelines are declared but not yet enforced by the runner, so nothing stops a run from
-skiping a stage today; enforcement is the next piece of work. Artifacts are passed as text in
-the delegation report rather than stored and addressable, so a long pipeline loses fidelity at
-each hop. And the check that would make `verify` trustworthy still cannot be installed because
-of the GitHub token's missing workflow scope. Until that lands, `verify` rests on a human
-reading a diff, which is exactly what a gate is supposed to replace.
+## What remains incomplete
+
+1. **No durable task queue:** the runner constructs and validates a task object in memory. The production schema has no `agent_tasks` table, so there is no durable task lifecycle, lease, retry, cancellation or resume mechanism.
+2. **No production pipeline activation:** read-only production telemetry for the last 30 days shows 0 pipeline-ID events and 0 stage-ID events.
+3. **No evidence of sustained handoffs:** the same window shows one distinct task ID and one delegated-task audit event; that is not enough to claim a reliable multi-agent workflow.
+4. **Artifact traceability is sparse:** six artifacts were created, only one had a task ID, and none had a pipeline ID in the observed window.
+5. **The caller is part of the trust boundary:** because the caller can pin a stage, the dispatch endpoint must own pipeline selection and validate that the requested stage is the next stage. Do not let a model or untrusted client choose arbitrary stage IDs.
+6. **Independent acceptance is not operationalized:** QA and SENTINEL must review the same immutable PR SHA and produce separate records before a release can be considered.
+
+## Production evidence snapshot (2026-11-28)
+
+Read-only Neon aggregate queries over the last 30 days:
+
+- 45 runs for the 12 canonical role agents: 19 successful, 26 failed (42.2%).
+- 256 audit events across 42 correlation IDs.
+- One distinct task ID, zero pipeline-ID events and zero stage-ID events.
+- Six artifacts created; one linked to a task and none linked to a pipeline.
+
+The full role-by-role analysis is in [the agent-team operational audit](AGENT_TEAM_OPERATIONAL_AUDIT_2026-11-28.md).
+
+## Current mapping
+
+| Capability | State |
+|---|---|
+| Pipeline JSON definitions and structural validation | Implemented |
+| Task/message/report JSON schemas | Implemented |
+| Runtime next-stage planner | Implemented |
+| Runtime stage-owner/dependency check | Implemented when pipeline ID is supplied and stage is not caller-pinned |
+| Correlation-aware audit events | Implemented |
+| Addressable artifact storage and bounded reads | Implemented |
+| Durable task queue, leases, retries and resume | Not implemented |
+| Mandatory pipeline dispatch for development tasks | Not implemented |
+| Production pipeline/stage usage | No evidence in the observed 30-day window |
+| Independent QA + SENTINEL approvals on one SHA | Defined, not yet routine/proven |
+| Owner-only merge/deploy release gate | Required by policy |
+
+## Acceptance test for the next phase
+
+A non-production task must complete through a real dispatch endpoint and durable task row. The runner must pin a pipeline, assign only the next stage owner, persist the stage transition, store an artifact with task/pipeline/stage IDs, and let independent QA and SENTINEL review the same fixed SHA. Missing artifacts, failed tests, stale SHAs, failed audit writes, budget exhaustion or unauthorized write requests must stop the task rather than produce a success report.
