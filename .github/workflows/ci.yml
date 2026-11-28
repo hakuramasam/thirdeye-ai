@@ -43,9 +43,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+      # Testcontainers 12.2.2 and its undici dependency require Node >=22.22.
+      # Keep the application verification job on Node 20; only this integration job needs 22.
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Install application dependencies
         run: npm ci --no-audit --no-fund
       # The npm script installs the exact Testcontainers module without modifying the lockfile.
