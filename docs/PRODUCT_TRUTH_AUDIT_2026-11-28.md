@@ -47,7 +47,7 @@ This is a point-in-time engineering/product audit, not a penetration test or a c
 - The GitHub Vercel status check reports `Account is blocked`. Resolve the Vercel account/deployment block before calling the latest main release live.
 - Vercel runtime diagnostics over the observed seven-day window reported 2,846 repetitions of the PostgreSQL SSL-mode compatibility warning across 41 users, plus one application-initialization timeout. The SSL warning is not itself proof of a failed request, but it should be cleaned up before the pg/pg-connection-string major upgrade.
 - Main CI run #541 passed 516 tests. The standard CI suite uses PGlite; it is not a substitute for real PostgreSQL integration coverage.
-- PR #122 adds Testcontainers PostgreSQL coverage. Its first integration attempt failed before tests loaded because Testcontainers 12.2.2 requires Node >=22.22 while the integration job used Node 20. The branch now switches only the integration job to Node 22; the rerun must pass before this coverage is accepted.
+- PR #122 adds Testcontainers PostgreSQL coverage. Its first integration attempt failed before tests loaded because Testcontainers 12.2.2 requires Node >=22.22 while the integration job used Node 20. The branch now switches only the integration job to Node 22. Run #544 passed both jobs: 516 PGlite verification tests and all 3 PostgreSQL integration tests. The PR remains open and unmerged, so the coverage is not yet part of main. The Testcontainers Cloud action was skipped on the PR event by design; these tests ran on the GitHub-hosted Docker engine.
 - Current CI does not run a dedicated browser-based customer journey or a production-like wallet/payment E2E test.
 
 ## Prioritized product backlog
