@@ -36,7 +36,7 @@ Read-only Neon aggregate queries over the last 30 days:
 - 45 runs for the 12 canonical role agents: 19 successful, 26 failed (42.2%).
 - 256 audit events across 42 correlation IDs.
 - One distinct task ID, zero pipeline-ID events and zero stage-ID events.
-- Six artifacts created; one linked to a task and none linked to a pipeline.
+- Seven artifact rows created; one linked to a task and none linked to a pipeline. Six rows have a matching `artifact.created` audit event; one row does not.
 
 The full role-by-role analysis is in [the agent-team operational audit](AGENT_TEAM_OPERATIONAL_AUDIT_2026-11-28.md).
 
