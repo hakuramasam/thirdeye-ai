@@ -71,6 +71,14 @@
       "destination": "/api"
     },
     {
+      "source": "/blog",
+      "destination": "/api"
+    },
+    {
+      "source": "/blog/(.*)",
+      "destination": "/api"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

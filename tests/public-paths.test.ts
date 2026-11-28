@@ -15,7 +15,7 @@ test('every secondary surface is reachable as a path', () => {
     ...(vercel.rewrites ?? []).map((r: { source: string }) => r.source),
     ...(vercel.redirects ?? []).map((r: { source: string }) => r.source),
   ])
-  for (const surface of ['/api/(.*)', '/docs', '/status']) {
+  for (const surface of ['/api/(.*)', '/docs', '/status', '/blog', '/blog/(.*)']) {
     assert.ok(sources.has(surface), `${surface} must be routed; it is a documented surface`)
   }
 })
