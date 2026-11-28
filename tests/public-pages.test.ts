@@ -15,7 +15,7 @@ function app() {
   return a
 }
 
-const PATHS = ['/platform', '/docs', '/docs/api', '/docs/mcp', '/docs/x402', '/docs/agents', '/roadmap', '/partnerships', '/changelog', '/agents', '/team', '/whitepaper']
+const PATHS = ['/platform', '/docs', '/docs/api', '/docs/mcp', '/docs/x402', '/docs/agents', '/roadmap', '/partnerships', '/changelog', '/agents', '/team', '/whitepaper', '/blog', '/blog/a-job-is-a-row']
 
 /**
  * The whitepaper cites a public transaction hash so a reader can decode the launch themselves. That

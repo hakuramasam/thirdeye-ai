@@ -71,6 +71,14 @@
       "destination": "/api"
     },
     {
+      "source": "/blog",
+      "destination": "/api"
+    },
+    {
+      "source": "/blog/(.*)",
+      "destination": "/api"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
@@ -85,6 +93,18 @@
     {
       "path": "/api/cron/agents",
       "schedule": "0 9 * * *"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/app",
+      "destination": "/",
+      "permanent": false
+    },
+    {
+      "source": "/app/:path*",
+      "destination": "/:path*",
+      "permanent": false
     }
   ]
 }

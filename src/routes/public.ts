@@ -81,6 +81,7 @@ const NAV: [string, string][] = [
   ['/status', 'Status'],
   ['/roadmap', 'Roadmap'],
   ['/changelog', 'Changelog'],
+  ['/blog', 'Blog'],
   ['/docs', 'Docs'],
   ['/agents', 'Agents'],
   ['/team', 'Team'],
@@ -549,6 +550,77 @@ const CONTACT = `
 <p class="muted">Response is not instant. The mailbox is read by the project operator, and an autonomous agent triages it first; anything involving money, credentials or a contract change is escalated to the operator rather than answered by the agent.</p>
 `
 
+
+// ── Blog ─────────────────────────────────────────────────────────────────────
+// Editorial notes, not a changelog. The changelog is generated from commits; this is the reasoning
+// behind them. Every entry states whether it has shipped or is still in review, because announcing
+// work before it lands is the one thing this project has consistently refused to do.
+type Post = { slug: string; date: string; status: 'Shipped' | 'In review' | 'Decided'; title: string; summary: string; body: string }
+
+const BLOG: Post[] = [
+  {
+    slug: 'one-origin-not-five-subdomains',
+    date: '28 Nov 2026',
+    status: 'Decided',
+    title: 'One origin, not five subdomains',
+    summary: 'Why the platform serves app, api, docs and status as paths instead of hostnames.',
+    body: `
+<p>The plan was five hostnames: <code>app.</code>, <code>api.</code>, <code>docs.</code>, <code>status.</code> and <code>blog.</code> on the project domain. It did not survive contact with how domain verification actually works.</p>
+<p>Vercel proves ownership of a hostname with a TXT record at <code>_vercel.&lt;parent&gt;</code>. For <code>app.thirdeyeai.fs.kg</code> that record belongs in the <code>fs.kg</code> zone, which the registry operator controls and we do not. So every one of those five hostnames was permanently unverifiable from our side, no matter how many CNAMEs we added. They resolved, then failed the handshake, then showed a certificate warning to anyone who visited. A missing record would have failed more honestly.</p>
+<p>So the platform keeps one origin and exposes its surfaces as paths: <code>/api</code>, <code>/docs</code>, <code>/status</code>, <code>/changelog</code>, <code>/roadmap</code>, <code>/whitepaper</code>, <code>/team</code>, <code>/contact</code>. One certificate, one deploy, one place where a link can break. The five CNAMEs were removed rather than left pointing at something that could never answer.</p>
+<p>What we gave up is real: separate origins would have allowed independent deploys and independent cache and cookie boundaries. That matters when docs or status become their own applications. They are not yet, and paying for isolation we do not use is worse than adding it when it earns its place.</p>`,
+  },
+  {
+    slug: 'a-job-is-a-row',
+    date: '28 Nov 2026',
+    status: 'In review',
+    title: 'A job is a row, not a conversation',
+    summary: 'The task spine: an atomic claim, an attempt counter, and rework you can measure.',
+    body: `
+<p>The agent team could describe work but could not account for it. A job existed as prose in a prompt, so "how many tasks needed rework" had no answer that was not a guess.</p>
+<p>The task spine makes a job a database row. <code>agent_tasks</code> carries the correlation id, the pipeline and stage, the owning agent, the status, the attempt number and the artifacts. The part that matters is the claim: taking a task is a single conditional update that only succeeds while the row is still <code>queued</code> or <code>blocked</code>. Two workers racing for the same row produce exactly one winner, and the loser gets nothing rather than a duplicate run.</p>
+<p>Because <code>attempt</code> increments on failure and history cannot be rewritten once a row is completed or cancelled, first-pass success becomes a number instead of an impression. That is the whole point: the team can now be judged on whether its work passed first time.</p>
+<p><em>Status: built and tested on a feature branch, in review, not merged.</em></p>`,
+  },
+  {
+    slug: 'tools-that-match-the-roles',
+    date: '28 Nov 2026',
+    status: 'In review',
+    title: 'Tools that match what the roles already do',
+    summary: 'Four narrow tools, each refusing arguments it does not understand.',
+    body: `
+<p>The role instructions told agents to run the test suite, read check runs for a commit, open a pull request and check a deployment. None of those were things an agent could actually do, so the instructions were aspirational.</p>
+<p>Four tools now back them: run the tests, read check runs for a specific SHA, open a pull request, read deployment status. Each takes a narrow set of arguments and refuses anything it does not recognise by name, rather than ignoring it and doing something adjacent. None of them returns a token or a request header, and the tests assert that by scanning every result for the stubbed credential.</p>
+<p>The deployment reader deserves a note. It reports whether a domain is verified, not whether a deployment succeeded, because those are different questions and conflating them is how a broken release gets called healthy.</p>
+<p><em>Status: built with stubbed transports so no test touches the network, in review, not merged.</em></p>`,
+  },
+  {
+    slug: 'job-resolution-stops-being-prose',
+    date: '28 Nov 2026',
+    status: 'In review',
+    title: 'Job resolution stops being prose',
+    summary: 'The workflow document now drives the queue, and a stage cannot be skipped.',
+    body: `
+<p>A workflow definition that nothing imports is documentation pretending to be code. The job-resolution workflow was exactly that: nine stages written down carefully, and no mechanism that read them.</p>
+<p>It is now loaded at startup and validated, so a malformed document fails loudly instead of producing a mis-ordered queue. Advancing a job takes the task id and the output, and nothing else: the next stage is derived from the document. There is no argument through which a caller could name a later stage, which means skipping review is not a policy violation to be caught but a thing that cannot be expressed.</p>
+<p>A row whose stage is not the job's frontier is refused outright. That refusal is the feature.</p>
+<p><em>Status: built and tested, in review, not merged. One limit worth stating: the workflow declares a parallel build stage, but the document has one owner for it, so the queue currently serialises what the document calls parallel.</em></p>`,
+  },
+]
+
+function postPage(post: Post): string {
+  return `
+<p class="muted"><a href="/blog">Blog</a> · ${esc(post.date)} · ${esc(post.status)}</p>
+<h1>${esc(post.title)}</h1>
+<p class="lead">${esc(post.summary)}</p>
+${post.body}`
+}
+
+const BLOG_INDEX = `
+<h1>Blog</h1>
+<p class="lead">Notes on what the platform is building and why. Every entry says whether it has shipped or is still in review; nothing is announced ahead of the work.</p>
+${BLOG.map((p) => `<div class="card"><h3><a href="/blog/${esc(p.slug)}">${esc(p.title)}</a></h3><p>${esc(p.summary)}</p><p class="muted">${esc(p.date)} · ${esc(p.status)}</p></div>`).join('\n')}`
+
 export function registerPublicRoutes(app: SessionApp): void {
   app.get('/platform', (c) => c.html(layout('Platform', '/platform', PLATFORM)))
   app.get('/docs', (c) => c.html(layout('Documentation', '/docs', DOCS_HUB)))
@@ -629,6 +701,12 @@ export function registerPublicRoutes(app: SessionApp): void {
    */
   app.get('/team', async (c) => c.html(layout('Team activity', '/team', await teamPage())))
 
+  app.get('/blog', (c) => c.html(layout('Blog', '/blog', BLOG_INDEX)))
+  app.get('/blog/:slug', (c) => {
+    const post = BLOG.find((p) => p.slug === c.req.param('slug'))
+    if (!post) return c.notFound()
+    return c.html(layout(post.title, '/blog', postPage(post), `/blog/${post.slug}`))
+  })
   app.get('/changelog', (c) => {
     const rows = CHANGELOG.map((e) => `<tr><td><code>${esc(e.sha)}</code></td><td>${esc(e.date)}</td><td>${esc(e.summary)}</td></tr>`).join('')
     const body = `
