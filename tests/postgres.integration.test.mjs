@@ -108,20 +108,23 @@ test("ledger and usage writes commit atomically and roll back together", async (
   );
   assert.deepEqual(rolledBack.rows[0], { ledger: 0, usage: 0 });
 
-  await pool.query("BEGIN");
+  const commitClient = await pool.connect();
   try {
-    await pool.query(
+    await commitClient.query("BEGIN");
+    await commitClient.query(
       "INSERT INTO ledger (user_id, amount_usd_micros, kind, ref) VALUES ($1, $2, $3, $4)",
       [userId, -250, "usage", "tc-commit"]
     );
-    await pool.query(
+    await commitClient.query(
       "INSERT INTO usage_events (user_id, api_key_id, model, provider, prompt_tokens, completion_tokens, cost_usd_micros, status, latency_ms) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
       [userId, keyId, "thirdeye-mock", "mock", 3, 4, 250, "200", 12]
     );
-    await pool.query("COMMIT");
+    await commitClient.query("COMMIT");
   } catch (error) {
-    await pool.query("ROLLBACK");
+    await commitClient.query("ROLLBACK");
     throw error;
+  } finally {
+    commitClient.release();
   }
 
   const committed = await pool.query(
