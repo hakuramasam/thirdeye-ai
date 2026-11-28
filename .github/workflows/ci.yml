@@ -48,8 +48,7 @@ jobs:
           node-version: '20'
       - name: Install application dependencies
         run: npm ci --no-audit --no-fund
-      - name: Install pinned Testcontainers PostgreSQL module
-        run: npm install --no-save --package-lock=false --no-audit --no-fund @testcontainers/postgresql@12.2.2
+      # The npm script installs the exact Testcontainers module without modifying the lockfile.
       # Never expose the Cloud token to pull-request code. Enable the repository variable
       # TC_CLOUD_ENABLED=true only after storing TC_CLOUD_TOKEN as an Actions secret.
       - name: Setup Testcontainers Cloud
