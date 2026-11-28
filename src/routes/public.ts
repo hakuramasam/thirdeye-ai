@@ -146,9 +146,9 @@ ${head(title, path)}
 // ── Platform ─────────────────────────────────────────────────────────────────
 const PLATFORM = `
 <h1>Pay for the call, not the seat.</h1>
-<p class="lead">Thirdeye routes requests to several model providers behind one OpenAI-compatible API and bills each call at cost plus margin. No subscription, no seat licence, no minimum.</p>
+<p class="lead">Thirdeye routes catalogued models to configured provider integrations behind one OpenAI-compatible API and bills each call at cost plus margin. No subscription, no seat licence, no minimum.</p>
 <div class="grid">
-  <div class="card"><h3>One API, several providers</h3><p>Point an existing OpenAI client at our base URL. Model names resolve to a live provider pool, with a fallback chain behind each one.</p></div>
+  <div class="card"><h3>One API, catalogued providers</h3><p>Point an existing OpenAI client at our base URL. Each model resolves to its configured upstream provider. Your BYOK key takes precedence; otherwise one configured platform key is used. Multi-key pooling and automatic provider failover are not implemented yet.</p></div>
   <div class="card"><h3>Per-call pricing</h3><p>Every JSON response reports its billed amount in <code>x-thirdeye-cost-usd</code>, measured. A stream reports the reserved estimate up front, settles to the measured cost as it ends, and says which figure it is sending in <code>x-thirdeye-cost-basis</code>.</p></div>
   <div class="card"><h3>Prepaid credit</h3><p>Fund the account, or fund a specific API key. A key can carry its own balance and its own monthly ceiling.</p></div>
   <div class="card"><h3>Bring your own key</h3><p>Supply a provider key and it is stored encrypted, used only for your calls, and never shown again.</p></div>
@@ -160,13 +160,13 @@ const PLATFORM = `
   -H "authorization: Bearer $THIRDEYE_API_KEY" \\
   -H "content-type: application/json" \\
   -d '{"model":"gpt-oss-120b","messages":[{"role":"user","content":"hi"}]}'</code></pre>
-<p class="muted">Sign in with a wallet to create a key, then fund it with USDC on Base. Full details in <a href="/docs/api">the API guide</a>.</p>
+<p class="muted">Sign in with a wallet to create an API key, then choose a supported network and asset from the authenticated deposit-info screen. Both model listing and inference require an API key. Full details in <a href="/docs/api">the API guide</a>.</p>
 `
 
 // ── Docs hub ─────────────────────────────────────────────────────────────────
 const DOCS_HUB = `
 <h1>Documentation</h1>
-<p class="lead">Three separate guides, because a caller reads one of them rather than all three.</p>
+<p class="lead">Four focused guides for API callers, MCP users and agents integrating with the platform.</p>
 <div class="grid">
   <div class="card"><h3><a href="/docs/api">API usage</a></h3><p>Authentication, keys, chat completions, streaming, tool calling, credits and error codes.</p></div>
   <div class="card"><h3><a href="/docs/mcp">MCP</a></h3><p>Attaching a model context protocol server to an agent, and the guards that apply to the tools it exposes.</p></div>
@@ -181,12 +181,12 @@ const DOCS_API = `
 <h1>API guide</h1>
 <p class="lead">OpenAI-compatible at the edge, with per-call billing attached to every response.</p>
 <h2>Authentication</h2>
-<p>Two paths, both a bearer token. A signed-in session uses the cookie the app sets; programmatic callers use an API key issued in the app.</p>
+<p>The OpenAI-compatible <code>/api/v1/*</code> gateway requires a bearer API key in the <code>Authorization</code> header. Dashboard account routes use the wallet-authenticated session cookie; a session cookie is not a substitute for a gateway API key.</p>
 <pre><code>GET /api/v1/models
 authorization: Bearer $THIRDEYE_API_KEY</code></pre>
 <h2>Endpoints</h2>
 <table><thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead><tbody>
-<tr><td>GET</td><td><code>/api/v1/models</code></td><td>Public model catalogue with per-model pricing. The only endpoint that needs no key.</td></tr>
+<tr><td>GET</td><td><code>/api/v1/models</code></td><td>Enabled model catalogue and per-model pricing. Requires an API key.</td></tr>
 <tr><td>POST</td><td><code>/api/v1/chat/completions</code></td><td>Chat completions, streaming or buffered, with tool calling.</td></tr>
 <tr><td>GET</td><td><code>/api/keys</code></td><td>List your keys with per-key credit, budget and rate limits.</td></tr>
 <tr><td>POST</td><td><code>/api/keys</code></td><td>Issue a key. The secret is shown once.</td></tr>
@@ -214,11 +214,11 @@ const DOCS_MCP = `
 <h1>MCP guide</h1>
 <p class="lead">An agent can be given a model context protocol server. The tools it exposes are treated as untrusted input.</p>
 <h2>What is stored</h2>
-<p>A list of server entries on the agent row. Each entry is a name and a URL; there is no separate credential store for a server, so a server that needs a token is out of scope today.</p>
+<p>An agent stores server names, URLs and optional request headers in its configuration. There is no dedicated encrypted MCP credential vault yet. Do not put long-lived bearer tokens or other sensitive credentials in MCP headers until that vault is implemented.</p>
 <h2>Guards</h2>
 <table><thead><tr><th>Control</th><th>Behaviour</th></tr></thead><tbody>
-<tr><td>Scheme</td><td>Only <code>https</code>. Anything else is refused before a socket is opened.</td></tr>
-<tr><td>Destination</td><td>Private, loopback, link-local and metadata ranges are refused, and the check runs again after every redirect.</td></tr>
+<tr><td>Scheme</td><td>HTTP(S) URLs are accepted by the configuration API; HTTPS is strongly preferred.</td></tr>
+<tr><td>Destination</td><td>Private, loopback, link-local and metadata ranges are refused, and the public-destination check runs again after redirects.</td></tr>
 <tr><td>Reply size</td><td>Capped, so a hostile server cannot exhaust memory.</td></tr>
 <tr><td>Spend</td><td>A paid tool call is bounded by the agent's per-call cap and its allowlist. An unlisted host cannot be paid.</td></tr>
 <tr><td>Steps</td><td>The run has a step cap and a budget cap. A loop stops rather than running until the credit is gone.</td></tr>
@@ -246,30 +246,39 @@ const DOCS_X402 = `
 // ── Roadmap ──────────────────────────────────────────────────────────────────
 const ROADMAP = `
 <h1>Roadmap</h1>
-<p class="lead">Stated as work, not dates. An item stays in progress until it is measured on the production path.</p>
-<h2>Shipped</h2>
+<p class="lead">Stated as work, not dates. An item stays shipped only when the source and production evidence support that status.</p>
+<h2>Shipped in source</h2>
 <ul>
-<li>OpenAI-compatible inference with streaming and tool calling, billed per call.</li>
-<li>SIWE sign-in, API keys, per-key credit and per-key monthly ceilings.</li>
-<li>BYOK with AES-256-GCM at rest and a documented rotation path.</li>
-<li>Agents with MCP servers, step and spend caps, and a SSRF-guarded fetch tool.</li>
-<li>Public feedback intake with a triage queue.</li>
-<li>Hardening pass on payment verification, log hygiene and auth abuse limits.</li>
-<li>Streaming settled at measured cost: the reserve is trued up inside the response stream, so the charge no longer depends on the runtime keeping a background task alive.</li>
-<li>Continuous integration: typecheck, the full suite and a credential scan on every pull request.</li>
+<li>OpenAI-compatible inference with streaming and tool calling, per-call metering and cost headers.</li>
+<li>SIWE wallet sign-in, WalletConnect, API keys, per-key credits and monthly ceilings.</li>
+<li>BYOK with AES-256-GCM encryption and a documented key-rotation path.</li>
+<li>Personal agents with manual runs, run history, step/spend caps, cron expressions, MCP configuration and guarded x402 calls.</li>
+<li>External agent identity API, public directory and A2A card/JSON-RPC surface.</li>
+<li>Public platform, docs, status, changelog, roadmap and read-only team activity pages.</li>
+<li>Correlation-aware audit events, addressable artifacts and runtime pipeline planning/enforcement code.</li>
+<li>Guarded repository write path: agent branches and pull requests only; no autonomous merge or production deployment.</li>
+<li>THIRDEYE launched on Base on 2026-11-12 with fixed 1,000,000,000 supply; the platform has a configurable policy-priced deposit path.</li>
+<li>Current main CI verification: 516 tests passed on 2026-11-28, with typecheck, platform-contract validation and credential scan green.</li>
 </ul>
-<h2>In progress</h2>
+<h2>In progress / not yet proven live</h2>
 <ul>
-<li><strong>Public pages and agent-facing API</strong>: a documented surface an outside agent can join and use without a human reading the source.</li>
-<li><strong>Finality policy</strong>: a deposit is credited on confirmation depth, and the reorg case needs an explicit rule.</li>
+<li><strong>Deposit finality:</strong> receipt and transfer checks exist, but chain-specific confirmation depth, reorg detection and reconciliation policy are not complete.</li>
+<li><strong>Production release synchronization:</strong> the latest verified production deployment is behind current main; the current Vercel status check reports an account block.</li>
+<li><strong>Path-based product surfaces:</strong> PR #120 proposes paths as an alternative to secondary subdomains whose DNS verification is controlled by the parent-zone provider.</li>
+<li><strong>Real PostgreSQL integration CI:</strong> PR #122 now has a green run (#544): the existing 516-test verification suite and all 3 PostgreSQL Testcontainers integration tests passed. The PR remains open pending merge, so this is not yet part of main.</li>
+<li><strong>Autonomous development workflows:</strong> runtime pipeline code exists, but production telemetry does not yet show pipeline/stage execution or durable task lifecycle.</li>
 </ul>
 <h2>Later</h2>
 <ul>
-<li>Audit log with correlation ids across a request, its charges and its agent steps.</li>
-<li>Agent write access, branch and pull request only, never to the default branch.</li>
-<li>Partner-facing analytics on the partner hub.</li>
+<li>Durable task queue, leases, retries, resume and a task board for the development-agent team.</li>
+<li>Reliable HERMES-to-specialist handoffs with independent QA and SENTINEL approvals on the same immutable SHA.</li>
+<li>Provider key pooling, provider health/failover and per-provider quotas.</li>
+<li>Dedicated encrypted credential storage for MCP server headers.</li>
+<li>Cross-customer admin console, model-pricing editor, customer balance alerts, credit packs and invoices/receipts.</li>
+<li>Tokenized platform-metric assets; the public stats feed is only the data source.</li>
+<li>Secondary custom subdomains and a complete browser-based wallet-to-inference-to-billing E2E suite.</li>
 </ul>
-<p class="muted">Nothing here is a promise of a date. Items move when they are verified, not when they are scheduled.</p>
+<p class="muted">Nothing here promises a date. Source implementation, production activation and end-to-end proof are tracked as separate states. See <a href="https://github.com/hakuramasam/thirdeye-ai/blob/main/docs/PRODUCT_TRUTH_AUDIT_2026-11-28.md">the product truth audit</a> and <a href="https://github.com/hakuramasam/thirdeye-ai/blob/main/docs/AGENT_TEAM_OPERATIONAL_AUDIT_2026-11-28.md">the agent-team operational audit</a>.</p>
 `
 
 // ── Partnerships ─────────────────────────────────────────────────────────────
