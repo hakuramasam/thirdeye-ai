@@ -91,6 +91,28 @@ test('the docs name the real endpoints rather than a generic promise', async () 
   assert.ok(body.includes('x-thirdeye-cost-usd'), 'docs should name the billing header')
 })
 
+test('the API guide matches the gateway authentication middleware', async () => {
+  await migrate()
+  const body = await (await app().request('/docs/api')).text()
+  assert.match(body, /gateway requires a bearer API key in the .*Authorization.*header/i)
+  assert.match(body, /Enabled model catalogue and per-model pricing\. Requires an API key\./)
+  assert.doesNotMatch(body, /The only endpoint that needs no key/)
+})
+
+test('the platform page does not promise provider pooling or automatic failover', async () => {
+  await migrate()
+  const body = await (await app().request('/platform')).text()
+  assert.match(body, /Multi-key pooling and automatic provider failover are not implemented yet/)
+  assert.doesNotMatch(body, /live provider pool|fallback chain/i)
+})
+
+test('the roadmap distinguishes runtime pipeline code from production activation', async () => {
+  await migrate()
+  const body = await (await app().request('/roadmap')).text()
+  assert.match(body, /production telemetry does not yet show pipeline\/stage execution/)
+  assert.match(body, /Deposit finality/)
+})
+
 test('the partnership page states terms are private and names only disclosed partners', async () => {
   await migrate()
   const body = await (await app().request('/partnerships')).text()
