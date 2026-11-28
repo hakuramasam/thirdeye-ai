@@ -35,7 +35,7 @@ This is a read-only aggregate snapshot from the production Neon run and audit ta
 - Roles with no runs in the window: PRODUCT, BLOCKCHAIN, INTELLIGENCE and AGENT-ENGINEER.
 - Audit events: **256** across **42** correlation IDs.
 - Distinct task IDs: **1**; pipeline-ID events: **0**; stage-ID events: **0**.
-- Six artifacts were created; one carried a task ID and none carried a pipeline ID.
+- Seven artifact rows were created; one carried a task ID and none carried a pipeline ID. Six have matching `artifact.created` audit events, leaving one row to reconcile.
 
 Some positive specialist samples are old and small: QA 5/5 and DOCS 5/5 (last observed 2026-11-09 and 2026-11-11 respectively), ARCHITECT 2/2 (last observed 2026-11-09). These are not evidence of current continuous readiness.
 
