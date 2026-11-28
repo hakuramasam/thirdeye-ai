@@ -5,11 +5,12 @@
     {
       "name": "repo_read",
       "implementation": "src/agents/repo-tools.ts",
-      "purpose": "List, read and search the configured GitHub repository.",
+      "purpose": "List, read and search the configured GitHub repository; isolated staging review runs may also fetch the fixed PR diff after exact head-SHA verification.",
       "access": "Agent must have repo_access read or write.",
       "limits": {
         "max_read_chars": 20000,
-        "max_search_results": 20
+        "max_search_results": 20,
+        "max_review_diff_chars": 50000
       },
       "refusals": [
         "path traversal",
@@ -18,6 +19,12 @@
         "node_modules",
         "private keys and key stores",
         "secret-shaped files"
+      ],
+      "guards": [
+        "staging-only diff capability is supplied only by the server-created review policy",
+        "diff is restricted to the fixed repository and server-pinned PR number",
+        "PR head SHA must exactly match the immutable target SHA before the patch is fetched",
+        "staging diff reads do not grant search, write, MCP, x402 or arbitrary URL access"
       ]
     },
     {

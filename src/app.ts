@@ -26,6 +26,7 @@ import { registerPlaygroundRoutes } from './routes/playground.js'
 import { registerParagraphRoutes } from './routes/paragraph.js'
 import { registerArtifactsRoutes } from './routes/artifacts.js'
 import { registerAntseedRoutes } from './routes/antseed.js'
+import { registerStagingHermesDispatchRoute } from './routes/stagingHermesDispatch.js'
 
 const app = new Hono<AppEnv>()
 
@@ -69,6 +70,10 @@ app.get('/api/healthz', async (c) => {
   const database = configProblems.length ? null : await probe(Number(process.env.HEALTH_DB_TIMEOUT_MS) || 2000)
   return c.json(healthzBody(configProblems, dbMode(), undefined, database))
 })
+
+// This route validates its staging credential and Preview identity before it explicitly migrates.
+// Register it ahead of the general API bootstrap so an invalid request does not touch the database.
+registerStagingHermesDispatchRoute(app)
 
 app.use('/api/*', async (_c, next) => {
   await bootstrap()

@@ -69,13 +69,30 @@ export const REPO_TOOL = {
   },
 }
 
-type RepoConfig = { token: string; repo: string; ref: string }
+// This stricter schema is passed only inside the server-created staging review tree.
+export const STAGING_REPO_TOOL = {
+  ...REPO_TOOL,
+  function: {
+    ...REPO_TOOL.function,
+    description: 'Read-only access to the fixed staging review PR: list/read repository files at the pinned SHA and fetch the exact PR diff after server-side SHA verification. No search or write operation.',
+    parameters: {
+      ...REPO_TOOL.function.parameters,
+      properties: {
+        ...REPO_TOOL.function.parameters.properties,
+        op: { type: 'string', enum: ['list', 'read', 'diff'], description: 'Operation; diff is the fixed, server-pinned staging PR patch' },
+      },
+    },
+  },
+}
+
+type RepoConfig = { token: string; repo: string; ref: string; reviewPrNumber?: number }
 
 function config(override?: Partial<RepoConfig>): RepoConfig {
   return {
     token: override?.token ?? env.githubToken,
     repo: override?.repo ?? env.githubRepo,
     ref: override?.ref ?? env.githubRef,
+    reviewPrNumber: override?.reviewPrNumber,
   }
 }
 
@@ -109,6 +126,53 @@ function withLineNumbers(text: string, startLine: number): string {
     .join('\n')
 }
 
+const MAX_REVIEW_DIFF_CHARS = 50_000
+
+function redactReviewDiff(value: string): string {
+  return value
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
+    .replace(/(?<=bearer\s)[A-Za-z0-9._-]{10,}/gi, '***')
+    .replace(/gh[pousr]_[A-Za-z0-9]{20,}/g, 'gh***')
+    .replace(/AKIA[0-9A-Z]{16}/g, 'AKIA***')
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[private key redacted]')
+}
+
+async function readPinnedReviewDiff(cfg: RepoConfig): Promise<string> {
+  if (!cfg.reviewPrNumber) throw new Error('PR diff access is not enabled for this run')
+  const path = `/repos/${cfg.repo}/pulls/${cfg.reviewPrNumber}`
+  const metadata = await gh(cfg, path)
+  if (metadata?.base?.repo?.full_name !== cfg.repo || metadata?.head?.repo?.full_name !== cfg.repo || metadata?.base?.ref !== 'main' || metadata?.head?.sha !== cfg.ref) {
+    throw new Error('Pinned PR diff refused: repository or head SHA does not match the approved review target')
+  }
+  if (!cfg.token) throw new Error('Repository access is not configured on this deployment (GITHUB_TOKEN missing)')
+  const response = await fetch(`https://api.github.com${path}`, {
+    headers: {
+      authorization: `Bearer ${cfg.token}`,
+      accept: 'application/vnd.github.diff',
+      'x-github-api-version': '2022-11-28',
+      'user-agent': 'thirdeye-agent',
+    },
+  })
+  const diff = await response.text()
+  if (!response.ok) throw new Error(`GitHub ${response.status}: ${diff.slice(0, 200)}`)
+  const sections = diff.split(/(?=^diff --git )/m)
+  const fileSections = sections.map((section) => ({
+    section,
+    path: section.match(/^diff --git a\/(.+?) b\/(.+)$/m)?.[2] ?? '',
+  })).filter((item) => item.path)
+  const paths = fileSections.map((item) => item.path)
+  const readRequiredPaths = fileSections.filter((item) => !/^\+\+\+ \/dev\/null$/m.test(item.section)).map((item) => item.path)
+  if (!paths.length) throw new Error('Pinned PR diff is empty; no review evidence is available')
+  const deniedPaths = paths.filter((path) => isDeniedPath(path))
+  if (deniedPaths.length) throw new Error('Pinned PR diff contains a path outside the reviewer read allowlist')
+  const safeDiff = redactReviewDiff(diff)
+  const clipped = safeDiff.length > MAX_REVIEW_DIFF_CHARS
+    ? `${safeDiff.slice(0, MAX_REVIEW_DIFF_CHARS)}\n\n[Diff truncated. Read remaining changed files by path at the pinned SHA.]`
+    : safeDiff
+  const diffMetadata = JSON.stringify({ changed_paths: paths, read_required_paths: readRequiredPaths })
+  return `${cfg.repo}#${cfg.reviewPrNumber} at ${cfg.ref}\nREVIEW_DIFF_METADATA:${diffMetadata}\n${clipped}`
+}
+
 /** Execute a repo tool call. Always returns a string for the model, never throws to the runner. */
 export async function runRepoTool(args: Record<string, unknown>, override?: Partial<RepoConfig>): Promise<string> {
   const cfg = config(override)
@@ -140,7 +204,8 @@ export async function runRepoTool(args: Record<string, unknown>, override?: Part
       const data = await gh(cfg, `/repos/${cfg.repo}/contents/${encodeURI(path)}?ref=${encodeURIComponent(cfg.ref)}`)
       if (Array.isArray(data)) return `${path} is a directory. Use op=list.`
       if (data?.encoding !== 'base64') return `Cannot read ${path}: unexpected encoding ${data?.encoding}`
-      const text = Buffer.from(String(data.content || ''), 'base64').toString('utf8')
+      const decoded = Buffer.from(String(data.content || ''), 'base64').toString('utf8')
+      const text = cfg.reviewPrNumber ? redactReviewDiff(decoded) : decoded
       const allLines = text.split('\n')
       const total = allLines.length
       const startRaw = Number(args.start_line)
@@ -161,6 +226,10 @@ export async function runRepoTool(args: Record<string, unknown>, override?: Part
       const lastLine = startLine + slice.length - 1
       const footer = truncated || lastLine < total ? `\n\n[... truncated at line ${lastLine} of ${total}; request a range with start_line/end_line to continue]` : ''
       return `${cfg.repo}@${cfg.ref}:${path} (lines ${startLine}-${lastLine} of ${total})\n${body}${footer}`
+    }
+
+    if (op === 'diff') {
+      return await readPinnedReviewDiff(cfg)
     }
 
     if (op === 'search') {
