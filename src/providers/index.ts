@@ -85,20 +85,35 @@ export async function getModelRow(modelName: string): Promise<ModelRow | null> {
   return row
 }
 
+/**
+ * Resolve the credential namespace for a model.
+ *
+ * Gemini's documented OpenAI-compatible endpoint uses
+ * generativelanguage.googleapis.com. That hostname does not follow the api.<vendor> pattern,
+ * so deriving a key name by stripping DNS suffixes produced an invalid key namespace. Keep this
+ * mapping explicit; other compatible providers retain the existing hostname fallback.
+ */
+export function providerNameForBaseUrl(baseUrl: string, fallback: string): string {
+  try {
+    const url = new URL(baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`)
+    const host = url.hostname.toLowerCase()
+    if (host === 'generativelanguage.googleapis.com') {
+      // Only the canonical HTTPS endpoint may select Google's credential namespace.
+      // Insecure URLs, alternate ports, and credential-bearing URLs stay on the catalog fallback.
+      if (url.protocol === 'https:' && !url.port && !url.username && !url.password) return 'google'
+      return fallback
+    }
+    return host.replace(/^api\./, '').replace(/\.[a-z]+$/, '') || fallback
+  } catch {
+    return fallback
+  }
+}
+
 export function deriveProviderName(model: ModelRow): string {
   if (model.provider === 'openai' || model.provider === 'anthropic' || model.provider === 'mock') {
     return model.provider
   }
-  if (model.base_url) {
-    try {
-      const url = new URL(model.base_url.startsWith('http') ? model.base_url : `https://${model.base_url}`)
-      let host = url.hostname.toLowerCase()
-      host = host.replace(/^api\./, '').replace(/\.[a-z]+$/, '')
-      return host
-    } catch (_) {
-      return model.provider
-    }
-  }
+  if (model.base_url) return providerNameForBaseUrl(model.base_url, model.provider)
   return model.provider
 }
 
