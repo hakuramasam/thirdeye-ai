@@ -24,13 +24,6 @@ jobs:
         run: npm run agent:platforms:check
       - name: Typecheck
         run: npx tsc --noEmit
-      # Optional: enable Testcontainers Cloud only when the repository secret is configured.
-      # Place this before any Testcontainers-backed integration tests.
-      - name: Setup Testcontainers Cloud Client
-        if: ${{ secrets.TC_CLOUD_TOKEN != '' }}
-        uses: atomicjar/testcontainers-cloud-setup-action@v1
-        with:
-          token: ${{ secrets.TC_CLOUD_TOKEN }}
       - name: Suite (PGlite, no DATABASE_URL)
         env:
           DATABASE_URL: ''
