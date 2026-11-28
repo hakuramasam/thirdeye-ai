@@ -265,7 +265,7 @@ const ROADMAP = `
 <li><strong>Deposit finality:</strong> receipt and transfer checks exist, but chain-specific confirmation depth, reorg detection and reconciliation policy are not complete.</li>
 <li><strong>Production release synchronization:</strong> the latest verified production deployment is behind current main; the current Vercel status check reports an account block.</li>
 <li><strong>Path-based product surfaces:</strong> PR #120 proposes paths as an alternative to secondary subdomains whose DNS verification is controlled by the parent-zone provider.</li>
-<li><strong>Real PostgreSQL integration CI:</strong> Testcontainers coverage is being added in PR #122; the integration job must pass on its supported Node runtime before this is called shipped.</li>
+<li><strong>Real PostgreSQL integration CI:</strong> PR #122 now has a green run (#544): the existing 516-test verification suite and all 3 PostgreSQL Testcontainers integration tests passed. The PR remains open pending merge, so this is not yet part of main.</li>
 <li><strong>Autonomous development workflows:</strong> runtime pipeline code exists, but production telemetry does not yet show pipeline/stage execution or durable task lifecycle.</li>
 </ul>
 <h2>Later</h2>
