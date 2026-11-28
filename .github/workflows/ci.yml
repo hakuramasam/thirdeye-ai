@@ -1,9 +1,8 @@
 # The gate that makes agent pull requests safe to accept.
 #
-# Until this existed, nothing checked a patch: an agent (or I) could open a PR that failed to
-# compile and no one would know until production. Every pull request now proves three things
-# before a human reads it: it typechecks, the suite is green on PGlite, and it contains no
-# credential-shaped strings.
+# The verify job checks types, PGlite behavior, and credential-shaped strings.
+# The integration job additionally exercises the real PostgreSQL schema in a disposable
+# Testcontainers instance. Testcontainers Cloud is opt-in for trusted main-branch pushes only.
 name: ci
 on:
   pull_request:
@@ -35,3 +34,30 @@ jobs:
             echo "::error::A credential-shaped string appears in this diff."; exit 1
           fi
           echo "clean"
+
+  integration:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      # Testcontainers 12.2.2 and its undici dependency require Node >=22.22.
+      # Keep the application verification job on Node 20; only this integration job needs 22.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install application dependencies
+        run: npm ci --no-audit --no-fund
+      # The npm script installs the exact Testcontainers module without modifying the lockfile.
+      # Never expose the Cloud token to pull-request code. Enable the repository variable
+      # TC_CLOUD_ENABLED=true only after storing TC_CLOUD_TOKEN as an Actions secret.
+      - name: Setup Testcontainers Cloud
+        if: github.event_name == 'push' && vars.TC_CLOUD_ENABLED == 'true'
+        uses: atomicjar/testcontainers-cloud-setup-action@22064b87e13754258b1a686f4d93147f904c28d5
+        with:
+          token: ${{ secrets.TC_CLOUD_TOKEN }}
+          wait: true
+      - name: Run PostgreSQL integration tests
+        run: npm run test:integration
